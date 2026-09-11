@@ -218,6 +218,15 @@ was archived in July 2026, so it is not used.
 
 ## Domain benchmarks (legal, finance)
 
+- BigLaw Bench (Harvey Lab): Core (transactional and litigation task
+  categories), Workflows (SPA Deal Points, agentic extraction over Share
+  Purchase Agreements), Retrieval (long contracts with cross-references and
+  defined terms; discovery emails). Rubric-graded: positive points for
+  requirements met, negative for errors and hallucinations, plus source
+  reliability. Sample tasks and rubrics at
+  https://github.com/harveyai/biglaw-bench ; full dataset on request from
+  Harvey. harvey.ai was unreachable from the build sandbox, so the Harvey Lab
+  page itself was not read.
 - LegalBench: 162 legal reasoning tasks, crowd-sourced, mixed per-task
   licenses. https://github.com/HazyResearch/legalbench , data at
   https://huggingface.co/datasets/nguha/legalbench
