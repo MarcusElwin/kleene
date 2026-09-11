@@ -109,8 +109,6 @@ enum Scalar {
     Int(i64),
     Float(f64),
     Text(String),
-    Bool(bool),
-    Null,
     Arith(Box<Scalar>, &'static str, Box<Scalar>),
     Cmp(Box<Scalar>, &'static str, Box<Scalar>),
     And(Box<Scalar>, Box<Scalar>),
@@ -150,8 +148,6 @@ impl Scalar {
                 }
             }
             Scalar::Text(s) => format!("'{}'", s.replace('\'', "''")),
-            Scalar::Bool(b) => b.to_string().to_uppercase(),
-            Scalar::Null => "NULL".into(),
             Scalar::Arith(a, op, b) => format!("({} {op} {})", a.sql(), b.sql()),
             Scalar::Cmp(a, op, b) => format!("({} {op} {})", a.sql(), b.sql()),
             Scalar::And(a, b) => format!("({} AND {})", a.sql(), b.sql()),
@@ -376,14 +372,29 @@ fn shape_strategy(tables: &[TableSpec]) -> BoxedStrategy<Shape> {
         prop::option::of((0usize..=3, 1usize..=6)),
     )
         .prop_map(|(exprs, filter, distinct, limit)| Shape::Simple { exprs, filter, distinct, limit });
+    // Join keys must have the same type on both sides; DuckDB refuses to
+    // compare VARCHAR with BIGINT.
+    let join_pairs: Vec<(usize, usize)> = (0..n0)
+        .flat_map(|i| (0..n1).map(move |j| (i, j)))
+        .filter(|(i, j)| t0.columns[*i].1 == t1.columns[*j].1)
+        .collect();
+    let join_kinds = if join_pairs.is_empty() {
+        vec!["CROSS JOIN"]
+    } else {
+        vec!["JOIN", "LEFT JOIN", "CROSS JOIN"]
+    };
+    let join_pair_strategy = if join_pairs.is_empty() {
+        Just((0usize, 0usize)).boxed()
+    } else {
+        proptest::sample::select(join_pairs).boxed()
+    };
     let join = (
-        proptest::sample::select(vec!["JOIN", "LEFT JOIN", "CROSS JOIN"]),
-        0..n0,
-        0..n1,
+        proptest::sample::select(join_kinds),
+        join_pair_strategy,
         prop::option::of(bool_expr("a", &t0, 1)),
         any::<bool>(),
     )
-        .prop_map(|(kind, i, j, filter, project_all)| Shape::Join {
+        .prop_map(|(kind, (i, j), filter, project_all)| Shape::Join {
             kind,
             on: if kind == "CROSS JOIN" { None } else { Some((i, j)) },
             filter,

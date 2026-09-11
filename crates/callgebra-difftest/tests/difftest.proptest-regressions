@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc e264c7fc436656e3d0fad7f7bb61fc01c13aa3954491718603bce5189d74e8ad # shrinks to case = Case { tables: [TableSpec { name: "t0", columns: [("c0", Text), ("c1", Text)], rows: [[Text(""), Text("ba")]] }, TableSpec { name: "t1", columns: [("c0", Int)], rows: [[Int(89)], [Int(-69)], [Null], [Int(73)], [Int(-93)]] }], sql: "SELECT a.c0, a.c1 FROM t0 a JOIN t1 b ON a.c0 = b.c0 ORDER BY 1 NULLS FIRST, 2 NULLS FIRST", ordered: true }
+cc 5c601e5f2506ae0f8dfc59f30b88bcbde36914c6ab383149fb40f353e2970377 # shrinks to case = Case { tables: [TableSpec { name: "t0", columns: [("c0", Text)], rows: [[Text("x_y")]] }, TableSpec { name: "t1", columns: [("c0", Int), ("c1", Int), ("c2", Text)], rows: [[Int(-17), Int(33), Text("x_y")], [Int(-36), Int(71), Text("ba")], [Int(-74), Null, Text("A")], [Int(44), Int(-87), Text("x_y")], [Null, Int(-90), Text("c")], [Null, Int(83), Text("x_y")], [Int(32), Int(76), Text("%")], [Int(39), Int(-80), Text("b")], [Null, Int(-14), Text("A")], [Int(60), Int(-76), Text("x_y")], [Int(-53), Int(-91), Text("ba")]] }], sql: "SELECT a.c0 FROM t0 a JOIN t1 b ON a.c0 = b.c0 ORDER BY 1 NULLS FIRST", ordered: true }
