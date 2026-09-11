@@ -218,7 +218,27 @@ was archived in July 2026, so it is not used.
 
 ## Domain benchmarks (legal, finance)
 
-- BigLaw Bench (Harvey Lab): Core (transactional and litigation task
+- Harvey LAB, the Legal Agent Benchmark (May 2026, MIT):
+  https://github.com/harveyai/harvey-labs — 1,671 tasks (announcement said
+  1,200+) across 24 practice areas plus contracting; each task is
+  `task.json` (instructions, work_type, deliverables map, inline pass/fail
+  `criteria` with `match_criteria`) plus a `documents/` matter folder.
+  Filesystem-first harness: agent loop with a `ModelAdapter` interface
+  (Anthropic, OpenAI, Google, Mistral, Fireworks adapters), tools `bash,
+  read, write, edit, glob, grep, finish`, Podman sandbox with no network;
+  `evaluation.run_eval` grades with two LLM judges (defaults
+  claude-sonnet-4-6 and gpt-5.5), all-pass scoring with criterion pass rate
+  as a diagnostic; `evaluation.compare` builds dashboards. Announcement:
+  https://www.harvey.ai/blog/introducing-harveys-legal-agent-benchmark ;
+  initial results (frontier models under 10% end to end):
+  https://www.harvey.ai/blog/legal-agent-benchmark-initial-results ;
+  leaderboard with Artificial Analysis:
+  https://artificialanalysis.ai/evaluations/harvey-lab-aa (about 25% top
+  score, September 2026, per search results; harvey.ai and
+  artificialanalysis.ai were blocked from the sandbox, so those two facts
+  come from search snippets and coverage such as
+  https://www.artificiallawyer.com/2026/05/06/harvey-launches-legal-agent-bench/).
+- BigLaw Bench (Harvey): Core (transactional and litigation task
   categories), Workflows (SPA Deal Points, agentic extraction over Share
   Purchase Agreements), Retrieval (long contracts with cross-references and
   defined terms; discovery emails). Rubric-graded: positive points for

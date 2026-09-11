@@ -184,7 +184,7 @@ Read surface (STABLE unless noted):
 | `files(glob)` | `path, size, mtime, kind` |
 | `lines(path)` | `lineno, text` |
 | `grep(pattern [, glob])` | `path, lineno, text` |
-| `read(path)` | `text` (one row) |
+| `read(path)` | `text` (one row); parses `.docx`, `.pdf`, `.xlsx`, `.pptx` as well as text, via `pandoc` in the sandbox with Rust readers as fallback |
 | `chunks(text, size [, overlap])` IMMUTABLE | `ordinal, text, tokens` |
 | `git_log([n])`, `git_diff([ref])`, `git_blame(path)` | commit and line-level history |
 | `env(name)` | value, allow-listed names only |
@@ -662,7 +662,8 @@ resume. Demo: overnight run, morning `SELECT generator,
 difficulty, AVG(solved), AVG(calls), AVG(depth) FROM trace_tasks GROUP BY 1, 2`.
 
 **M7 — Benchmarks and write-up.** Task packs for OOLONG and a Terminal-Bench
-subset first, then the finance and legal learning tracks with their
+subset first, then Harvey LAB scored with its own evaluator, then the
+finance and remaining legal learning tracks with their
 learning-on versus learning-off runs, then the rest of section 7; the plain-agent baseline on the
 same provider layer; plots (accuracy vs context at cost parity, calls vs
 difficulty, estimate accuracy over time, plan-space size vs query shape);
@@ -726,7 +727,8 @@ tables, and aggregation).
 | **Finance** | FinanceBench (150 open questions over 10-K/10-Q filings; full set on request from Patronus) | numeric and factual answers with evidence pages; numeric tolerance plus evidence-page match | the same filing structure recurs across companies, so a learned `find_line_item(kind)` function and playbook entries ("income statement chunk, then grep the label") should transfer |
 | **Finance** | FinQA (numerical reasoning over report pages, MIT) and TAT-QA (16,552 questions over hybrid table plus text contexts) | program or number exact match | thousands of instances, so learning curves have statistical power; questions cluster by reasoning type (ratio, growth, sum) |
 | **Legal** | CUAD (510 commercial contracts, 41 clause categories, CC BY 4.0) | clause spans per category; token F1 against gold spans | one `CREATE FUNCTION has_clause(kind, text)` per category is refined contract after contract; measure per-category precision and recall over the stream |
-| **Legal** | Harvey Lab's BigLaw Bench (Core: transactional and litigation tasks; Workflows: SPA Deal Points extraction across Share Purchase Agreements; Retrieval: long contracts with cross-references and defined terms, plus discovery emails). Samples and rubrics public, full set on request from Harvey | rubric grading with positive points for requirements met and negative points for errors such as hallucinations, plus source reliability; scored by a `judge` role against the published rubrics, with the answer score read as "% of a lawyer-quality work product" | Workflows repeats one extraction schema across many SPAs, the ideal shape for refined `CREATE FUNCTION` extractors and playbook transfer; Retrieval's cross-references and defined terms exercise `chunks`, `grep` and recursive CTEs (follow a defined term to its definition) |
+| **Legal, headline** | **Harvey LAB** (Legal Agent Benchmark, MIT, `harveyai/harvey-labs`): 1,671 tasks across 24 practice areas plus contracting, each a `task.json` (instructions, `work_type` analyze / draft / review / research, expected deliverable files) with a `documents/` matter folder; graded against 75,000+ expert-written pass/fail criteria by two LLM judges (defaults Claude Sonnet 4.6 and GPT-5.5) with **all-pass** scoring, so a task counts only if every criterion passes. Frontier models completed under 10% end to end at launch (May 2026); the Artificial Analysis leaderboard sits around 25% as of September 2026 | LAB's own evaluator, unchanged: Callgebra writes deliverables to `output/` and `evaluation.run_eval` scores them, so numbers are comparable with the public leaderboard. All-pass rate is the headline, criterion pass rate the diagnostic | LAB's agent gets exactly `bash, read, write, edit, glob, grep, finish`, which is the CallSQL surface (`shell`, `read`, `write_file`, `patch`, `files`, `grep`, `FINAL`) one to one, so it is the cleanest external test of "everything is SQL". Workflows repeat across scenarios (`extract-psa-key-terms/scenario-01..`), the shape self-learning needs; the harsh all-pass metric makes any learning gain unambiguous |
+| **Legal** | Harvey's BigLaw Bench (Core: transactional and litigation tasks; Workflows: SPA Deal Points extraction across Share Purchase Agreements; Retrieval: long contracts with cross-references and defined terms, plus discovery emails). Samples and rubrics public, full set on request from Harvey | rubric grading with positive points for requirements met and negative points for errors such as hallucinations, plus source reliability; scored by a `judge` role against the published rubrics, with the answer score read as "% of a lawyer-quality work product" | Workflows repeats one extraction schema across many SPAs, the ideal shape for refined `CREATE FUNCTION` extractors and playbook transfer; Retrieval's cross-references and defined terms exercise `chunks`, `grep` and recursive CTEs (follow a defined term to its definition) |
 | **Legal** | LegalBench (162 tasks; per-task licenses, filter to permissive) | mostly yes/no and short-answer, exact match | many small task families with shared legal reasoning; tests whether playbook entries transfer *across* tasks, not just within |
 | **Synthetic, both** | generated contracts with planted clauses; generated statements with planted figures and inconsistencies | code oracle, unlimited instances | feeds the continual generators; hardness dialled by document length, distractors and paraphrase |
 
@@ -745,7 +747,19 @@ Measurement design, the same for every track:
    replay eval that admitted it; the report lists reverts, so the learning
    rate and the regret are both visible.
 
-Licensing note: FinanceBench's open sample and CUAD are permissive;
+Running LAB from Callgebra: import each task directory as a task row with
+the matter folder mounted read-only as the workspace; `read(path)` must
+parse `.docx`, `.pdf`, `.xlsx` and `.pptx` (LAB uses Pandoc, MarkItDown and
+pdfplumber; Callgebra shells out to `pandoc` in the sandbox and falls back
+to Rust readers); deliverables are written with `CALL write_file`, `.docx`
+outputs via `pandoc` from Markdown; `FINAL` lists the deliverables the way
+LAB's `finish` tool does. Then LAB's `evaluation.run_eval` scores the
+`output/` directory. Runs go in `results/<run-id>/` in LAB's layout, so its
+comparison dashboards work on Callgebra runs too. Harvey also publishes
+BigLaw Bench: Research for agentic legal research; it joins the track once
+LAB runs.
+
+Licensing note: Harvey LAB is MIT; FinanceBench's open sample and CUAD are permissive;
 LegalBench is mixed and must be filtered per task; FinQA is MIT; TAT-QA's
 terms should be checked before redistribution of derived fixtures.
 
@@ -790,9 +804,9 @@ Resolved so far: the store is DuckDB, and every action the model takes is SQL
    cheap) or a Terminal-Bench-style task pack (exercises the SQL-mapped shell
    surface)?
 5. **Domain track order.** Finance first (FinanceBench and FinQA have
-   numeric oracles and thousands of instances) or legal first (CUAD's 41
-   clause categories are the cleanest test of function refinement)? The plan
-   assumes finance first.
+   numeric oracles and thousands of instances) or legal first (Harvey LAB is
+   the strongest public signal, and its tool surface matches ours exactly)?
+   The plan now assumes legal first with LAB, finance second.
 
 ---
 
