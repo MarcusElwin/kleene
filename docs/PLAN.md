@@ -31,7 +31,7 @@ SQL is a better language for *this specific job* for three reasons:
    *planning* is a combinatorial search (join ordering over LLM predicates is
    NP-hard, as for ordinary joins).
 3. **The trace is a relation.** Calls, spans, tokens, costs and depths land in
-   tables. The model, the harness and the human all inspect execution with the
+   DuckDB tables. The model, the harness and the human all inspect execution with the
    same language they use to drive it.
 
 **What the model actually sees.** A schema catalog: virtual tables for the
@@ -92,8 +92,8 @@ instances whose difficulty is dialled to keep the system at its frontier.
                │               │               │
                └───────────────┴───────────────┘
                                ▼
-        ┌──────────────── callgebra-trace ─────────────┐
-        │ append-only events → SQLite (rusqlite)       │
+        ┌──────────────── callgebra-store (DuckDB) ────┐
+        │ session tables · memo · append-only trace    │
         │ exposed back to queries as trace_* relations │
         └───────────────────────┬──────────────────────┘
                                 ▼
@@ -119,7 +119,7 @@ scripting and evaluation.
 |---|---|---|
 | **Hand-written interpreter over the `sqlparser` AST** | **Chosen** | Full control of the call algebra, of where async calls sit in the tree, of recursion and budgets. Small binary, fast builds. Every operator is ours to instrument. |
 | Apache DataFusion 55 | Rejected for v1 | Async scalar UDFs are hoisted only under Projection and Filter, table-function arguments are plan-time literals (no per-row fan-out), the memo-based optimizer is not what we want to study, and it pulls ~400 crates and minutes of compile time. Its `SqlToRel` planner (name resolution, coercion, decorrelation) remains an option for a later frontend swap. |
-| SQLite with UDFs and virtual tables | Used as **oracle and store**, not as engine | UDFs are synchronous, so calls would serialise, and there is no plan-level control. But it gives us persistence of session tables and the trace, and a reference semantics: pure-relational queries are differential-tested against SQLite. |
+| DuckDB (embedded, `duckdb` crate) | Used as **store and oracle**, not as engine | Its UDFs are synchronous, so calls would serialise, and there is no plan-level control. But it is one embedded file for session tables, memo and trace, it is Arrow-native and fast at analytics over large traces, and its SQL coverage (recursive CTEs, LATERAL, list functions) makes it the reference semantics for differential tests. Trade-off: the bundled build adds minutes to a clean compile; CI caches it and `DUCKDB_LIB_DIR` can point at a prebuilt library. |
 | GlueSQL / Polars SQL | Rejected | Sync core (GlueSQL 0.20), no recursive CTEs, no LATERAL, Polars SQL is explicitly internal. |
 
 ### 3.2 SQL dialect: "CallSQL"
@@ -162,6 +162,64 @@ Built-in call functions (each is a `CallKind`, see 3.3):
 task (or the model) declares, so the harness can swap in a code oracle
 (`AS SHELL`) when one exists and an LLM judge when one does not.
 
+#### Everything the model does is SQL
+
+There is no second channel. The model has no tool-calling API, no free-text
+commands, no Python. Every action, including side effects, is a CallSQL
+statement, so every action is planned, budgeted, traced and replayable the
+same way. The tool surface is therefore a catalog of relations and functions,
+each tagged with a **volatility class** the planner respects (the Postgres
+terms, with the same meaning):
+
+| Class | Meaning | Planner may |
+|---|---|---|
+| `IMMUTABLE` | same inputs, same output, forever (`chunks`, `SIM`; `LLM` with a pinned model is *treated* as immutable for memo purposes and flagged as such) | reorder, dedupe, memoise across runs |
+| `STABLE` | constant within one statement (`files`, `lines`, `grep`, `git_log`, `INBOX`) | reorder, dedupe within the statement |
+| `VOLATILE` | side effects or non-repeatable (`shell`, `write_file`, `web_fetch`, `SEND`) | nothing: evaluated exactly once per input row, in input order, never memoised, never moved past another volatile |
+
+Read surface (STABLE unless noted):
+
+| Relation / function | Columns or result |
+|---|---|
+| `files(glob)` | `path, size, mtime, kind` |
+| `lines(path)` | `lineno, text` |
+| `grep(pattern [, glob])` | `path, lineno, text` |
+| `read(path)` | `text` (one row) |
+| `chunks(text, size [, overlap])` IMMUTABLE | `ordinal, text, tokens` |
+| `git_log([n])`, `git_diff([ref])`, `git_blame(path)` | commit and line-level history |
+| `env(name)` | value, allow-listed names only |
+| `INBOX` | `from_session, ts, text`, messages from children (3.7) |
+| `memory` | `key, value, ts, session_id`, a plain table that persists across runs |
+| `trace_calls`, `trace_stmts`, `trace_sessions`, `trace_rounds` | the run's own trace, live |
+| `playbook` | learned SQL snippets and their success stats (3.6) |
+
+Write and side-effect surface (all VOLATILE, all statements rather than
+expressions so they cannot hide inside a predicate):
+
+| Statement | Result relation |
+|---|---|
+| `CALL shell(cmd [, cwd, timeout])` | `stdout, stderr, exit_code, duration_ms`; long output is also written to `shell_output(run_id, lineno, stream, text)` so the model can `grep` it instead of paging it into context |
+| `CALL write_file(path, text)`, `CALL append_file(path, text)` | `path, bytes` |
+| `CALL patch(path, old, new)` | `path, replaced`; rejected if the file changed since the model last read it, the staleness check a dedicated operator can enforce and a shell string cannot |
+| `CALL mkdir(path)`, `CALL remove(path)` | `path` |
+| `CALL web_search(q [, n])` | `rank, title, url, snippet` |
+| `CALL web_fetch(url)` | `url, status, text, tokens` |
+| `CALL git_commit(message)` | `sha` |
+| `INSERT INTO memory ...` | ordinary DML on the persistent table |
+| `SEND(handle, text)` | delivery row |
+
+Row-wise side effects go through `CALL ... FROM`:
+`CALL write_file(path, new_text) FROM rewritten_files;` runs once per row, in
+order. Because the arguments are a relation, the model naturally batches
+edits, and the trace records one statement with n effects rather than n
+opaque commands.
+
+Permissions are per session and per agent role (3.7): a role lists the
+relations and `CALL`s it may use, write paths are allow-listed, and `shell`
+runs in the sandbox (3.9). A statement that touches something outside the
+role's surface fails at validation, before planning, with the same
+error-as-result-row treatment as a syntax error.
+
 ### 3.3 The call algebra
 
 Ordinary relational operators: σ (filter), π (project), ⋈ (join), ∪, −, γ
@@ -185,6 +243,9 @@ to call costs):
 5. **Semi-join for EXISTS**: `NOT EXISTS` with a call predicate becomes an anti-semi-join that stops on the first refuting counterexample (short-circuit), rather than materialising the cross product.
 6. **Frontier limiting**: inside μ, a `LIMIT` or `ORDER BY score LIMIT k` in the recursive term becomes beam search; `MAXRECURSION` bounds depth.
 7. **Join ordering with call predicates**: dynamic programming over join orders where each candidate order has a call cost. This is where the plan space explodes and where the project deliberately looks.
+8. **Volatility fences**: rules 1 to 7 apply only across `IMMUTABLE` and
+   `STABLE` operators. A `VOLATILE` operator is a fence: nothing moves across
+   it, it is never deduplicated, and its input order is preserved.
 
 `EXPLAIN` prints the CallPlan as a tree with per-node estimated calls, tokens,
 dollars and depth, and the fragment class of the query (CQ / FO / recursive).
@@ -206,10 +267,10 @@ remaining budget, returning the estimate to the model instead.
   statement, inherited and subdivided by child sessions (a child gets a slice of
   its parent's remaining budget). Exceeding a budget cancels the statement, not
   the session, and returns a budget row to the model.
-- **Memo**: SQLite table `memo(model, prompt_hash, schema_hash, output, usage)`,
+- **Memo**: DuckDB table `memo(model, prompt_hash, schema_hash, output, usage)`,
   shared across sessions and runs. Replaying a run against a warm memo is free,
   which is how the test-suite runs real prompts without real calls.
-- **Session state**: every `CREATE TABLE` lands in the session's SQLite file.
+- **Session state**: every `CREATE TABLE` lands in the run's DuckDB file.
   Kill the process, restart, `callgebra resume <session>`, the tables and the
   transcript are still there. Checkpointing is a property of the storage, not a
   feature bolted on.
@@ -242,26 +303,69 @@ repeat until FINAL(...) or budget exhausted
 - Sub-calls run at `effort: low` on a cheaper model by default; the root runs
   at `high`. Both are `SET`-able per session and per call.
 
-### 3.6 Continual harness and hard cases
+### 3.6 Continual, self-learning harness
 
 The continual loop is itself a query over a `tasks` table: pull the next
 pending task by curriculum policy, run a session, record outcome, cost and
-difficulty, repeat. Generators keep the table non-empty:
+difficulty, repeat. Two things keep it alive: generators that keep the table
+non-empty, and learning that changes how the next task is attempted.
 
-| Generator | Hardness dial | Oracle |
+#### Where tasks come from
+
+| Source | Hardness dial | Oracle |
 |---|---|---|
+| **User input**: tasks typed in the TUI or dropped into `tasks/` as YAML, plus every real question asked in an interactive session (recorded as a task with the user's accept/reject as the label) | as given; difficulty is *estimated* (below) | user verdict, or a user-supplied check |
 | Random 3-SAT | clause/variable ratio near 4.26, n | code (`AS SHELL`) |
 | Graph colouring / reachability / shortest path | n, edge density, k | code |
-| Procedural puzzles (Reasoning Gym style: arithmetic chains, string rewriting, sudoku-like grids) | size / depth parameters | code |
+| Procedural puzzles (Reasoning Gym style) | size, depth | code |
 | Long-context lookups over generated corpora (OOLONG-like) | corpus size, distractor rate | code |
-| Repo questions over real checkouts | repo size, hop count | LLM judge with rubric |
-| **Propose / Solve / Verify self-play** | learnability target (~50% solve rate, as in Absolute Zero Reasoner) | proposer writes task plus a `VERIFY` function; a separate verifier model or code oracle judges, never the proposer |
+| Repo questions and edits over real checkouts | repo size, hop count, tests to pass | tests, or LLM judge with rubric |
+| **Propose / Solve / Verify self-play** | learnability target (~50% solve rate, as in Absolute Zero Reasoner) | proposer writes task plus a `VERIFY` function; a separate verifier agent or code oracle judges, never the proposer |
 
-Curriculum: keep a running solve rate per (generator, difficulty); step the
-dial up when solve rate exceeds 0.7, down below 0.3. The harness's own metrics
-(calls, depth, branching, tokens, plan-space size) are recorded per task so
-difficulty can be correlated with search complexity, which is the research
-question.
+#### Difficulty
+
+Every task and every solver configuration (model alias, effort, depth cap,
+budget) gets a rating. Solve/fail outcomes update both with a Bradley-Terry
+style pairwise model: a task that beats strong configurations is hard, a
+configuration that beats hard tasks is strong. Ratings live in
+`task_ratings` and `solver_ratings`, so "how hard is this" and "which
+configuration should try it" are both `ORDER BY rating` queries. Generated
+tasks carry their generator's dial as a prior; user tasks get a prior from a
+cheap classifier call, refined by outcomes.
+
+Curriculum policy: sample the next task where the current solver's expected
+solve probability is near 0.5, step a generator's dial up when its solve rate
+exceeds 0.7 and down below 0.3, and re-queue failed user tasks after the
+harness has learned something relevant (a new playbook entry or a changed
+function).
+
+#### What the harness learns (no weight updates)
+
+All of it lives in tables, all of it is inspectable and revertible, and every
+change is adopted only after it wins on a replay eval (section 7).
+
+| Learned object | Table | Signal | Used by |
+|---|---|---|---|
+| **Playbook**: SQL snippets that solved tasks, keyed by task kind and the catalog they needed | `playbook(kind, sql, wins, tries, avg_cost)` | `FINAL` accepted by oracle or user | rendered into the cached prefix as examples for similar tasks; queryable by the model (`SELECT sql FROM playbook WHERE kind = ...`) |
+| **Prompt-defined functions**: refined prompts for `VERIFY`, `mapper`, `judge` roles | `functions` with a version ledger | disagreement with oracles, user corrections | catalog; Prime Agent style `/refine` with before/after snapshots and rollback |
+| **Cost model**: selectivity and branching estimates per predicate template and per `EXPAND` prompt | `estimates(template_hash, sel, branch, n)` | `EXPLAIN ANALYZE` actuals | planner (3.3); a learned optimizer in the classical sense |
+| **Routing**: which alias solved which task kinds at what cost | `solver_ratings` | outcomes | default alias per role and per task kind; with Aura, exported as routing weights |
+| **Curriculum state** | `generator_state(generator, dial, solve_rate)` | outcomes | task selection |
+| **User preferences**: accepted answer shapes, verbosity, forbidden actions | `preferences` | explicit thumbs, edits to `FINAL`, rejections | rendered into the prefix; enforced as role permissions where they are hard rules |
+
+Guardrails: the base system prompt is immutable; learned content is appended
+in clearly marked sections; every learned object has a version and a
+`learned_from` trace pointer; adoption requires beating the current version
+on the replay eval for the affected task kinds at equal or lower cost; a
+`callgebra learn revert <version>` command exists and is tested.
+
+#### Weight-level learning (stretch)
+
+Traces already have the shape of rollouts: a tree of sessions, statements,
+calls and rewards. An exporter writes them in the `verifiers` trace format
+so a Callgebra task pack can be a `prime-rl` environment, with `VERIFY`
+functions as the reward. Out of scope until the harness-level learning above
+has data to show it is worth it.
 
 ### 3.7 Subagents
 
@@ -390,7 +494,8 @@ allow-list. Every tool call is a trace row with its arguments and byte counts.
 
 ### 3.10 Trace
 
-A `tracing` `Layer` writes spans and events into SQLite: `runs`, `sessions`
+A `tracing` `Layer` writes spans and events into DuckDB through the appender
+API: `runs`, `sessions`
 (tree via `parent_id`, depth), `statements` (SQL, plan JSON, estimates,
 actuals), `calls` (model, prompt hash, tokens in/out, cache read/write, dollars,
 latency, parent statement, parent operator), `tool_calls`, `rounds` (for
@@ -461,7 +566,8 @@ callgebra/
 │   ├── callgebra-exec/        async operators, recursion, budgets, memo
 │   ├── callgebra-llm/         Provider trait, Aura (Open Responses), Anthropic, OpenAI-compat, replay
 │   ├── callgebra-tools/       virtual tables, table functions, sandbox
-│   ├── callgebra-trace/       event model, tracing Layer, SQLite schema
+│   ├── callgebra-store/       DuckDB: session tables, memo, trace schema, appender
+│   ├── callgebra-trace/       event model, tracing Layer → store
 │   ├── callgebra-harness/     RLM REPL loop, sessions, agents and roles, continual loop, generators
 │   ├── callgebra-daemon/      socket server, JSONL protocol, cursors
 │   ├── callgebra-tui/         ratatui client
@@ -473,14 +579,13 @@ callgebra/
 ```
 
 Dependencies (versions verified on crates.io on 2026-09-11): `sqlparser 0.62`,
-`tokio 1.53`, `reqwest` (rustls), `serde`/`serde_json`, `rusqlite 0.40`
-(bundled), `tracing 0.1` / `tracing-subscriber 0.3`, `ratatui 0.30.2`,
+`tokio 1.53`, `reqwest` (rustls), `serde`/`serde_json`, `duckdb 1.10505`
+(bundled, DuckDB 1.5), `tracing 0.1` / `tracing-subscriber 0.3`, `ratatui 0.30.2`,
 `crossterm 0.29`, `tui-tree-widget 0.24`, `tui-markdown 0.3`, `syntect`,
 `hakoniwa 1.7`, `clap`, `anyhow`/`thiserror`, `proptest`, `insta`, and
 `aura-types` as a git dependency on `UmaiTech/aura-llm-gateway` (0.18, MIT).
 Optional later: `ascent`/`datafrog` (not needed, semi-naive is small to write),
-`duckdb` (Arrow-native analytics over big traces), `wasmtime` (WASM tool
-plugins), `opentelemetry` export.
+`wasmtime` (WASM tool plugins), `opentelemetry` export.
 
 ---
 
@@ -493,13 +598,15 @@ Each milestone ends with something runnable and a demo query.
 
 **M1 — Relational core.** `callgebra-sql` + `callgebra-exec` for the pure
 subset: SELECT/JOIN/WHERE/GROUP BY/ORDER/LIMIT, subqueries, EXISTS, CTEs and
-recursive CTEs with semi-naive evaluation. Differential tests against SQLite
+recursive CTEs with semi-naive evaluation. DuckDB store. Differential tests
+against DuckDB
 with `proptest`-generated queries and data. Demo: transitive closure and
 shortest path over a generated graph, `callgebra repl` with a local table.
 
 **M2 — Call algebra.** `LLM*` scalar functions, prompt-defined
-`CREATE FUNCTION`, `EXPAND`, `LATERAL` table functions, filesystem tools.
-`CallPlan` with `CallKind`, dedupe-then-map, batching, memo in SQLite,
+`CREATE FUNCTION`, `EXPAND`, `LATERAL` table functions, the read tool
+surface and the `CALL` side-effect statements with volatility fences.
+`CallPlan` with `CallKind`, dedupe-then-map, batching, memo in DuckDB,
 budgets, `EXPLAIN` with estimates. `Provider` trait with the Aura backend
 (Open Responses over HTTP, streaming, cost from `usage.cost_usd`), the
 Anthropic direct backend, and recording/replay fixtures; model aliases in
@@ -527,15 +634,19 @@ Plan view showing alternatives and the size of the plan space. Demo: a
 three-way join with two LLM predicates where the naive plan costs 10× the
 chosen one, and a query whose plan enumeration is visibly exponential.
 
-**M6 — Continual harness.** `tasks` table, generators (3-SAT, graph problems,
-procedural puzzles, generated corpora, repo questions), propose/solve/verify
-with a separate verifier, curriculum, task board view, unattended run with
-budgets and resume. Demo: overnight run, morning `SELECT generator,
+**M6 — Continual, self-learning harness.** `tasks` table, user-submitted
+tasks, generators (3-SAT, graph problems, procedural puzzles, generated
+corpora, repo questions), propose/solve/verify with a separate verifier,
+ratings and curriculum, playbook and function refinement with replay-gated
+adoption and revert, task board view, unattended run with budgets and
+resume. Demo: overnight run, morning `SELECT generator,
 difficulty, AVG(solved), AVG(calls), AVG(depth) FROM trace_tasks GROUP BY 1, 2`.
 
-**M7 — Research artefacts.** Benchmark scripts, plots (accuracy vs context,
-cost vs baseline, calls vs difficulty, plan-space size vs query shape), the
-dialect reference, and a write-up: "Callgebra: a relational calculus for
+**M7 — Benchmarks and write-up.** Task packs for OOLONG and a Terminal-Bench
+subset first, then the rest of section 7; the plain-agent baseline on the
+same provider layer; plots (accuracy vs context at cost parity, calls vs
+difficulty, estimate accuracy over time, plan-space size vs query shape);
+the dialect reference; and a write-up: "Callgebra: a relational calculus for
 language-model computation".
 
 Suggested order of attack after this plan is approved: M0 and M1 in one go,
@@ -543,7 +654,52 @@ since M1 is deterministic and testable without any API key.
 
 ---
 
-## 7. Risks and how the plan handles them
+## 7. Benchmarks and evals
+
+Three layers, cheapest first. The first two run in CI without a model.
+
+**Correctness of the engine (no model).**
+- Differential tests: `proptest` generates schemas, data and CallSQL queries
+  in the pure subset; results must match DuckDB row for row, recursive CTEs
+  included.
+- Planner invariants: every rewrite rule has a property test that the
+  rewritten plan's result equals the original's on the replay provider.
+- Replay evals: every demo query and every solved task is recorded as a
+  fixture, so the whole task suite re-runs offline; a diff in `FINAL` or in
+  call count is a regression.
+
+**Efficiency of the planner (model optional).**
+- Estimate accuracy: estimated versus actual calls, tokens and dollars per
+  statement, tracked over time; the learned cost model (3.6) must move this
+  toward zero.
+- Cost parity, the RLM paper's framing: for each task family, accuracy of
+  Callgebra against a plain tool-calling agent loop *built on the same
+  provider layer and budgets*, so the comparison isolates the SQL abstraction
+  rather than the model or the client, at equal spend.
+- Plan-space size and planning time per query shape, the "where planning
+  becomes search" curve.
+
+**External benchmarks (model required).** Start with the two marked first;
+the rest become task packs under `tasks/` once the harness is stable.
+
+| Benchmark | What it exercises here | Notes |
+|---|---|---|
+| **OOLONG** and OOLONG-Pairs (first) | long-context aggregation and pairwise reasoning; partition-and-map with `chunks` and `RLM`; the headline RLM comparison | offline, deterministic scoring; the RLM paper's numbers are the baseline to beat at cost parity |
+| **BrowseComp-Plus** | retrieval over a fixed corpus of 10 to 1,000 documents; `grep` and semantic filters; `VERIFY` on candidate answers | fixed corpus, no live web needed |
+| **Terminal-Bench** (first, subset) | the whole SQL-mapped shell surface: `CALL shell`, `patch`, `write_file`, tests as oracles | proves the "everything is SQL" thesis on real terminal tasks |
+| **SWE-bench Verified / Lite** (subset) | repo navigation with `files`/`grep`/`lines`, hypothesis search with `EXPAND` and `reviewer` agents, edits with `patch`, tests as `VERIFY` | expensive; a 50-task subset is enough to compare plans |
+| **Spider 2.0 / BIRD** | the model's ability to write correct SQL under a schema, a prerequisite for everything else | cheap; also measures the CallSQL frontend's error messages |
+| **LongBench-v2**, RULER, S-NIAH | needle and reasoning over long inputs; depth 1 versus depth 2 | RULER's synthetic tasks double as generators |
+| **Reasoning Gym** | procedural reasoning with verifiers; the same generators feed the continual harness | offline, unlimited instances |
+| Random 3-SAT near 4.26, **GraphOmni** / NLGraph, **ZebraLogic** | recursive-CTE search with `EXPAND`, beam limits, `VERIFY`/`REFUTE` structure | code oracles throughout |
+| **SemBench**, TAG-Bench | semantic-operator systems: cost and quality of semantic filters, joins and aggregations against LOTUS and Palimpzest | the direct comparison for the planner's cascades and semi-joins |
+
+Reporting: one `evals` table per run with accuracy, calls, tokens, dollars,
+depth, branching and wall clock per task; a `callgebra bench` command that
+renders it; the TUI tasks board reads the same table. Baselines are recorded
+as replay fixtures too, so a comparison is reproducible without re-spending.
+
+## 8. Risks and how the plan handles them
 
 | Risk | Mitigation |
 |---|---|
@@ -551,14 +707,18 @@ since M1 is deterministic and testable without any API key.
 | Cost blow-up from a careless `CROSS JOIN` with a call predicate | Mandatory `EXPLAIN` estimate and budget refusal before execution; per-statement and per-session budgets; dedupe and memo; hard cap on calls per statement. |
 | Deep recursion degrades quality (observed at depth 2 on current models) | Depth capped at 2, default 1 for sub-calls; branching and frontier limits; budget slices shrink with depth. |
 | Prompt cache misses from a changing prefix | Catalog and rules frozen per session, one breakpoint, append-only history, cache read tokens visible in the TUI. |
-| Non-determinism makes tests flaky | `MockProvider` replay of recorded fixtures; all relational tests are differential against SQLite and need no model at all. |
+| Non-determinism makes tests flaky | `ReplayProvider` fixtures; all relational tests are differential against DuckDB and need no model at all. |
+| DuckDB bundled build slows clean compiles | Cached in CI, `DUCKDB_LIB_DIR` for a prebuilt library locally, and the store sits behind one crate so nothing else recompiles when it does. |
 | Sandbox escape via `shell` | `hakoniwa` on Linux, read-only workspace by default, explicit allow-list for network, every call traced. Unsafe fallback must be opted into. |
 | Name collision | `callgebra` exists as a small JavaScript library (`fluture-js/callgebra`) and npm package; crates.io and PyPI are free. Keep the name, note the prior art in the README. |
 | Scope creep | The milestones are cumulative and each ends with a demo; the planner (M5) and continual harness (M6) come after a working RLM loop, not before. |
 
 ---
 
-## 8. Open questions for you
+## 9. Open questions for you
+
+Resolved so far: the store is DuckDB, and every action the model takes is SQL
+(no side channel for tools).
 
 1. **Aura as the default path.** The plan makes Aura the preferred backend
    and keeps the direct Anthropic and OpenAI-compatible backends for
@@ -571,12 +731,14 @@ since M1 is deterministic and testable without any API key.
    LLM-judged)? The plan assumes both, corpus first.
 3. **Web search backend.** Anthropic server-side `web_search` (simplest) or a
    pluggable backend for local models too?
-4. **Trace store.** SQLite only (chosen) or SQLite plus DuckDB for analytics
-   over large traces?
+4. **First benchmark.** Section 7 lists candidates. Which one should the
+   M3 demo be built around: an OOLONG-style long-context task (offline,
+   cheap) or a Terminal-Bench-style task pack (exercises the SQL-mapped shell
+   surface)?
 
 ---
 
-## 9. How it gets built
+## 10. How it gets built
 
 The crates in section 5 have thin, explicit interfaces, which is deliberate:
 implementation fans out to parallel subagents, one per crate, with the
@@ -590,7 +752,7 @@ interfaces fixed first.
 2. **M0 + M1 in parallel.** Agents for `callgebra-sql` (parser subset and
    planner), `callgebra-exec` (operators and semi-naive recursion),
    `callgebra-trace` (schema and layer) and the differential test harness
-   against SQLite. Integration and review by the coordinating session.
+   against DuckDB. Integration and review by the coordinating session.
 3. **M2 in parallel.** `callgebra-llm` (Aura, Anthropic, replay),
    `callgebra-algebra` (call kinds, rules, EXPLAIN), `callgebra-tools`.
 4. **M3 onward** alternates: harness and agents, then TUI and daemon, then

@@ -186,7 +186,7 @@ the item is marked (snippet).
 | sqlparser | 0.62.0 | parser; recursive CTEs, EXISTS, LATERAL, table functions, visitor feature |
 | datafusion | 55.0.0 | rejected for v1 (async UDFs only under projection/filter, plan-time table-function args, heavy build) |
 | tokio | 1.53.1 | runtime |
-| rusqlite | 0.40.2 | session store, memo, trace, differential oracle |
+| duckdb | 1.10505.0 (DuckDB 1.5) | session store, memo, trace, analytics, differential oracle; bundled build is slow, cache it |
 | ratatui | 0.30.2 | TUI |
 | crossterm | 0.29.0 | terminal backend |
 | tui-tree-widget | 0.24.1 | call tree |
@@ -195,10 +195,26 @@ the item is marked (snippet).
 | genai | 0.6.5 | considered for multi-provider; not needed while we speak the Messages API directly |
 | rig-core | 0.42.0 | considered; heavier abstraction than we want |
 | ascent / datafrog | 0.8.1 / 2.0.1 | not needed; semi-naive evaluation is written by hand |
-| duckdb | 1.10505.0 | optional trace analytics later |
 
 Notes: no official Anthropic Rust SDK exists (confirmed May 2026). `birdcage`
 was archived in July 2026, so it is not used.
+
+## Benchmarks considered
+
+- OOLONG / OOLONG-Pairs and BrowseComp-Plus: the RLM paper's evaluation
+  suite, https://arxiv.org/abs/2512.24601
+- Terminal-Bench: terminal tasks with tests as oracles, the natural test of a
+  SQL-mapped shell surface. https://github.com/laude-institute/terminal-bench
+- SWE-bench Verified / Lite: repository edits graded by tests.
+  https://github.com/SWE-bench/SWE-bench
+- Spider 2.0 and BIRD: text-to-SQL, measures the model's SQL writing under a
+  schema. https://spider2-sql.github.io/ , https://bird-bench.github.io/
+- LongBench-v2, RULER, S-NIAH: long-context reasoning and retrieval.
+- Reasoning Gym: https://github.com/open-thought/reasoning-gym
+- Random 3-SAT (Mitchell, Selman, Levesque 1992), GraphOmni
+  https://arxiv.org/pdf/2504.12764, ZebraLogic.
+- SemBench https://github.com/SemBench/SemBench and TAG-Bench (LOTUS) for
+  semantic-operator systems.
 
 ## Naming
 

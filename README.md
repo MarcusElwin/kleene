@@ -29,7 +29,10 @@ Written in Rust. Model-agnostic: calls go through the
 [Aura LLM Gateway](https://github.com/UmaiTech/aura-llm-gateway) (Open
 Responses API) when one is configured, or directly to Anthropic or any
 OpenAI-compatible endpoint. Sub-work is delegated to declared agent roles
-with `CREATE AGENT` and `SPAWN`.
+with `CREATE AGENT` and `SPAWN`. Everything the model does is SQL: shell,
+file edits, web and memory are `CALL` statements with volatility classes the
+planner respects. Session tables, memo and trace live in one embedded DuckDB
+file.
 
 The name is also used by an unrelated small JavaScript library
 (`fluture-js/callgebra`).
