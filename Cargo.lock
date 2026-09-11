@@ -466,6 +466,7 @@ dependencies = [
  "callgebra-trace",
  "serde",
  "serde_json",
+ "sqlparser",
  "thiserror",
  "tokio",
  "tracing",
