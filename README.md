@@ -21,7 +21,9 @@ WHERE VERIFY(candidate)
 anti-semi-join that stops on the first refuting counterexample. `EXPLAIN`
 tells you how many calls that is before you spend them.
 
-Status: **planning**. Read [`docs/PLAN.md`](docs/PLAN.md) for the
+Status: **M0 scaffold**. The workspace builds, the interface types are
+in place, and every command except `--version` says which milestone brings
+it. Read [`docs/PLAN.md`](docs/PLAN.md) for the
 architecture, dialect, planner rules, harness design, TUI layout and
 milestones, and [`docs/RESEARCH.md`](docs/RESEARCH.md) for the sources.
 

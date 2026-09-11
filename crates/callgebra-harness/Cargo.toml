@@ -1,0 +1,26 @@
+[package]
+name = "callgebra-harness"
+description = "RLM REPL loop, sessions, agent roles, continual loop and task generators"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+callgebra-core = { workspace = true }
+callgebra-sql = { workspace = true }
+callgebra-algebra = { workspace = true }
+callgebra-exec = { workspace = true }
+callgebra-llm = { workspace = true }
+callgebra-tools = { workspace = true }
+callgebra-store = { workspace = true }
+callgebra-trace = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[lints]
+workspace = true
