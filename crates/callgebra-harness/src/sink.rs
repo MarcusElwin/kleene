@@ -5,9 +5,7 @@
 //! tools in. The sink also keeps the session [`Catalog`] in step with the
 //! store, so a table created by one statement is visible to the next.
 
-use callgebra_core::{
-    Batch, Catalog, Schema, TableDef, TableSource, Value, Volatility,
-};
+use callgebra_core::{Batch, Catalog, Schema, TableDef, TableSource, Value, Volatility};
 use callgebra_exec::{BatchStream, CallSink, ExecError};
 use callgebra_store::{DuckDbStore, Store, StoreError};
 use std::sync::Arc;
@@ -96,7 +94,11 @@ impl CallSink for StoreSink {
 
     async fn scan(&self, table: &str) -> Result<BatchStream, ExecError> {
         let batch = self.store.scan(table).await.map_err(store_err)?;
-        Ok(callgebra_exec::chunk(batch.schema.clone(), batch.rows, 1024))
+        Ok(callgebra_exec::chunk(
+            batch.schema.clone(),
+            batch.rows,
+            1024,
+        ))
     }
 
     async fn create_table(

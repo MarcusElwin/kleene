@@ -47,11 +47,7 @@ fn engine(e: duckdb::Error) -> StoreError {
         return StoreError::NoSuchTable(name);
     }
     if msg.contains("already exists") {
-        let name = msg
-            .split('"')
-            .nth(1)
-            .unwrap_or("?")
-            .to_string();
+        let name = msg.split('"').nth(1).unwrap_or("?").to_string();
         return StoreError::AlreadyExists(name);
     }
     StoreError::Engine(msg)
@@ -86,7 +82,10 @@ pub fn literal(v: &Value) -> String {
         Value::Json(j) => format!("'{}'", j.to_string().replace('\'', "''")),
         Value::Vector(v) => format!(
             "[{}]::FLOAT[]",
-            v.iter().map(|x| format!("{x:?}")).collect::<Vec<_>>().join(", ")
+            v.iter()
+                .map(|x| format!("{x:?}"))
+                .collect::<Vec<_>>()
+                .join(", ")
         ),
     }
 }
@@ -143,7 +142,15 @@ fn data_type_of(duck: &str) -> DataType {
         DataType::Bool
     } else if matches!(
         u.as_str(),
-        "TINYINT" | "SMALLINT" | "INTEGER" | "BIGINT" | "HUGEINT" | "UTINYINT" | "USMALLINT" | "UINTEGER" | "UBIGINT"
+        "TINYINT"
+            | "SMALLINT"
+            | "INTEGER"
+            | "BIGINT"
+            | "HUGEINT"
+            | "UTINYINT"
+            | "USMALLINT"
+            | "UINTEGER"
+            | "UBIGINT"
     ) {
         DataType::Int
     } else if u == "DOUBLE" || u == "FLOAT" || u == "REAL" || u.starts_with("DECIMAL") {
@@ -170,13 +177,16 @@ fn from_duck(v: duckdb::types::Value) -> Result<Value, StoreError> {
         D::USmallInt(i) => Value::Int(i64::from(i)),
         D::UInt(i) => Value::Int(i64::from(i)),
         D::UBigInt(i) => Value::Int(
-            i64::try_from(i).map_err(|_| StoreError::Engine(format!("integer {i} out of range")))?,
+            i64::try_from(i)
+                .map_err(|_| StoreError::Engine(format!("integer {i} out of range")))?,
         ),
         D::HugeInt(i) => Value::Int(
-            i64::try_from(i).map_err(|_| StoreError::Engine(format!("integer {i} out of range")))?,
+            i64::try_from(i)
+                .map_err(|_| StoreError::Engine(format!("integer {i} out of range")))?,
         ),
         D::UHugeInt(i) => Value::Int(
-            i64::try_from(i).map_err(|_| StoreError::Engine(format!("integer {i} out of range")))?,
+            i64::try_from(i)
+                .map_err(|_| StoreError::Engine(format!("integer {i} out of range")))?,
         ),
         D::Float(f) => Value::Float(f64::from(f)),
         D::Double(f) => Value::Float(f),
@@ -316,7 +326,8 @@ impl DuckDbStore {
     /// Run arbitrary SQL that returns no rows; returns rows affected.
     pub async fn execute(&self, sql: &str) -> Result<usize, StoreError> {
         let sql = sql.to_string();
-        self.with_conn(move |c| c.execute(&sql, []).map_err(engine)).await
+        self.with_conn(move |c| c.execute(&sql, []).map_err(engine))
+            .await
     }
 
     fn init_trace_schema_blocking(&self) -> Result<(), StoreError> {
@@ -329,7 +340,8 @@ impl DuckDbStore {
 
     /// Create the trace and memo tables if they do not exist. Called on open.
     pub async fn init_trace_schema(&self) -> Result<(), StoreError> {
-        self.with_conn(|c| c.execute_batch(TRACE_DDL).map_err(engine)).await
+        self.with_conn(|c| c.execute_batch(TRACE_DDL).map_err(engine))
+            .await
     }
 
     /// A trace sink writing into this store.
@@ -352,7 +364,9 @@ impl DuckDbStore {
         Ok(b.rows.into_iter().next().map(|r| MemoEntry {
             response: match &r[0] {
                 Value::Json(j) => j.clone(),
-                Value::Text(s) => serde_json::from_str(s).unwrap_or(serde_json::Value::String(s.clone())),
+                Value::Text(s) => {
+                    serde_json::from_str(s).unwrap_or(serde_json::Value::String(s.clone()))
+                }
                 other => serde_json::Value::String(other.render()),
             },
             input_tokens: r[1].as_int().unwrap_or(0) as u64,
@@ -362,7 +376,12 @@ impl DuckDbStore {
     }
 
     /// Store a memoised response (replacing any previous one).
-    pub async fn memo_put(&self, model: &str, fingerprint: &str, entry: &MemoEntry) -> Result<(), StoreError> {
+    pub async fn memo_put(
+        &self,
+        model: &str,
+        fingerprint: &str,
+        entry: &MemoEntry,
+    ) -> Result<(), StoreError> {
         let sql = format!(
             "INSERT OR REPLACE INTO memo (model, fingerprint, response, input_tokens, output_tokens, cost_usd, created_at) VALUES ({}, {}, {}, {}, {}, {}, make_timestamp({}))",
             literal(&Value::Text(model.into())),
@@ -446,13 +465,20 @@ impl Store for DuckDbStore {
                 for chunk in batch.rows.chunks(500) {
                     let values: Vec<String> = chunk
                         .iter()
-                        .map(|r| format!("({})", r.iter().map(literal).collect::<Vec<_>>().join(", ")))
+                        .map(|r| {
+                            format!("({})", r.iter().map(literal).collect::<Vec<_>>().join(", "))
+                        })
                         .collect();
                     let sql = format!("INSERT INTO {table} VALUES {}", values.join(", "));
                     c.execute_batch(&sql).map_err(|e| match engine(e) {
                         StoreError::NoSuchTable(_) => StoreError::NoSuchTable(name.clone()),
-                        StoreError::Engine(m) if m.contains("Binder Error") || m.contains("Conversion Error") => {
-                            StoreError::SchemaMismatch { table: name.clone(), detail: m }
+                        StoreError::Engine(m)
+                            if m.contains("Binder Error") || m.contains("Conversion Error") =>
+                        {
+                            StoreError::SchemaMismatch {
+                                table: name.clone(),
+                                detail: m,
+                            }
                         }
                         other => other,
                     })?;
@@ -554,8 +580,7 @@ impl Store for DuckDbStore {
         let b = self
             .query("SELECT table_name FROM duckdb_tables() WHERE NOT internal ORDER BY table_name")
             .await?;
-        Ok(b
-            .rows
+        Ok(b.rows
             .into_iter()
             .map(|r| r[0].render())
             .filter(|n| !INTERNAL_TABLES.contains(&n.as_str()))

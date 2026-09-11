@@ -90,10 +90,7 @@ fn table_strategy(index: usize) -> impl Strategy<Value = TableSpec> {
             .enumerate()
             .map(|(i, t)| (format!("c{i}"), *t))
             .collect();
-        let row = types
-            .iter()
-            .map(|t| value_strategy(*t))
-            .collect::<Vec<_>>();
+        let row = types.iter().map(|t| value_strategy(*t)).collect::<Vec<_>>();
         prop::collection::vec(row, 0..=12).prop_map(move |rows| TableSpec {
             name: format!("t{index}"),
             columns: columns.clone(),
@@ -153,8 +150,15 @@ impl Scalar {
             Scalar::And(a, b) => format!("({} AND {})", a.sql(), b.sql()),
             Scalar::Or(a, b) => format!("({} OR {})", a.sql(), b.sql()),
             Scalar::Not(a) => format!("(NOT {})", a.sql()),
-            Scalar::IsNull(a, neg) => format!("({} IS {}NULL)", a.sql(), if *neg { "NOT " } else { "" }),
-            Scalar::Case(c, t, e) => format!("(CASE WHEN {} THEN {} ELSE {} END)", c.sql(), t.sql(), e.sql()),
+            Scalar::IsNull(a, neg) => {
+                format!("({} IS {}NULL)", a.sql(), if *neg { "NOT " } else { "" })
+            }
+            Scalar::Case(c, t, e) => format!(
+                "(CASE WHEN {} THEN {} ELSE {} END)",
+                c.sql(),
+                t.sql(),
+                e.sql()
+            ),
             Scalar::Upper(a) => format!("upper({})", a.sql()),
             Scalar::Length(a) => format!("length({})", a.sql()),
             Scalar::Coalesce(a, b) => format!("coalesce({}, {})", a.sql(), b.sql()),
@@ -162,7 +166,9 @@ impl Scalar {
             Scalar::Abs(a) => format!("abs({})", a.sql()),
             Scalar::Greatest(a, b) => format!("greatest({}, {})", a.sql(), b.sql()),
             Scalar::Concat(a, b) => format!("({} || {})", a.sql(), b.sql()),
-            Scalar::Between(x, lo, hi) => format!("({} BETWEEN {} AND {})", x.sql(), lo.sql(), hi.sql()),
+            Scalar::Between(x, lo, hi) => {
+                format!("({} BETWEEN {} AND {})", x.sql(), lo.sql(), hi.sql())
+            }
             Scalar::InList(x, list) => format!(
                 "({} IN ({}))",
                 x.sql(),
@@ -214,7 +220,9 @@ fn int_expr(alias: &str, table: &TableSpec, depth: u32) -> BoxedStrategy<Scalar>
 
 fn float_expr(alias: &str, table: &TableSpec) -> BoxedStrategy<Scalar> {
     let cols = cols_of(alias, table, DataType::Float);
-    let lit = (-40i64..=40).prop_map(|n| Scalar::Float(n as f64 / 4.0)).boxed();
+    let lit = (-40i64..=40)
+        .prop_map(|n| Scalar::Float(n as f64 / 4.0))
+        .boxed();
     let leaf = if cols.is_empty() {
         lit
     } else {
@@ -263,19 +271,37 @@ fn bool_expr(alias: &str, table: &TableSpec, depth: u32) -> BoxedStrategy<Scalar
         (floats.clone(), cmp_ops(), ints.clone())
             .prop_map(|(a, op, b)| Scalar::Cmp(Box::new(a), op, Box::new(b)))
             .boxed(),
-        (texts.clone(), proptest::sample::select(vec!["=", "<>"]), texts.clone())
+        (
+            texts.clone(),
+            proptest::sample::select(vec!["=", "<>"]),
+            texts.clone(),
+        )
             .prop_map(|(a, op, b)| Scalar::Cmp(Box::new(a), op, Box::new(b)))
             .boxed(),
-        ints.clone().prop_map(|a| Scalar::IsNull(Box::new(a), false)).boxed(),
-        texts.clone().prop_map(|a| Scalar::IsNull(Box::new(a), true)).boxed(),
+        ints.clone()
+            .prop_map(|a| Scalar::IsNull(Box::new(a), false))
+            .boxed(),
+        texts
+            .clone()
+            .prop_map(|a| Scalar::IsNull(Box::new(a), true))
+            .boxed(),
         (ints.clone(), ints.clone(), ints.clone())
             .prop_map(|(x, lo, hi)| Scalar::Between(Box::new(x), Box::new(lo), Box::new(hi)))
             .boxed(),
-        (ints.clone(), prop::collection::vec((-20i64..=20).prop_map(Scalar::Int), 1..=3))
+        (
+            ints.clone(),
+            prop::collection::vec((-20i64..=20).prop_map(Scalar::Int), 1..=3),
+        )
             .prop_map(|(x, list)| Scalar::InList(Box::new(x), list))
             .boxed(),
         (texts.clone(), texts.clone())
-            .prop_map(|(a, b)| Scalar::Cmp(Box::new(Scalar::Length(Box::new(a))), "<", Box::new(Scalar::Length(Box::new(b)))))
+            .prop_map(|(a, b)| {
+                Scalar::Cmp(
+                    Box::new(Scalar::Length(Box::new(a))),
+                    "<",
+                    Box::new(Scalar::Length(Box::new(b))),
+                )
+            })
             .boxed(),
     ];
     if !bool_cols.is_empty() {
@@ -310,7 +336,9 @@ fn any_expr(alias: &str, table: &TableSpec) -> BoxedStrategy<Scalar> {
 }
 
 fn all_columns(alias: &str, table: &TableSpec) -> Vec<String> {
-    (0..table.columns.len()).map(|i| format!("{alias}.c{i}")).collect()
+    (0..table.columns.len())
+        .map(|i| format!("{alias}.c{i}"))
+        .collect()
 }
 
 fn order_by_all(n_cols: usize) -> String {
@@ -371,7 +399,12 @@ fn shape_strategy(tables: &[TableSpec]) -> BoxedStrategy<Shape> {
         any::<bool>(),
         prop::option::of((0usize..=3, 1usize..=6)),
     )
-        .prop_map(|(exprs, filter, distinct, limit)| Shape::Simple { exprs, filter, distinct, limit });
+        .prop_map(|(exprs, filter, distinct, limit)| Shape::Simple {
+            exprs,
+            filter,
+            distinct,
+            limit,
+        });
     // Join keys must have the same type on both sides; DuckDB refuses to
     // compare VARCHAR with BIGINT.
     let join_pairs: Vec<(usize, usize)> = (0..n0)
@@ -396,58 +429,105 @@ fn shape_strategy(tables: &[TableSpec]) -> BoxedStrategy<Shape> {
     )
         .prop_map(|(kind, (i, j), filter, project_all)| Shape::Join {
             kind,
-            on: if kind == "CROSS JOIN" { None } else { Some((i, j)) },
+            on: if kind == "CROSS JOIN" {
+                None
+            } else {
+                Some((i, j))
+            },
             filter,
             project_all,
         });
-    let int_cols0: Vec<usize> = t0.columns.iter().enumerate().filter(|(_, (_, t))| *t == DataType::Int).map(|(i, _)| i).collect();
+    let int_cols0: Vec<usize> = t0
+        .columns
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, t))| *t == DataType::Int)
+        .map(|(i, _)| i)
+        .collect();
     let group = (
         0..n0,
         prop::collection::vec(
-            proptest::sample::select(
-                {
-                    let mut v = vec!["COUNT(*)".to_string()];
-                    for i in 0..n0 {
-                        v.push(format!("COUNT(a.c{i})"));
-                        v.push(format!("MIN(a.c{i})"));
-                        v.push(format!("MAX(a.c{i})"));
-                    }
-                    for i in &int_cols0 {
-                        v.push(format!("SUM(a.c{i})"));
-                        v.push(format!("AVG(a.c{i})"));
-                        v.push(format!("COUNT(DISTINCT a.c{i})"));
-                    }
-                    v
-                },
-            ),
+            proptest::sample::select({
+                let mut v = vec!["COUNT(*)".to_string()];
+                for i in 0..n0 {
+                    v.push(format!("COUNT(a.c{i})"));
+                    v.push(format!("MIN(a.c{i})"));
+                    v.push(format!("MAX(a.c{i})"));
+                }
+                for i in &int_cols0 {
+                    v.push(format!("SUM(a.c{i})"));
+                    v.push(format!("AVG(a.c{i})"));
+                    v.push(format!("COUNT(DISTINCT a.c{i})"));
+                }
+                v
+            }),
             1..=3,
         ),
         prop::option::of(bool_expr("a", &t0, 1)),
-        prop::option::of(proptest::sample::select(vec!["COUNT(*) > 1", "COUNT(*) >= 1", "COUNT(*) < 3"])),
+        prop::option::of(proptest::sample::select(vec![
+            "COUNT(*) > 1",
+            "COUNT(*) >= 1",
+            "COUNT(*) < 3",
+        ])),
     )
-        .prop_map(|(key, aggs, filter, having)| Shape::Group { key, aggs, filter, having });
+        .prop_map(|(key, aggs, filter, having)| Shape::Group {
+            key,
+            aggs,
+            filter,
+            having,
+        });
     let union = (any::<bool>(), 0..n0).prop_map(|(all, col)| Shape::Union { all, col });
     let sub_pairs: Vec<(usize, usize)> = (0..n0)
         .flat_map(|i| (0..n1).map(move |j| (i, j)))
         .filter(|(i, j)| t0.columns[*i].1 == t1.columns[*j].1 && t0.columns[*i].1 != DataType::Bool)
         .collect();
-    let mut shapes: Vec<BoxedStrategy<Shape>> = vec![simple.boxed(), join.boxed(), group.boxed(), union.boxed()];
+    let mut shapes: Vec<BoxedStrategy<Shape>> =
+        vec![simple.boxed(), join.boxed(), group.boxed(), union.boxed()];
     if !sub_pairs.is_empty() {
         let pairs = sub_pairs.clone();
         shapes.push(
-            (proptest::sample::select(vec!["EXISTS", "NOT EXISTS", "IN", "NOT IN"]), proptest::sample::select(pairs))
-                .prop_map(|(form, (outer_col, inner_col))| Shape::Sub { form, outer_col, inner_col })
+            (
+                proptest::sample::select(vec!["EXISTS", "NOT EXISTS", "IN", "NOT IN"]),
+                proptest::sample::select(pairs),
+            )
+                .prop_map(|(form, (outer_col, inner_col))| Shape::Sub {
+                    form,
+                    outer_col,
+                    inner_col,
+                })
                 .boxed(),
         );
     }
-    let numeric1: Vec<usize> = t1.columns.iter().enumerate().filter(|(_, (_, t))| matches!(t, DataType::Int | DataType::Float)).map(|(i, _)| i).collect();
+    let numeric1: Vec<usize> = t1
+        .columns
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, t))| matches!(t, DataType::Int | DataType::Float))
+        .map(|(i, _)| i)
+        .collect();
     if !numeric1.is_empty() {
-        shapes.push(proptest::sample::select(numeric1).prop_map(|col| Shape::ScalarSub { col }).boxed());
+        shapes.push(
+            proptest::sample::select(numeric1)
+                .prop_map(|col| Shape::ScalarSub { col })
+                .boxed(),
+        );
     }
-    shapes.push((0..n0, prop::option::of(bool_expr("c", &t0, 1))).prop_map(|(col, filter)| Shape::With { col, filter }).boxed());
-    shapes.push((any::<bool>(), 1i64..=4).prop_map(|(lateral, n)| Shape::Series { lateral, n }).boxed());
+    shapes.push(
+        (0..n0, prop::option::of(bool_expr("c", &t0, 1)))
+            .prop_map(|(col, filter)| Shape::With { col, filter })
+            .boxed(),
+    );
+    shapes.push(
+        (any::<bool>(), 1i64..=4)
+            .prop_map(|(lateral, n)| Shape::Series { lateral, n })
+            .boxed(),
+    );
     if int_cols0.len() >= 2 {
-        shapes.push((any::<bool>(), 1usize..=4).prop_map(|(all, bound)| Shape::Recursive { all, bound }).boxed());
+        shapes.push(
+            (any::<bool>(), 1usize..=4)
+                .prop_map(|(all, bound)| Shape::Recursive { all, bound })
+                .boxed(),
+        );
     }
     proptest::strategy::Union::new(shapes).boxed()
 }
@@ -457,8 +537,17 @@ fn render(shape: &Shape, tables: &[TableSpec]) -> (String, bool) {
     let t1 = tables.get(1).unwrap_or(t0);
     let n0 = t0.columns.len();
     match shape {
-        Shape::Simple { exprs, filter, distinct, limit } => {
-            let cols: Vec<String> = exprs.iter().enumerate().map(|(i, e)| format!("{} AS e{i}", e.sql())).collect();
+        Shape::Simple {
+            exprs,
+            filter,
+            distinct,
+            limit,
+        } => {
+            let cols: Vec<String> = exprs
+                .iter()
+                .enumerate()
+                .map(|(i, e)| format!("{} AS e{i}", e.sql()))
+                .collect();
             let mut sql = format!(
                 "SELECT {}{} FROM {} a",
                 if *distinct { "DISTINCT " } else { "" },
@@ -474,12 +563,22 @@ fn render(shape: &Shape, tables: &[TableSpec]) -> (String, bool) {
             }
             (sql, true)
         }
-        Shape::Join { kind, on, filter, project_all } => {
+        Shape::Join {
+            kind,
+            on,
+            filter,
+            project_all,
+        } => {
             let mut cols = all_columns("a", t0);
             if *project_all {
                 cols.extend(all_columns("b", t1));
             }
-            let mut sql = format!("SELECT {} FROM {} a {kind} {} b", cols.join(", "), t0.name, t1.name);
+            let mut sql = format!(
+                "SELECT {} FROM {} a {kind} {} b",
+                cols.join(", "),
+                t0.name,
+                t1.name
+            );
             if let Some((i, j)) = on {
                 sql += &format!(" ON a.c{i} = b.c{j}");
             }
@@ -489,8 +588,17 @@ fn render(shape: &Shape, tables: &[TableSpec]) -> (String, bool) {
             sql += &order_by_all(cols.len());
             (sql, true)
         }
-        Shape::Group { key, aggs, filter, having } => {
-            let mut sql = format!("SELECT a.c{key} AS k, {} FROM {} a", aggs.join(", "), t0.name);
+        Shape::Group {
+            key,
+            aggs,
+            filter,
+            having,
+        } => {
+            let mut sql = format!(
+                "SELECT a.c{key} AS k, {} FROM {} a",
+                aggs.join(", "),
+                t0.name
+            );
             if let Some(f) = filter {
                 sql += &format!(" WHERE {}", f.sql());
             }
@@ -510,13 +618,28 @@ fn render(shape: &Shape, tables: &[TableSpec]) -> (String, bool) {
             );
             (sql, true)
         }
-        Shape::Sub { form, outer_col, inner_col } => {
+        Shape::Sub {
+            form,
+            outer_col,
+            inner_col,
+        } => {
             let cols = all_columns("a", t0);
             let cond = match *form {
-                "EXISTS" | "NOT EXISTS" => format!("{form} (SELECT 1 FROM {} b WHERE b.c{inner_col} = a.c{outer_col})", t1.name),
-                _ => format!("a.c{outer_col} {form} (SELECT b.c{inner_col} FROM {} b)", t1.name),
+                "EXISTS" | "NOT EXISTS" => format!(
+                    "{form} (SELECT 1 FROM {} b WHERE b.c{inner_col} = a.c{outer_col})",
+                    t1.name
+                ),
+                _ => format!(
+                    "a.c{outer_col} {form} (SELECT b.c{inner_col} FROM {} b)",
+                    t1.name
+                ),
             };
-            let sql = format!("SELECT {} FROM {} a WHERE {cond}{}", cols.join(", "), t0.name, order_by_all(n0));
+            let sql = format!(
+                "SELECT {} FROM {} a WHERE {cond}{}",
+                cols.join(", "),
+                t0.name,
+                order_by_all(n0)
+            );
             (sql, true)
         }
         Shape::ScalarSub { col } => {
@@ -534,7 +657,11 @@ fn render(shape: &Shape, tables: &[TableSpec]) -> (String, bool) {
             if let Some(f) = filter {
                 // The filter references c.c{col} only if it is the same column; keep it simple.
                 let f_sql = f.sql();
-                if f_sql.contains(&format!("c.c{col}")) && !(0..n0).filter(|i| i != col).any(|i| f_sql.contains(&format!("c.c{i}"))) {
+                if f_sql.contains(&format!("c.c{col}"))
+                    && !(0..n0)
+                        .filter(|i| i != col)
+                        .any(|i| f_sql.contains(&format!("c.c{i}")))
+                {
                     sql += &format!(" WHERE {f_sql}");
                 }
             }
@@ -553,7 +680,13 @@ fn render(shape: &Shape, tables: &[TableSpec]) -> (String, bool) {
             (sql, true)
         }
         Shape::Recursive { all, bound } => {
-            let ints: Vec<usize> = t0.columns.iter().enumerate().filter(|(_, (_, t))| *t == DataType::Int).map(|(i, _)| i).collect();
+            let ints: Vec<usize> = t0
+                .columns
+                .iter()
+                .enumerate()
+                .filter(|(_, (_, t))| *t == DataType::Int)
+                .map(|(i, _)| i)
+                .collect();
             let (s, d) = (ints[0], ints[1]);
             let sql = if *all {
                 format!(
@@ -610,6 +743,12 @@ pub fn literal(v: &Value) -> String {
         Value::Float(f) => format!("{f:?}"),
         Value::Text(s) => format!("'{}'", s.replace('\'', "''")),
         Value::Json(j) => format!("'{}'", j.to_string().replace('\'', "''")),
-        Value::Vector(v) => format!("[{}]", v.iter().map(|x| format!("{x:?}")).collect::<Vec<_>>().join(", ")),
+        Value::Vector(v) => format!(
+            "[{}]",
+            v.iter()
+                .map(|x| format!("{x:?}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
     }
 }
