@@ -1,0 +1,23 @@
+{
+  "id": "chatcmpl-2",
+  "object": "chat.completion",
+  "model": "gpt-5.4-mini",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_abc",
+            "type": "function",
+            "function": {"name": "ls", "arguments": "{\"path\": \"/tmp\"}"}
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {"prompt_tokens": 50, "completion_tokens": 9, "total_tokens": 59}
+}

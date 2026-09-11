@@ -1,0 +1,19 @@
+{
+  "id": "chatcmpl-1",
+  "object": "chat.completion",
+  "created": 1700000000,
+  "model": "gpt-5.4-mini",
+  "choices": [
+    {
+      "index": 0,
+      "message": {"role": "assistant", "content": "Hello there.", "refusal": null},
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 100,
+    "completion_tokens": 5,
+    "total_tokens": 105,
+    "prompt_tokens_details": {"cached_tokens": 80}
+  }
+}
