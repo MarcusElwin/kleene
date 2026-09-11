@@ -17,9 +17,12 @@ every crate depends on them.
 
 - Interfaces first. If a change needs a new shared type, add it to the
   interface crate in its own commit before implementing against it.
-- Every crate compiles with `RUSTFLAGS="-D warnings"` under
-  `cargo clippy --workspace --all-targets --all-features`, and
+- Every crate is clean under
+  `cargo clippy --workspace --all-targets --all-features -- -D warnings` and
   `cargo doc --workspace --no-deps` with `RUSTDOCFLAGS="-D warnings"`.
+  Pass `-D warnings` after `--`, never through `RUSTFLAGS`: an environment
+  flag changes cargo's fingerprint for every dependency and rebuilds DuckDB
+  (ten minutes, four gigabytes) per distinct flag set.
   `missing_docs` is a warning, so every public item has a doc comment.
 - `#![forbid(unsafe_code)]` in every crate.
 - Errors are typed (`thiserror`) per crate; `anyhow` only in the binary.
@@ -37,7 +40,7 @@ every crate depends on them.
 
 ```bash
 cargo fmt --all
-RUSTFLAGS="-D warnings" cargo clippy --workspace --all-targets --all-features
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 cargo run -- --help
@@ -48,8 +51,9 @@ agent's token cannot write `.github/workflows/`; a human moves it into place
 (see `ci/README.md`).
 
 DuckDB (`callgebra-store`, feature `duckdb`) builds from source the first time:
-about ten minutes on four cores. Set `DUCKDB_LIB_DIR` to a prebuilt library to
-skip it locally; CI caches it.
+about ten minutes on four cores and four gigabytes per build-profile variant
+(build, test and doc each get one). Keep `target/` between runs; set
+`DUCKDB_LIB_DIR` to a prebuilt library to skip the compile; CI caches it.
 
 ## Branches and PRs
 
