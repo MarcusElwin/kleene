@@ -3,3 +3,6 @@
 *.duckdb.wal
 /results
 .callgebra/
+
+# agent worktrees
+.claude/worktrees/
