@@ -5,9 +5,10 @@
 //! JSON schema for the output, streaming and usage. Adapters map it to each
 //! vendor's wire format over `reqwest`, no SDKs: [`AnthropicProvider`] speaks
 //! the Messages API and [`OpenAiCompatProvider`] the chat-completions API that
-//! everyone else exposes. The [`Router`] resolves model aliases to ordered
-//! `(provider, model)` candidates. [`ReplayProvider`] serves recorded fixtures
-//! so tests and re-runs cost nothing.
+//! everyone else exposes. [`RoutedProvider`] resolves model aliases to ordered
+//! `(provider, model)` candidates with failover, circuit breaking and a
+//! [`Pricing`] table. [`ReplayProvider`] serves recorded fixtures so tests and
+//! re-runs cost nothing.
 
 #![forbid(unsafe_code)]
 
@@ -20,7 +21,10 @@ pub mod types;
 
 pub use adapters::{AnthropicProvider, OpenAiCompatProvider};
 pub use replay::{RecordingProvider, ReplayProvider};
-pub use router::{Candidate, Router, RouterConfig};
+pub use router::{
+    AliasConfig, Candidate, CircuitState, ModelPricing, Pricing, RoutedProvider, Router,
+    RouterConfig,
+};
 pub use types::{
     Capabilities, CompletionRequest, CompletionResponse, ContentBlock, Message, ProviderError,
     ProviderOptions, Role, StopReason, StreamEvent, ToolDef, Usage,
