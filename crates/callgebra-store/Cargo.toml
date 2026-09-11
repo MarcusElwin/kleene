@@ -1,0 +1,25 @@
+[package]
+name = "callgebra-store"
+description = "Embedded store for session tables, memo and trace (DuckDB)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+callgebra-core = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+
+[features]
+default = []
+# DuckDB-backed store. Off by default in M0 while the bundled build is measured;
+# M1 turns it on and makes it the only implementation.
+duckdb = []
+
+[lints]
+workspace = true

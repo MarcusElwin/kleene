@@ -1,0 +1,15 @@
+[package]
+name = "callgebra-tui"
+description = "Terminal UI: call tree, transcript, plan view, metrics, trace explorer, task board"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+callgebra-daemon = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true
