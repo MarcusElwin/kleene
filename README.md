@@ -25,10 +25,11 @@ Status: **planning**. Read [`docs/PLAN.md`](docs/PLAN.md) for the
 architecture, dialect, planner rules, harness design, TUI layout and
 milestones, and [`docs/RESEARCH.md`](docs/RESEARCH.md) for the sources.
 
-Written in Rust. Model-agnostic: calls go through the
-[Aura LLM Gateway](https://github.com/UmaiTech/aura-llm-gateway) (Open
-Responses API) when one is configured, or directly to Anthropic or any
-OpenAI-compatible endpoint. Sub-work is delegated to declared agent roles
+Written in Rust. Model-agnostic with no SDK and no gateway required: two
+thin adapters (Anthropic native, OpenAI-compatible) behind one `Provider`
+trait, an alias router with failover and pricing, and an optional Open
+Responses gateway adapter for gateways such as
+[Aura](https://github.com/UmaiTech/aura-llm-gateway). Sub-work is delegated to declared agent roles
 with `CREATE AGENT` and `SPAWN`. Everything the model does is SQL: shell,
 file edits, web and memory are `CALL` statements with volatility classes the
 planner respects. Session tables, memo and trace live in one embedded DuckDB

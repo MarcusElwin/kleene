@@ -84,11 +84,11 @@ instances whose difficulty is dialled to keep the system at its frontier.
                ▼               ▼               ▼
        callgebra-llm    callgebra-tools   SPAWN / RLM sub-agent (depth+1)
        Provider trait:  (fs, grep, shell, ─▶ back into harness
-        Aura gateway     web, sandbox)      with a role, budget slice
-        (Open Responses)                    and catalog subset
-        Anthropic direct
-        OpenAI-compatible
-        mock / replay
+        Anthropic direct web, sandbox)      with a role, budget slice
+        OpenAI-compatible                   and catalog subset
+        Open Responses gateway (optional, e.g. Aura)
+        replay / record
+       alias router, pricing, failover
                │               │               │
                └───────────────┴───────────────┘
                                ▼
@@ -426,62 +426,73 @@ unit.
 
 ### 3.8 Model-agnostic LLM layer
 
-Callgebra never talks to one vendor. `callgebra-llm` exposes a `Provider`
-trait and a `Capabilities` struct (streaming, tools, structured output,
-prompt caching, reasoning control, cost reporting) that the planner and the
-harness consult instead of assuming.
+Callgebra never talks to one vendor, and it does not need a gateway to be
+model-agnostic. The surface it needs from a model is narrow: one request
+shape (system prefix, messages, optional tools, optional JSON schema for the
+output), streaming, usage. So the layer is small and owned here:
 
-**Backends, in order of preference:**
+```
+Provider trait  ─┬─ AnthropicProvider   Messages API, native (thinking, effort,
+                 │                      cache_control, structured output, refusal)
+                 ├─ OpenAiCompatProvider chat completions: OpenAI, Google, Mistral,
+                 │                      Together, Fireworks, Ollama, vLLM, and any
+                 │                      gateway's /v1 endpoint
+                 ├─ OpenResponsesProvider (feature "gateway") Aura or any Open
+                 │                      Responses gateway; cost from usage.cost_usd
+                 └─ ReplayProvider / RecordingProvider  fixtures for tests and re-runs
+Router           alias → ordered (backend, model) candidates, failover, per-tier
+                 budgets, pricing table, health per endpoint
+Capabilities     streaming · tools · json_schema · prompt_cache · reasoning_control ·
+                 cost_reported   (per backend; the planner and harness consult it)
+```
 
-1. **Aura gateway** (`AuraProvider`, default when `AURA_BASE_URL` is set).
-   Your Aura LLM Gateway speaks the Open Responses API over HTTP
-   (`POST /v1/responses`, SSE with semantic events, `previous_response_id`,
-   `usage.cost_usd`, `metadata.aura.provider/latency_ms`). Through it
-   Callgebra gets nine providers, eight routing strategies with failover and
-   circuit breaking, Redis response caching, per-request USD cost, rate limits
-   and multi-tenancy without any of that code living here. Wire types come
-   from the `aura-types` crate as a git dependency (it is light: serde, uuid,
-   chrono, thiserror, utoipa), so the Open Responses structs are never
-   hand-written. `aura-core` is **not** embedded: it drags in SQLx/Postgres,
-   Redis and the AWS SDK. Two Aura features map directly onto Callgebra
-   needs: `compression` (TOON/YAML) for rendering relations into prompts, and
-   `consistency`/`validation` (self-consistency, best-of-N, confidence
-   thresholds) as a physical implementation of `VERIFY`.
-2. **Anthropic direct** (`AnthropicProvider`): Messages API over `reqwest`,
-   for running without a gateway. Adds the knobs Open Responses does not carry
-   today: adaptive thinking, `output_config.effort`, `cache_control`,
-   structured outputs, `stop_reason: refusal`.
-3. **OpenAI-compatible** (`OpenAiCompatProvider`): chat completions for vLLM,
-   Ollama, and anything else local; also Aura's own `/v1` compatibility
-   endpoint when Open Responses is not wanted.
-4. **Mock / replay** (`ReplayProvider`, `RecordingProvider`): fixtures keyed by
-   (model alias, prompt hash, schema hash), for tests and for free re-runs.
+**Lightweight by default.** Two direct adapters cover almost every vendor:
+Anthropic's native API, and the OpenAI-compatible chat API that everyone
+else, including local servers, exposes. Each is a few hundred lines over
+`reqwest` and an SSE decoder. No SDK, no gateway, no database.
+
+**What is copied from Aura** rather than depended on: the shape of its
+fallback chain (ordered candidates, circuit breaker per endpoint), its model
+catalog and cost calculator (a pricing table keyed by model, actuals computed
+from usage), and the idea that the internal message model is vendor-neutral
+and each adapter maps to and from the wire format. Those are small modules
+and they belong in `callgebra-llm`; pulling `aura-core` would bring
+SQLx/Postgres, Redis and the AWS SDK with it.
+
+**Aura as an option, not a requirement.** With the `gateway` feature the
+`OpenResponsesProvider` speaks the Open Responses API (`POST /v1/responses`,
+semantic SSE events, `usage.cost_usd`, provider and latency metadata), and
+Aura's routing, caching, rate limits and multi-tenancy sit behind one URL.
+Aura's `compression` (TOON/YAML for rendering relations into prompts) and
+`consistency`/`validation` (best-of-N as a physical implementation of
+`VERIFY`) are then available as `ProviderOptions`. Any other Open Responses
+or OpenAI-compatible gateway (LiteLLM, Portkey, OpenRouter) works through the
+same two adapters with no new code.
+
+**Alternatives considered.** The `genai` crate (0.6.5, 26+ providers, native
+Anthropic protocol, cache control, reasoning effort, structured output) would
+replace both direct adapters in a day. It is the fallback if the adapters
+turn into a maintenance burden, and the reason the `Provider` trait is ours:
+swapping the implementation must not touch the planner or the harness.
+`rig-core` is a whole agent framework and is more than we want.
 
 **Model aliases, not model names.** CallSQL and the planner refer to tiers:
-`root`, `worker`, `proxy`, `judge`. `callgebra.toml` maps each alias to a
-concrete model per backend, or, with Aura, to a routing goal
-(`routing: { strategy: cost_optimized }`) so the gateway picks. Switching
-vendors is a config change and a memo namespace change, nothing else.
+`root`, `worker`, `proxy`, `judge`. `callgebra.toml` maps each alias to an
+ordered list of `(backend, model)` candidates; the router tries them in
+order and records which one served. Switching vendors is a config change and
+a memo namespace change, nothing else.
 
 **Provider-specific knobs** travel as `ProviderOptions`, a small enum the
-provider either honours or reports as unsupported through `Capabilities`.
+adapter either honours or reports as unsupported through `Capabilities`.
 The harness degrades gracefully: without prompt caching it still freezes the
-prefix (cheaper on every vendor); without structured output `LLM_JSON` falls
-back to a single forced function tool and validates the arguments itself;
-without reasoning control `EFFORT` is a no-op with a warning in the trace.
+prefix (cheaper on every vendor); without JSON-schema output `LLM_JSON`
+falls back to a single forced function tool and validates the arguments
+itself; without reasoning control `EFFORT` is a no-op with a warning in the
+trace.
 
-**Cost.** Actuals come from the provider when it reports them (Aura's
-`usage.cost_usd`), otherwise from a local pricing table keyed by model. The
-planner's estimates use the same table. Both are stored per call.
-
-**Proposed upstream changes to Aura** (each is a small PR and lets Callgebra
-drop a workaround): a `reasoning` field on `CreateResponseRequest` carrying
-effort for providers that support it; a `text.format` / JSON-schema output
-option; pass-through of Anthropic `cache_control` and reporting of
-`cached_tokens` per request (the field exists on `Usage`); a feature-gated
-`aura-providers` split of `aura-core::provider` with no database, Redis or
-AWS dependency so the providers can be embedded in-process when no gateway
-runs.
+**Cost.** Actuals come from the provider when it reports them (a gateway's
+`usage.cost_usd`), otherwise from the local pricing table. The planner's
+estimates use the same table. Both are stored per call.
 
 ### 3.9 Tools and sandboxing
 
@@ -564,7 +575,7 @@ callgebra/
 │   ├── callgebra-sql/         parse, validate subset, Catalog, LogicalPlan
 │   ├── callgebra-algebra/     CallPlan, CallKind, cost model, rules, EXPLAIN
 │   ├── callgebra-exec/        async operators, recursion, budgets, memo
-│   ├── callgebra-llm/         Provider trait, Aura (Open Responses), Anthropic, OpenAI-compat, replay
+│   ├── callgebra-llm/         Provider trait, Anthropic, OpenAI-compat, Open Responses (feature), router, pricing, replay
 │   ├── callgebra-tools/       virtual tables, table functions, sandbox
 │   ├── callgebra-store/       DuckDB: session tables, memo, trace schema, appender
 │   ├── callgebra-trace/       event model, tracing Layer → store
@@ -582,8 +593,8 @@ Dependencies (versions verified on crates.io on 2026-09-11): `sqlparser 0.62`,
 `tokio 1.53`, `reqwest` (rustls), `serde`/`serde_json`, `duckdb 1.10505`
 (bundled, DuckDB 1.5), `tracing 0.1` / `tracing-subscriber 0.3`, `ratatui 0.30.2`,
 `crossterm 0.29`, `tui-tree-widget 0.24`, `tui-markdown 0.3`, `syntect`,
-`hakoniwa 1.7`, `clap`, `anyhow`/`thiserror`, `proptest`, `insta`, and
-`aura-types` as a git dependency on `UmaiTech/aura-llm-gateway` (0.18, MIT).
+`hakoniwa 1.7`, `clap`, `anyhow`/`thiserror`, `proptest`, `insta`. No SDK
+and no gateway dependency: the two direct adapters are written here.
 Optional later: `ascent`/`datafrog` (not needed, semi-naive is small to write),
 `wasmtime` (WASM tool plugins), `opentelemetry` export.
 
@@ -607,10 +618,10 @@ shortest path over a generated graph, `callgebra repl` with a local table.
 `CREATE FUNCTION`, `EXPAND`, `LATERAL` table functions, the read tool
 surface and the `CALL` side-effect statements with volatility fences.
 `CallPlan` with `CallKind`, dedupe-then-map, batching, memo in DuckDB,
-budgets, `EXPLAIN` with estimates. `Provider` trait with the Aura backend
-(Open Responses over HTTP, streaming, cost from `usage.cost_usd`), the
-Anthropic direct backend, and recording/replay fixtures; model aliases in
-`callgebra.toml`. Demo: the `VERIFY / NOT EXISTS REFUTE`
+budgets, `EXPLAIN` with estimates. `Provider` trait with the Anthropic and
+OpenAI-compatible adapters, the alias router with failover and pricing,
+recording/replay fixtures, and the optional Open Responses gateway adapter
+behind a feature flag. Demo: the `VERIFY / NOT EXISTS REFUTE`
 query from the pitch over a generated candidate set, with `EXPLAIN ANALYZE`
 showing 40 estimated vs 37 actual calls and the anti-semi-join short-circuit.
 
@@ -643,7 +654,8 @@ resume. Demo: overnight run, morning `SELECT generator,
 difficulty, AVG(solved), AVG(calls), AVG(depth) FROM trace_tasks GROUP BY 1, 2`.
 
 **M7 — Benchmarks and write-up.** Task packs for OOLONG and a Terminal-Bench
-subset first, then the rest of section 7; the plain-agent baseline on the
+subset first, then the finance and legal learning tracks with their
+learning-on versus learning-off runs, then the rest of section 7; the plain-agent baseline on the
 same provider layer; plots (accuracy vs context at cost parity, calls vs
 difficulty, estimate accuracy over time, plan-space size vs query shape);
 the dialect reference; and a write-up: "Callgebra: a relational calculus for
@@ -694,6 +706,40 @@ the rest become task packs under `tasks/` once the harness is stable.
 | Random 3-SAT near 4.26, **GraphOmni** / NLGraph, **ZebraLogic** | recursive-CTE search with `EXPAND`, beam limits, `VERIFY`/`REFUTE` structure | code oracles throughout |
 | **SemBench**, TAG-Bench | semantic-operator systems: cost and quality of semantic filters, joins and aggregations against LOTUS and Palimpzest | the direct comparison for the planner's cascades and semi-joins |
 
+**Domain tracks: does self-learning work?** General benchmarks measure a
+single attempt. To measure *learning*, a track needs many related tasks in
+one domain, real documents that reward reusable extraction logic, and cheap
+oracles. Legal and finance both qualify, and both stress the SQL surface
+(long filings and contracts go through `chunks`, `grep`, extraction into
+tables, and aggregation).
+
+| Track | Dataset | Tasks and oracle | Why it tests learning |
+|---|---|---|---|
+| **Finance** | FinanceBench (150 open questions over 10-K/10-Q filings; full set on request from Patronus) | numeric and factual answers with evidence pages; numeric tolerance plus evidence-page match | the same filing structure recurs across companies, so a learned `find_line_item(kind)` function and playbook entries ("income statement chunk, then grep the label") should transfer |
+| **Finance** | FinQA (numerical reasoning over report pages, MIT) and TAT-QA (16,552 questions over hybrid table plus text contexts) | program or number exact match | thousands of instances, so learning curves have statistical power; questions cluster by reasoning type (ratio, growth, sum) |
+| **Legal** | CUAD (510 commercial contracts, 41 clause categories, CC BY 4.0) | clause spans per category; token F1 against gold spans | one `CREATE FUNCTION has_clause(kind, text)` per category is refined contract after contract; measure per-category precision and recall over the stream |
+| **Legal** | LegalBench (162 tasks; per-task licenses, filter to permissive) | mostly yes/no and short-answer, exact match | many small task families with shared legal reasoning; tests whether playbook entries transfer *across* tasks, not just within |
+| **Synthetic, both** | generated contracts with planted clauses; generated statements with planted figures and inconsistencies | code oracle, unlimited instances | feeds the continual generators; hardness dialled by document length, distractors and paraphrase |
+
+Measurement design, the same for every track:
+
+1. **Learning curve.** Run the task stream in a fixed order with learning on.
+   Plot accuracy and cost per task as a rolling mean. The control is the same
+   stream with learning off (frozen catalog, no playbook). The claim is the
+   gap, not the absolute number.
+2. **Transfer.** Learn on the first part of the stream (contracts 1 to 300,
+   filings of half the companies), evaluate frozen on the rest. Report the
+   delta against the never-learned harness on the held-out part.
+3. **Cost.** Learned playbooks should reduce calls and tokens per task, not
+   only raise accuracy; both go in the `evals` table.
+4. **Damage control.** Every learned object that was adopted is tied to the
+   replay eval that admitted it; the report lists reverts, so the learning
+   rate and the regret are both visible.
+
+Licensing note: FinanceBench's open sample and CUAD are permissive;
+LegalBench is mixed and must be filtered per task; FinQA is MIT; TAT-QA's
+terms should be checked before redistribution of derived fixtures.
+
 Reporting: one `evals` table per run with accuracy, calls, tokens, dollars,
 depth, branching and wall clock per task; a `callgebra bench` command that
 renders it; the TUI tasks board reads the same table. Baselines are recorded
@@ -720,12 +766,11 @@ as replay fixtures too, so a comparison is reproducible without re-spending.
 Resolved so far: the store is DuckDB, and every action the model takes is SQL
 (no side channel for tools).
 
-1. **Aura as the default path.** The plan makes Aura the preferred backend
-   and keeps the direct Anthropic and OpenAI-compatible backends for
-   gateway-less runs. Should Aura be *required* instead (one code path, all
-   routing in the gateway), and are you open to the small upstream additions
-   listed in 3.8 (reasoning effort, JSON-schema output, cache pass-through,
-   an embeddable `aura-providers` crate)?
+1. **Provider layer.** The plan now writes two thin adapters (Anthropic,
+   OpenAI-compatible) plus an optional Open Responses gateway adapter, and
+   copies Aura's fallback-chain and pricing shapes rather than depending on
+   it. If you would rather not maintain adapters at all, the `genai` crate
+   behind the same trait is the one-day alternative. Which do you prefer?
 2. **First target task family for M3.** Generated long-context corpus (fully
    offline, deterministic oracle) or repository questions (more compelling demo,
    LLM-judged)? The plan assumes both, corpus first.
@@ -735,6 +780,10 @@ Resolved so far: the store is DuckDB, and every action the model takes is SQL
    M3 demo be built around: an OOLONG-style long-context task (offline,
    cheap) or a Terminal-Bench-style task pack (exercises the SQL-mapped shell
    surface)?
+5. **Domain track order.** Finance first (FinanceBench and FinQA have
+   numeric oracles and thousands of instances) or legal first (CUAD's 41
+   clause categories are the cleanest test of function refinement)? The plan
+   assumes finance first.
 
 ---
 

@@ -26,7 +26,7 @@ the item is marked (snippet).
   https://github.com/joshua-mo-143/rig-rlm (rig + PyO3, early),
   https://github.com/tinyhumansai/tinyagents (graph runtime, GPL-3).
 
-## Aura LLM Gateway (model-agnostic routing)
+## Aura LLM Gateway (one gateway option; its routing and pricing shapes are copied)
 
 - Repo: https://github.com/UmaiTech/aura-llm-gateway (Rust, MIT, 0.18.0,
   Rust 1.91+). SDKs `aura-llm` on PyPI (0.18.0) and npm (0.18.0). Docs at
@@ -215,6 +215,23 @@ was archived in July 2026, so it is not used.
   https://arxiv.org/pdf/2504.12764, ZebraLogic.
 - SemBench https://github.com/SemBench/SemBench and TAG-Bench (LOTUS) for
   semantic-operator systems.
+
+## Domain benchmarks (legal, finance)
+
+- LegalBench: 162 legal reasoning tasks, crowd-sourced, mixed per-task
+  licenses. https://github.com/HazyResearch/legalbench , data at
+  https://huggingface.co/datasets/nguha/legalbench
+- CUAD (Atticus Project): 510 commercial contracts annotated with 41 clause
+  categories, CC BY 4.0. https://github.com/TheAtticusProject/cuad
+- FinanceBench (Patronus AI): open-book financial QA over 10-K/10-Q
+  filings; 150-question open sample with evidence pages and question types
+  (metrics-generated, domain-relevant, novel-generated); full set on
+  request. https://github.com/patronus-ai/financebench
+- FinQA (EMNLP 2021): numerical reasoning over financial report pages with
+  executable programs as gold; MIT. https://github.com/czyssrs/FinQA
+- TAT-QA (ACL 2021): 16,552 questions over 2,757 hybrid table-and-text
+  contexts from financial reports; test ground truth released Jan 2024.
+  https://github.com/NExTplusplus/TAT-QA
 
 ## Naming
 
