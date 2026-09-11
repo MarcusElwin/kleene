@@ -83,6 +83,7 @@ pub struct ToolDef {
 /// Knobs a provider may or may not honour. Unsupported options are reported
 /// through [`Capabilities`], never silently dropped.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct ProviderOptions {
     /// Reasoning effort (`low`, `medium`, `high`, `xhigh`, `max`).
     pub effort: Option<String>,
@@ -137,7 +138,7 @@ impl CompletionRequest {
 }
 
 /// Why the model stopped.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum StopReason {
     /// Natural end.
@@ -148,7 +149,8 @@ pub enum StopReason {
     ToolUse,
     /// The provider declined the request.
     Refusal,
-    /// Anything else, named.
+    /// Anything else, named. The default until a provider says otherwise.
+    #[default]
     Other,
 }
 
