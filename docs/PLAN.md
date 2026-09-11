@@ -82,10 +82,13 @@ instances whose difficulty is dialled to keep the system at its frontier.
         │ cancellation · concurrency limits            │
         └──────┬───────────────┬───────────────┬───────┘
                ▼               ▼               ▼
-       callgebra-llm    callgebra-tools   RLM sub-session (depth+1)
-       (Messages API,   (fs, grep, shell, ─▶ back into harness
-        streaming,       web, sandbox)
-        caching, mock)
+       callgebra-llm    callgebra-tools   SPAWN / RLM sub-agent (depth+1)
+       Provider trait:  (fs, grep, shell, ─▶ back into harness
+        Aura gateway     web, sandbox)      with a role, budget slice
+        (Open Responses)                    and catalog subset
+        Anthropic direct
+        OpenAI-compatible
+        mock / replay
                │               │               │
                └───────────────┴───────────────┘
                                ▼
@@ -137,6 +140,8 @@ Supported in v1:
 - `EXPLAIN [ANALYZE] SELECT ...`
 - `SET budget.calls = 200`, `SET model.default = 'claude-opus-5'`, `SET effort = 'low'`
 - `FINAL(expr)` / `FINAL FROM (SELECT ...)` to end a session
+- `CREATE AGENT name MODEL '...' EFFORT '...' TOOLS (...) BUDGET (calls n, tokens m) PROMPT '...'`
+- `SEND(agent_handle, text)` / `INBOX` for messages between parent and children (see 3.7)
 
 Built-in call functions (each is a `CallKind`, see 3.3):
 
@@ -146,7 +151,8 @@ Built-in call functions (each is a `CallKind`, see 3.3):
 | `LLM_BOOL(prompt) -> BOOL` | scalar call | structured output, used by `VERIFY`/`REFUTE` |
 | `LLM_JSON(prompt, schema) -> JSON` | scalar call | `output_config.format` JSON schema |
 | `EMBED(text) -> VECTOR`, `SIM(a, b)` | scalar call / pure | for semantic joins with proxy filtering |
-| `RLM(question, context) -> TABLE(answer, ...)` | recursive call | spawns a child session at depth+1 with `context` preloaded as table `ctx` |
+| `RLM(question, context) -> TABLE(answer, ...)` | recursive call | spawns a child session at depth+1 with `context` preloaded as table `ctx`; sugar for `SPAWN(self, ...)` |
+| `SPAWN(agent, task, context) -> TABLE(answer, handle, ...)` | recursive call | runs a declared agent role as a child session; one child per input row, concurrently |
 | `EXPAND(prompt, n) -> TABLE(item)` | table call | LLM-generated successors, the branching step in searches |
 | `files(glob)`, `lines(path)`, `grep(path, pattern)`, `chunks(text, size)` | tool | filesystem, pure |
 | `shell(cmd)`, `web_search(q)`, `web_fetch(url)` | tool | sandboxed / rate-limited |
@@ -257,29 +263,123 @@ dial up when solve rate exceeds 0.7, down below 0.3. The harness's own metrics
 difficulty can be correlated with search complexity, which is the research
 question.
 
-### 3.7 LLM client
+### 3.7 Subagents
 
-There is no official Anthropic Rust SDK, so `callgebra-llm` speaks the
-Messages API over `reqwest` directly, behind a `Provider` trait.
+A subagent is a session with a **role**: its own system prompt, model, effort,
+catalog subset (which tables and functions it may see), tool permissions and a
+budget slice. `RLM(...)` is the anonymous case (same role as the parent, one
+level deeper). Roles are declared in SQL and stored in the catalog, so the
+model can define its own helpers and the harness can ship a standard set.
 
-- Default model `claude-opus-5`; adaptive thinking (omit `thinking` or send
-  `{type: "adaptive"}`), `output_config.effort` per call, streaming SSE for
-  everything (the TUI streams tokens into the selected call's pane).
-- `cache_control` on the system prefix (catalog + rules), one breakpoint, and
-  top-level automatic caching for the transcript tail. Cache hits are reported
-  from `usage.cache_read_input_tokens` and shown in the TUI.
-- `LLM_BOOL` / `LLM_JSON` use structured outputs (`output_config.format`), not
-  prefill, which current models reject.
-- `stop_reason` is always checked; `refusal` is surfaced as an error row. When
-  the configured model is Claude Fable 5.1 the client sends the server-side
-  fallback beta by default.
-- Honours `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` (bearer) and
-  `ANTHROPIC_BASE_URL`. Retries 429/5xx with backoff.
-- `MockProvider` replays fixtures keyed by prompt hash; `RecordingProvider`
-  writes them. A second `OpenAiCompatProvider` is a stretch goal so local
-  models via vLLM can be used for cheap tiers.
+```sql
+CREATE AGENT reviewer
+  MODEL 'worker' EFFORT 'low'
+  TOOLS (files, grep, lines)
+  BUDGET (calls 40, tokens 60000)
+  PROMPT 'You review one hypothesis against the code. Answer verdict, evidence.';
 
-### 3.8 Tools and sandboxing
+SELECT h.hypothesis, r.verdict, r.evidence
+FROM hypotheses h
+CROSS JOIN LATERAL SPAWN(reviewer, h.hypothesis, (SELECT * FROM ctx)) r
+WHERE r.verdict = 'refuted';
+```
+
+Semantics:
+
+- **Spawn returns rows, not chat.** A child session runs its own SQL REPL and
+  ends with `FINAL`; the `FINAL` relation is what the parent's `SPAWN` yields.
+  One child per input row, run concurrently under the parent's semaphore.
+- **Handles and messages** for the asynchronous case, borrowed from Prime
+  Agent: `SPAWN_ASYNC` returns a handle row at admission; children post to
+  `INBOX` with `SEND(parent, text)`; the parent reads `INBOX` like any table
+  and can `AWAIT(handle)` for the final relation. Most queries never need
+  this; the synchronous `LATERAL SPAWN` is the default.
+- **Budget slices.** A child gets an explicit slice of the parent's remaining
+  budget, never more. Depth still counts: `SPAWN` at depth 2 is refused.
+- **Catalog subsets** are the security boundary. A `reviewer` with
+  `TOOLS (files, grep)` cannot call `shell` or `web_fetch`, and the planner
+  knows this when estimating cost.
+- **Cost attribution.** Child calls are rows in `trace_calls` with their own
+  `session_id`; the parent's statement carries a rolled-up `child_cost` so
+  both the tree and the flat view are one query away.
+
+Standard roles shipped with the harness:
+
+| Role | Used by | Model tier |
+|---|---|---|
+| `self` | `RLM(...)` | same as caller |
+| `mapper` | partition-and-map over `chunks` or `files` | worker, low effort |
+| `verifier` | `VERIFY`-style checks when no code oracle exists | worker, medium effort, separate from the proposer |
+| `proposer` | continual harness task generation (3.6) | root tier |
+| `judge` | rubric grading of `FINAL` answers for LLM-judged task families | worker |
+| `planner` | optional: asks a model to choose between plan alternatives when the cost model is uncertain (3.3, rule 7) | worker |
+
+In the algebra a spawn is ρ with a role parameter; its cost signature is the
+child's plan, estimated from the role's budget when the child plan is not yet
+known. The TUI shows children as a lane under their parent statement, with the
+role name, and the tasks board shows proposer/solver/verifier triples as one
+unit.
+
+### 3.8 Model-agnostic LLM layer
+
+Callgebra never talks to one vendor. `callgebra-llm` exposes a `Provider`
+trait and a `Capabilities` struct (streaming, tools, structured output,
+prompt caching, reasoning control, cost reporting) that the planner and the
+harness consult instead of assuming.
+
+**Backends, in order of preference:**
+
+1. **Aura gateway** (`AuraProvider`, default when `AURA_BASE_URL` is set).
+   Your Aura LLM Gateway speaks the Open Responses API over HTTP
+   (`POST /v1/responses`, SSE with semantic events, `previous_response_id`,
+   `usage.cost_usd`, `metadata.aura.provider/latency_ms`). Through it
+   Callgebra gets nine providers, eight routing strategies with failover and
+   circuit breaking, Redis response caching, per-request USD cost, rate limits
+   and multi-tenancy without any of that code living here. Wire types come
+   from the `aura-types` crate as a git dependency (it is light: serde, uuid,
+   chrono, thiserror, utoipa), so the Open Responses structs are never
+   hand-written. `aura-core` is **not** embedded: it drags in SQLx/Postgres,
+   Redis and the AWS SDK. Two Aura features map directly onto Callgebra
+   needs: `compression` (TOON/YAML) for rendering relations into prompts, and
+   `consistency`/`validation` (self-consistency, best-of-N, confidence
+   thresholds) as a physical implementation of `VERIFY`.
+2. **Anthropic direct** (`AnthropicProvider`): Messages API over `reqwest`,
+   for running without a gateway. Adds the knobs Open Responses does not carry
+   today: adaptive thinking, `output_config.effort`, `cache_control`,
+   structured outputs, `stop_reason: refusal`.
+3. **OpenAI-compatible** (`OpenAiCompatProvider`): chat completions for vLLM,
+   Ollama, and anything else local; also Aura's own `/v1` compatibility
+   endpoint when Open Responses is not wanted.
+4. **Mock / replay** (`ReplayProvider`, `RecordingProvider`): fixtures keyed by
+   (model alias, prompt hash, schema hash), for tests and for free re-runs.
+
+**Model aliases, not model names.** CallSQL and the planner refer to tiers:
+`root`, `worker`, `proxy`, `judge`. `callgebra.toml` maps each alias to a
+concrete model per backend, or, with Aura, to a routing goal
+(`routing: { strategy: cost_optimized }`) so the gateway picks. Switching
+vendors is a config change and a memo namespace change, nothing else.
+
+**Provider-specific knobs** travel as `ProviderOptions`, a small enum the
+provider either honours or reports as unsupported through `Capabilities`.
+The harness degrades gracefully: without prompt caching it still freezes the
+prefix (cheaper on every vendor); without structured output `LLM_JSON` falls
+back to a single forced function tool and validates the arguments itself;
+without reasoning control `EFFORT` is a no-op with a warning in the trace.
+
+**Cost.** Actuals come from the provider when it reports them (Aura's
+`usage.cost_usd`), otherwise from a local pricing table keyed by model. The
+planner's estimates use the same table. Both are stored per call.
+
+**Proposed upstream changes to Aura** (each is a small PR and lets Callgebra
+drop a workaround): a `reasoning` field on `CreateResponseRequest` carrying
+effort for providers that support it; a `text.format` / JSON-schema output
+option; pass-through of Anthropic `cache_control` and reporting of
+`cached_tokens` per request (the field exists on `Usage`); a feature-gated
+`aura-providers` split of `aura-core::provider` with no database, Redis or
+AWS dependency so the providers can be embedded in-process when no gateway
+runs.
+
+### 3.9 Tools and sandboxing
 
 Filesystem tools are read-only by default and rooted at the session workspace.
 `shell` runs inside `hakoniwa` (namespaces, tmpfs root, Landlock, seccomp,
@@ -288,7 +388,7 @@ cgroup limits) on Linux, with a plain-subprocess fallback flagged as unsafe.
 provider supports them, otherwise a pluggable HTTP backend with a domain
 allow-list. Every tool call is a trace row with its arguments and byte counts.
 
-### 3.9 Trace
+### 3.10 Trace
 
 A `tracing` `Layer` writes spans and events into SQLite: `runs`, `sessions`
 (tree via `parent_id`, depth), `statements` (SQL, plan JSON, estimates,
@@ -359,10 +459,10 @@ callgebra/
 │   ├── callgebra-sql/         parse, validate subset, Catalog, LogicalPlan
 │   ├── callgebra-algebra/     CallPlan, CallKind, cost model, rules, EXPLAIN
 │   ├── callgebra-exec/        async operators, recursion, budgets, memo
-│   ├── callgebra-llm/         Provider trait, Anthropic Messages client, mock
+│   ├── callgebra-llm/         Provider trait, Aura (Open Responses), Anthropic, OpenAI-compat, replay
 │   ├── callgebra-tools/       virtual tables, table functions, sandbox
 │   ├── callgebra-trace/       event model, tracing Layer, SQLite schema
-│   ├── callgebra-harness/     RLM REPL loop, sessions, continual loop, generators
+│   ├── callgebra-harness/     RLM REPL loop, sessions, agents and roles, continual loop, generators
 │   ├── callgebra-daemon/      socket server, JSONL protocol, cursors
 │   ├── callgebra-tui/         ratatui client
 │   └── callgebra/             CLI binary: run, repl, explain, trace, bench, tui, daemon
@@ -376,7 +476,8 @@ Dependencies (versions verified on crates.io on 2026-09-11): `sqlparser 0.62`,
 `tokio 1.53`, `reqwest` (rustls), `serde`/`serde_json`, `rusqlite 0.40`
 (bundled), `tracing 0.1` / `tracing-subscriber 0.3`, `ratatui 0.30.2`,
 `crossterm 0.29`, `tui-tree-widget 0.24`, `tui-markdown 0.3`, `syntect`,
-`hakoniwa 1.7`, `clap`, `anyhow`/`thiserror`, `proptest`, `insta`.
+`hakoniwa 1.7`, `clap`, `anyhow`/`thiserror`, `proptest`, `insta`, and
+`aura-types` as a git dependency on `UmaiTech/aura-llm-gateway` (0.18, MIT).
 Optional later: `ascent`/`datafrog` (not needed, semi-naive is small to write),
 `duckdb` (Arrow-native analytics over big traces), `wasmtime` (WASM tool
 plugins), `opentelemetry` export.
@@ -399,17 +500,21 @@ shortest path over a generated graph, `callgebra repl` with a local table.
 **M2 — Call algebra.** `LLM*` scalar functions, prompt-defined
 `CREATE FUNCTION`, `EXPAND`, `LATERAL` table functions, filesystem tools.
 `CallPlan` with `CallKind`, dedupe-then-map, batching, memo in SQLite,
-budgets, `EXPLAIN` with estimates. Real Anthropic client with streaming and
-caching, recording/replay fixtures. Demo: the `VERIFY / NOT EXISTS REFUTE`
+budgets, `EXPLAIN` with estimates. `Provider` trait with the Aura backend
+(Open Responses over HTTP, streaming, cost from `usage.cost_usd`), the
+Anthropic direct backend, and recording/replay fixtures; model aliases in
+`callgebra.toml`. Demo: the `VERIFY / NOT EXISTS REFUTE`
 query from the pitch over a generated candidate set, with `EXPLAIN ANALYZE`
 showing 40 estimated vs 37 actual calls and the anti-semi-join short-circuit.
 
 **M3 — RLM harness.** Session model, SQL REPL loop, catalog rendering in the
 cached system prompt, result truncation, `FINAL`, `RLM(...)` recursion with
-depth and budget inheritance, session persistence and `resume`. Demo: a
+depth and budget inheritance, `CREATE AGENT` roles and `LATERAL SPAWN`,
+session persistence and `resume`. Demo: a
 long-context question over a generated corpus (OOLONG-like) where the root
 partitions with `chunks` and maps `RLM` over the partitions; and a repo
-question over this repository using `files`/`grep`.
+question over this repository where the root spawns `reviewer` agents over
+candidate hypotheses.
 
 **M4 — TUI v1.** Daemon + JSONL protocol, session view (tree, transcript,
 streaming pane, plan sidebar), status bar, cancel, detach/reattach, headless
@@ -455,9 +560,12 @@ since M1 is deterministic and testable without any API key.
 
 ## 8. Open questions for you
 
-1. **Model tiers.** Root on `claude-opus-5` at `high`, sub-calls on
-   `claude-sonnet-5` at `low`, proxies for cascades on `claude-haiku-4-5`? Or
-   one model with effort as the only dial (simpler, keeps one cache namespace)?
+1. **Aura as the default path.** The plan makes Aura the preferred backend
+   and keeps the direct Anthropic and OpenAI-compatible backends for
+   gateway-less runs. Should Aura be *required* instead (one code path, all
+   routing in the gateway), and are you open to the small upstream additions
+   listed in 3.8 (reasoning effort, JSON-schema output, cache pass-through,
+   an embeddable `aura-providers` crate)?
 2. **First target task family for M3.** Generated long-context corpus (fully
    offline, deterministic oracle) or repository questions (more compelling demo,
    LLM-judged)? The plan assumes both, corpus first.
@@ -465,3 +573,31 @@ since M1 is deterministic and testable without any API key.
    pluggable backend for local models too?
 4. **Trace store.** SQLite only (chosen) or SQLite plus DuckDB for analytics
    over large traces?
+
+---
+
+## 9. How it gets built
+
+The crates in section 5 have thin, explicit interfaces, which is deliberate:
+implementation fans out to parallel subagents, one per crate, with the
+interfaces fixed first.
+
+1. **Interfaces first (one agent, short).** `Value`, `Batch`, `LogicalPlan`,
+   `CallPlan`, `Provider`, `Tool`, the trace event enum and the daemon
+   protocol as `.rs` files with doc comments and `todo!()` bodies, committed
+   before any implementation. This is the contract every other agent codes
+   against.
+2. **M0 + M1 in parallel.** Agents for `callgebra-sql` (parser subset and
+   planner), `callgebra-exec` (operators and semi-naive recursion),
+   `callgebra-trace` (schema and layer) and the differential test harness
+   against SQLite. Integration and review by the coordinating session.
+3. **M2 in parallel.** `callgebra-llm` (Aura, Anthropic, replay),
+   `callgebra-algebra` (call kinds, rules, EXPLAIN), `callgebra-tools`.
+4. **M3 onward** alternates: harness and agents, then TUI and daemon, then
+   planner, then generators. Each milestone ends with a code review pass and
+   the demo query recorded as a replay fixture so it runs in CI for free.
+
+Every agent works on its own branch off `claude/callgebra-sql-rlm-9opg46`,
+with `cargo fmt`, `cargo clippy -D warnings` and `cargo test` green before
+merge. The coordinating session owns the workspace `Cargo.toml`, the
+interface crate and the merge order.

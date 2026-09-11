@@ -26,6 +26,40 @@ the item is marked (snippet).
   https://github.com/joshua-mo-143/rig-rlm (rig + PyO3, early),
   https://github.com/tinyhumansai/tinyagents (graph runtime, GPL-3).
 
+## Aura LLM Gateway (model-agnostic routing)
+
+- Repo: https://github.com/UmaiTech/aura-llm-gateway (Rust, MIT, 0.18.0,
+  Rust 1.91+). SDKs `aura-llm` on PyPI (0.18.0) and npm (0.18.0). Docs at
+  https://aura-llm.dev. Design write-up:
+  https://www.umai-tech.com/blog/building-aura-an-agentic-llm-gateway-in-rust
+- Implements the Open Responses API: `POST /v1/responses`, items (message,
+  function_call, function_call_output, reasoning), status lifecycle, SSE with
+  semantic events (`response.output_text.delta`, `response.function_call.done`,
+  `response.completed`), `previous_response_id` threading. Also an
+  OpenAI-compatible `/v1` endpoint.
+- Nine providers (OpenAI, Anthropic, Google, Mistral, Together, Fireworks,
+  Ollama, HF TGI, Bedrock), eight routing strategies plus circuit breaker,
+  Redis response cache, per-request `usage.cost_usd` with input/output/cached/
+  reasoning token breakdown, `metadata.aura` with provider and latency,
+  prompt compression (TOON, AISP, YAML, JSON), response validation
+  (logprobs, self-consistency, best-of-N, confidence thresholds), multi-tenancy
+  and scoped API keys, Prometheus metrics.
+- Crates: `aura-types` (Open Responses types; deps serde, serde_json, uuid,
+  chrono, thiserror, utoipa; light enough to depend on via git),
+  `aura-core` (providers, `SmartRouter`, `AutoRouter`, `FallbackChain`,
+  `CostCalculator`, compression; depends on `aura-db` with SQLx/Postgres,
+  Redis and the AWS SDK, so too heavy to embed), `aura-db`, `aura-proxy`.
+  None are published on crates.io.
+- `Provider` trait in `aura-core`: `name`, `models`, `supports_model`,
+  `complete(CreateResponseRequest) -> Response`, `complete_stream`,
+  `health_check`.
+- `CreateResponseRequest` fields: model, input, instructions,
+  max_output_tokens, temperature, top_p, stream, previous_response_id, tools,
+  tool_choice, user, metadata, validation, consistency, compression, routing.
+  No reasoning-effort, JSON-schema output or cache-control field yet; these
+  are the upstream proposals in PLAN.md 3.8. `Usage` has `cached_tokens` and
+  `cost_usd`.
+
 ## Long-running and continual harnesses
 
 - Anthropic reference code for long-running agents:

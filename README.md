@@ -25,5 +25,11 @@ Status: **planning**. Read [`docs/PLAN.md`](docs/PLAN.md) for the
 architecture, dialect, planner rules, harness design, TUI layout and
 milestones, and [`docs/RESEARCH.md`](docs/RESEARCH.md) for the sources.
 
-Written in Rust. The name is also used by an unrelated small JavaScript
-library (`fluture-js/callgebra`).
+Written in Rust. Model-agnostic: calls go through the
+[Aura LLM Gateway](https://github.com/UmaiTech/aura-llm-gateway) (Open
+Responses API) when one is configured, or directly to Anthropic or any
+OpenAI-compatible endpoint. Sub-work is delegated to declared agent roles
+with `CREATE AGENT` and `SPAWN`.
+
+The name is also used by an unrelated small JavaScript library
+(`fluture-js/callgebra`).
