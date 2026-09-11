@@ -469,6 +469,14 @@ Aura's `compression` (TOON/YAML for rendering relations into prompts) and
 or OpenAI-compatible gateway (LiteLLM, Portkey, OpenRouter) works through the
 same two adapters with no new code.
 
+**Aura is ours to change.** Aura is Marcus's project, so a gap the gateway
+adapter hits is filed as an issue on `UmaiTech/aura-llm-gateway` and fixed
+there, not papered over here. The four gaps already known are drafted in
+`docs/aura-issues/` (reasoning effort on the request, JSON-schema output,
+cache-control pass-through with `cached_tokens` reported, an embeddable
+`aura-providers` crate). The adapter still degrades gracefully in the
+meantime, per the `Capabilities` rules below.
+
 **Alternatives considered.** The `genai` crate (0.6.5, 26+ providers, native
 Anthropic protocol, cache control, reasoning effort, structured output) would
 replace both direct adapters in a day. It is the fallback if the adapters
