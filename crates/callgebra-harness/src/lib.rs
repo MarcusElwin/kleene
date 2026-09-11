@@ -11,6 +11,7 @@
 #![forbid(unsafe_code)]
 
 pub mod live;
+pub mod prompt;
 pub mod repl;
 pub mod sink;
 pub mod testing;
