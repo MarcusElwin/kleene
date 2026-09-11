@@ -14,12 +14,17 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+callgebra-trace = { workspace = true }
+duckdb = { version = "1.10505", features = ["bundled"], optional = true }
+
+[dev-dependencies]
+tempfile = "3"
 
 [features]
-default = []
-# DuckDB-backed store. Off by default in M0 while the bundled build is measured;
-# M1 turns it on and makes it the only implementation.
-duckdb = []
+default = ["duckdb"]
+# DuckDB-backed store (the production store). Building it compiles DuckDB from
+# source once, about ten minutes on four cores.
+duckdb = ["dep:duckdb"]
 
 [lints]
 workspace = true
