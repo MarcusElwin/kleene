@@ -16,6 +16,7 @@ callgebra-llm = { workspace = true }
 callgebra-tools = { workspace = true }
 callgebra-store = { workspace = true }
 callgebra-trace = { workspace = true }
+sqlparser = { workspace = true }
 async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

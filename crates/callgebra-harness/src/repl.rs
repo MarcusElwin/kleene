@@ -5,7 +5,7 @@ use crate::sink::StoreSink;
 use crate::RenderOptions;
 use callgebra_core::Catalog;
 use callgebra_exec::{execute_statement, ExecContext, StatementResult};
-use callgebra_sql::{plan_sql, render_error};
+use callgebra_sql::{parse, plan, plan_sql, render_error, Statement};
 use callgebra_store::DuckDbStore;
 use std::sync::Arc;
 use std::time::Instant;
@@ -14,6 +14,19 @@ use std::time::Instant;
 pub struct Repl {
     sink: Arc<StoreSink>,
     render: RenderOptions,
+}
+
+enum Pending {
+    Planned(Statement),
+    Ast(Box<sqlparser::ast::Statement>, String),
+}
+
+fn error(text: String) -> Rendered {
+    Rendered {
+        text,
+        is_error: true,
+        is_final: false,
+    }
 }
 
 /// The rendering of one statement's outcome.
@@ -48,20 +61,69 @@ impl Repl {
     }
 
     /// Plan and execute every statement in `sql`, rendering each outcome.
+    ///
+    /// Statements are planned one at a time, immediately before they run, so
+    /// a table created by one statement is visible to the next. Execution
+    /// stops at the first error or at `FINAL`.
     pub async fn submit(&self, sql: &str) -> Vec<Rendered> {
-        let catalog = self.sink.catalog().read().await.clone();
-        let stmts = match plan_sql(sql, &catalog) {
-            Ok(s) => s,
-            Err(e) => {
-                return vec![Rendered {
-                    text: render_error(&e),
-                    is_error: true,
-                    is_final: false,
-                }]
+        let trimmed = sql.trim();
+        let is_final = trimmed
+            .get(..5)
+            .is_some_and(|h| h.eq_ignore_ascii_case("FINAL"));
+        let stmts: Vec<Statement> = if is_final {
+            let catalog = self.sink.catalog().read().await.clone();
+            match plan_sql(sql, &catalog) {
+                Ok(s) => s,
+                Err(e) => return vec![error(render_error(&e))],
             }
+        } else {
+            let asts = match parse(sql) {
+                Ok(a) => a,
+                Err(e) => return vec![error(render_error(&e))],
+            };
+            let single = asts.len() == 1;
+            let mut planned = Vec::with_capacity(asts.len());
+            // Plan lazily: statements after a DDL statement need the updated
+            // catalog, so only the first is planned here and the rest inside
+            // the loop below.
+            planned.push(Pending::Ast(
+                Box::new(asts[0].clone()),
+                if single {
+                    trimmed.to_string()
+                } else {
+                    asts[0].to_string()
+                },
+            ));
+            for a in asts.into_iter().skip(1) {
+                planned.push(Pending::Ast(Box::new(a.clone()), a.to_string()));
+            }
+            return self.run_pending(planned).await;
         };
+        self.run_pending(stmts.into_iter().map(Pending::Planned).collect())
+            .await
+    }
+
+    async fn run_pending(&self, pending: Vec<Pending>) -> Vec<Rendered> {
         let mut out = vec![];
-        for stmt in &stmts {
+        for item in pending {
+            let stmt = match item {
+                Pending::Planned(s) => s,
+                Pending::Ast(ast, text) => {
+                    let catalog = self.sink.catalog().read().await.clone();
+                    match plan(&ast, &catalog) {
+                        Ok(mut s) => {
+                            s.sql = text;
+                            s
+                        }
+                        Err(e) => {
+                            out.push(error(render_error(&e)));
+                            break;
+                        }
+                    }
+                }
+            };
+            let stmt = &stmt;
+
             let started = Instant::now();
             let ctx = ExecContext::new(self.sink.clone());
             let rendered = match execute_statement(stmt, ctx).await {
