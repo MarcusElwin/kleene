@@ -231,11 +231,15 @@ async fn three_valued_logic_and_arithmetic() {
     let r = w
         .rows("SELECT 7 / 2, 7 % 3, 1 / 0, 2 * 2.5, -3, 1 + NULL")
         .await;
-    assert_eq!(r, vec![vec![f(3.5), v(1), N, f(5.0), v(-3), N]]);
+    assert_eq!(
+        r,
+        vec![vec![f(3.5), v(1), f(f64::INFINITY), f(5.0), v(-3), N]]
+    );
     let e = w.err("SELECT 9223372036854775807 + 1").await;
     assert!(matches!(e, ExecError::Eval(_)), "{e}");
-    let e = w.err("SELECT 1 % 0").await;
-    assert!(matches!(e, ExecError::Eval(_)));
+    // Division and modulo by zero follow DuckDB: IEEE floats, NULL modulo.
+    let r = w.rows("SELECT 1 % 0, 0 / 0 IS NULL, -1 / 0").await;
+    assert_eq!(r, vec![vec![N, Value::Bool(false), f(f64::NEG_INFINITY)]]);
     let r = w
         .rows("SELECT name FROM nodes WHERE name LIKE '_' AND name NOT LIKE 'g' ORDER BY name")
         .await;

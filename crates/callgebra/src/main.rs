@@ -16,6 +16,9 @@ struct Cli {
     /// Database file for session tables, memo and trace. Default: `.callgebra/run.duckdb`.
     #[arg(long, global = true)]
     db: Option<PathBuf>,
+    /// Workspace root for tools (`files`, `grep`, `shell`, ...). Default: current directory.
+    #[arg(long, global = true)]
+    workspace: Option<PathBuf>,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -34,7 +37,7 @@ enum Command {
         #[arg(short = 'c', long)]
         command: Option<String>,
     },
-    /// Print the call plan for a statement without executing it (M2).
+    /// Print the call plan for a statement without executing it.
     Explain {
         /// CallSQL text.
         sql: String,
@@ -68,6 +71,41 @@ fn open_store(cli: &Cli) -> anyhow::Result<callgebra_store::DuckDbStore> {
     Ok(callgebra_store::DuckDbStore::open(&path)?)
 }
 
+/// A REPL plus the trace writer to flush before exit.
+struct Opened {
+    repl: callgebra_harness::Repl,
+    trace: callgebra_store::DuckDbTraceSink,
+}
+
+async fn open_repl(cli: &Cli) -> anyhow::Result<Opened> {
+    let store = open_store(cli)?;
+    let workspace = cli
+        .workspace
+        .clone()
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let provider = match callgebra_llm::provider_from_env() {
+        Ok(p) => Some(p),
+        Err(e) => {
+            tracing::info!("no model provider: {e}");
+            None
+        }
+    };
+    let trace = store.trace_sink();
+    let tracer = Some(callgebra_trace::Tracer::new(std::sync::Arc::new(
+        trace.clone(),
+    )));
+    let repl = callgebra_harness::Repl::with_config(
+        store,
+        callgebra_harness::ReplConfig {
+            workspace,
+            provider,
+            tracer,
+        },
+    )
+    .await?;
+    Ok(Opened { repl, trace })
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -83,8 +121,7 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Some(Command::Repl { command }) => {
-            let store = open_store(&cli)?;
-            let repl = callgebra_harness::Repl::new(store).await?;
+            let Opened { repl, trace } = open_repl(&cli).await?;
             let mut stdout = std::io::stdout();
             if let Some(sql) = command {
                 let mut failed = false;
@@ -92,6 +129,7 @@ async fn main() -> anyhow::Result<()> {
                     writeln!(stdout, "{}", r.text)?;
                     failed |= r.is_error;
                 }
+                trace.flush().await;
                 if failed {
                     std::process::exit(1);
                 }
@@ -133,6 +171,20 @@ async fn main() -> anyhow::Result<()> {
                     writeln!(stdout, "{}", r.text)?;
                 }
             }
+            trace.flush().await;
+            Ok(())
+        }
+        Some(Command::Explain { sql }) => {
+            let Opened { repl, trace } = open_repl(&cli).await?;
+            let mut failed = false;
+            for r in repl.submit(&format!("EXPLAIN {sql}")).await {
+                println!("{}", r.text);
+                failed |= r.is_error;
+            }
+            trace.flush().await;
+            if failed {
+                std::process::exit(1);
+            }
             Ok(())
         }
         Some(Command::Trace { sql }) => {
@@ -148,11 +200,12 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(cmd) => {
             let milestone = match cmd {
-                Command::Explain { .. } => "M2",
                 Command::Run { .. } => "M3",
                 Command::Tui | Command::Daemon => "M4",
                 Command::Bench => "M7",
-                Command::Repl { .. } | Command::Trace { .. } => unreachable!(),
+                Command::Repl { .. } | Command::Trace { .. } | Command::Explain { .. } => {
+                    unreachable!()
+                }
             };
             eprintln!("callgebra: not implemented yet; arrives in {milestone}, see docs/PLAN.md");
             std::process::exit(2)

@@ -287,7 +287,7 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Result<Value, ExecError> {
                 return Ok(Value::Null);
             };
             if b == 0 {
-                return Err(ExecError::Eval("mod: division by zero".into()));
+                return Ok(Value::Null);
             }
             Ok(Value::Int(a.wrapping_rem(b)))
         }
@@ -482,7 +482,10 @@ mod tests {
             call("mod", &[Value::Int(7), Value::Int(3)]).unwrap(),
             Value::Int(1)
         );
-        assert!(call("mod", &[Value::Int(7), Value::Int(0)]).is_err());
+        assert_eq!(
+            call("mod", &[Value::Int(7), Value::Int(0)]).unwrap(),
+            Value::Null
+        );
     }
 
     #[test]

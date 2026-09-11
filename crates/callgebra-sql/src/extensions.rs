@@ -28,13 +28,11 @@ fn parse_err(message: impl Into<String>, hint: &str) -> SqlError {
 pub(crate) fn plan_extension(text: &str, catalog: &Catalog) -> Result<Option<Statement>, SqlError> {
     let words: Vec<String> = text
         .split_whitespace()
-        .take(3)
+        .take(4)
         .map(|w| w.to_ascii_uppercase())
         .collect();
     let head = words.join(" ");
-    if head.starts_with("CREATE FUNCTION")
-        || head.starts_with("CREATE OR REPLACE") && words.get(2).is_some_and(|w| w == "FUNCTION")
-    {
+    if head.starts_with("CREATE FUNCTION") || head.starts_with("CREATE OR REPLACE FUNCTION") {
         return plan_create_function(text).map(Some);
     }
     if words.first().is_some_and(|w| w == "CALL") {

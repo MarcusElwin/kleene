@@ -62,6 +62,8 @@ pub struct BudgetState {
     pub budget: callgebra_core::Budget,
     /// Spent so far.
     pub usage: BudgetUsage,
+    /// Calls served from the memo (free, not counted in `usage`).
+    pub memo_hits: u64,
 }
 
 /// Everything a statement's calls need.
@@ -118,7 +120,8 @@ impl LiveSink {
 
     /// Register the tools' catalog entries so the planner resolves them.
     pub async fn register_tool_catalog(&self, entries: Vec<FunctionDef>) {
-        let mut cat = self.store.catalog().write().await;
+        let catalog = self.store.catalog();
+        let mut cat = catalog.write().await;
         for e in entries {
             cat.add_function(e);
         }
@@ -180,10 +183,16 @@ impl LiveSink {
         self.budget.lock().await.usage
     }
 
-    /// Reset usage (statement-level accounting is done by the caller diffing).
+    /// Limits and usage (statement-level accounting is done by the caller diffing).
     pub async fn budget_state(&self) -> (callgebra_core::Budget, BudgetUsage) {
         let b = self.budget.lock().await;
         (b.budget.clone(), b.usage)
+    }
+
+    /// Calls served from the memo so far; they cost nothing and do not count
+    /// against `budget.calls`.
+    pub async fn memo_hits(&self) -> u64 {
+        self.budget.lock().await.memo_hits
     }
 
     /// Define a function from a `CREATE FUNCTION` statement: registers it in
@@ -201,15 +210,22 @@ impl LiveSink {
             return Err(ExecError::Eval("not a CREATE FUNCTION".into()));
         };
         {
-            let cat = self.store.catalog().read().await;
+            let catalog = self.store.catalog();
+            let cat = catalog.read().await;
             if let Some(existing) = cat.function(name) {
                 if !replace {
                     return Err(ExecError::Eval(format!(
                         "function {name} already exists; use CREATE OR REPLACE FUNCTION"
                     )));
                 }
-                if existing.call_kind == CallKind::Pure && callgebra_core::standard_functions().iter().any(|f| f.name.eq_ignore_ascii_case(name)) {
-                    return Err(ExecError::Eval(format!("cannot replace the builtin {name}")));
+                if existing.call_kind == CallKind::Pure
+                    && callgebra_core::standard_functions()
+                        .iter()
+                        .any(|f| f.name.eq_ignore_ascii_case(name))
+                {
+                    return Err(ExecError::Eval(format!(
+                        "cannot replace the builtin {name}"
+                    )));
                 }
             }
         }
@@ -249,20 +265,25 @@ impl LiveSink {
         Ok(format!("defined function {name}"))
     }
 
+    /// Charge tokens and dollars for a call whose slot `reserve_call` took.
     async fn charge(&self, usage: &callgebra_llm::Usage) -> Result<(), ExecError> {
         let mut b = self.budget.lock().await;
-        b.usage.calls += 1;
         b.usage.tokens += usage.total_tokens();
         b.usage.dollars += usage.cost_usd.unwrap_or(0.0);
         let snapshot = b.usage;
         b.budget.check(&snapshot).map_err(ExecError::Budget)
     }
 
-    async fn precheck_budget(&self) -> Result<(), ExecError> {
-        let b = self.budget.lock().await;
+    /// Take one call slot from the budget before the provider is asked, so
+    /// concurrent rows cannot overshoot `budget.calls`. A refused call is not
+    /// counted.
+    async fn reserve_call(&self) -> Result<(), ExecError> {
+        let mut b = self.budget.lock().await;
         let mut next = b.usage;
         next.calls += 1;
-        b.budget.check(&next).map_err(ExecError::Budget)
+        b.budget.check(&next).map_err(ExecError::Budget)?;
+        b.usage.calls = next.calls;
+        Ok(())
     }
 
     /// Run one model request through memo, provider, budget and trace.
@@ -278,7 +299,6 @@ impl LiveSink {
                 "no model provider configured (set ANTHROPIC_API_KEY or OPENAI_API_KEY, or a CALLGEBRA_ROUTER_TOML)".into(),
             )
         })?;
-        self.precheck_budget().await?;
         let settings = self.settings().await;
         let req = CompletionRequest {
             alias: alias.clone(),
@@ -318,6 +338,7 @@ impl LiveSink {
                     .and_then(|t| t.as_str())
                     .unwrap_or_default()
                     .to_string();
+                self.budget.lock().await.memo_hits += 1;
                 if let Some(t) = &self.tracer {
                     t.emit(TraceEvent::CallFinished {
                         call: call_id,
@@ -333,6 +354,7 @@ impl LiveSink {
                 return Ok(text);
             }
         }
+        self.reserve_call().await?;
         let result = provider.complete(req).await;
         match result {
             Ok(resp) => {
@@ -373,7 +395,11 @@ impl LiveSink {
                         output_tokens: resp.usage.output_tokens,
                         cost_usd: resp.usage.cost_usd,
                     };
-                    let _ = self.store.store().memo_put(&alias.0, &fingerprint, &entry).await;
+                    let _ = self
+                        .store
+                        .store()
+                        .memo_put(&alias.0, &fingerprint, &entry)
+                        .await;
                 }
                 Ok(text)
             }
@@ -406,11 +432,18 @@ impl LiveSink {
 
     fn parse_bool(text: &str) -> Result<Value, ExecError> {
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(text) {
-            if let Some(b) = v.get("answer").and_then(|a| a.as_bool()).or_else(|| v.as_bool()) {
+            if let Some(b) = v
+                .get("answer")
+                .and_then(|a| a.as_bool())
+                .or_else(|| v.as_bool())
+            {
                 return Ok(Value::Bool(b));
             }
         }
-        let t = text.trim().trim_matches(|c: char| !c.is_alphanumeric()).to_ascii_lowercase();
+        let t = text
+            .trim()
+            .trim_matches(|c: char| !c.is_alphanumeric())
+            .to_ascii_lowercase();
         Ok(match t.as_str() {
             "yes" | "true" | "y" => Value::Bool(true),
             "no" | "false" | "n" => Value::Bool(false),
@@ -420,13 +453,21 @@ impl LiveSink {
                 } else if t.starts_with("no") || t.starts_with("false") {
                     Value::Bool(false)
                 } else {
-                    return Err(ExecError::Call(format!("expected yes/no, got: {}", text.trim())));
+                    return Err(ExecError::Call(format!(
+                        "expected yes/no, got: {}",
+                        text.trim()
+                    )));
                 }
             }
         })
     }
 
-    async fn run_defined(&self, name: &str, def: DefinedFunction, args: &[Value]) -> Result<Value, ExecError> {
+    async fn run_defined(
+        &self,
+        name: &str,
+        def: DefinedFunction,
+        args: &[Value],
+    ) -> Result<Value, ExecError> {
         if args.len() != def.arg_names.len() {
             return Err(ExecError::Call(format!(
                 "{name} takes {} arguments, got {}",
@@ -448,7 +489,9 @@ impl LiveSink {
                     DataType::Json => (None, format!("{prompt}\n\nAnswer with JSON only.")),
                     _ => (None, prompt),
                 };
-                let text = self.model_call(self.settings().await.default_alias, prompt, schema, None).await?;
+                let text = self
+                    .model_call(self.settings().await.default_alias, prompt, schema, None)
+                    .await?;
                 coerce_text(&text, def.returns)
             }
             FunctionBody::Shell { command } => {
@@ -461,7 +504,10 @@ impl LiveSink {
                     .call(&[Value::Text(cmd)], &self.tool_ctx)
                     .await
                     .map_err(|e| ExecError::Call(e.to_string()))?;
-                let row = batch.rows.first().ok_or_else(|| ExecError::Call("shell returned no row".into()))?;
+                let row = batch
+                    .rows
+                    .first()
+                    .ok_or_else(|| ExecError::Call("shell returned no row".into()))?;
                 let stdout = row.first().map(Value::render).unwrap_or_default();
                 let exit = batch
                     .schema
@@ -504,13 +550,16 @@ fn coerce_text(text: &str, to: DataType) -> Result<Value, ExecError> {
         DataType::Text | DataType::Any => Value::Text(t.to_string()),
         DataType::Bool => LiveSink::parse_bool(t)?,
         DataType::Json => Value::Json(
-            serde_json::from_str(t).map_err(|e| ExecError::Call(format!("expected JSON, got: {t} ({e})")))?,
+            serde_json::from_str(t)
+                .map_err(|e| ExecError::Call(format!("expected JSON, got: {t} ({e})")))?,
         ),
         DataType::Int => Value::Int(
-            t.parse().map_err(|_| ExecError::Call(format!("expected an integer, got: {t}")))?,
+            t.parse()
+                .map_err(|_| ExecError::Call(format!("expected an integer, got: {t}")))?,
         ),
         DataType::Float => Value::Float(
-            t.parse().map_err(|_| ExecError::Call(format!("expected a number, got: {t}")))?,
+            t.parse()
+                .map_err(|_| ExecError::Call(format!("expected a number, got: {t}")))?,
         ),
         DataType::Vector => Err(ExecError::Call("vector results are not supported".into()))?,
     })
@@ -542,9 +591,16 @@ impl CallSink for LiveSink {
                 let Some(prompt) = args.first().and_then(|v| v.as_text()) else {
                     return Ok(Value::Null);
                 };
-                let prompt = format!("{prompt}\n\nAnswer with JSON: {{\"answer\": true}} or {{\"answer\": false}}.");
+                let prompt = format!(
+                    "{prompt}\n\nAnswer with JSON: {{\"answer\": true}} or {{\"answer\": false}}."
+                );
                 let text = self
-                    .model_call(self.settings().await.default_alias, prompt, Some(Self::bool_schema()), None)
+                    .model_call(
+                        self.settings().await.default_alias,
+                        prompt,
+                        Some(Self::bool_schema()),
+                        None,
+                    )
                     .await?;
                 Self::parse_bool(&text)
             }
@@ -567,38 +623,77 @@ impl CallSink for LiveSink {
                     .await?;
                 coerce_text(&text, DataType::Json)
             }
-            other => Err(ExecError::Call(format!("no implementation for function {other}"))),
+            other => Err(ExecError::Call(format!(
+                "no implementation for function {other}"
+            ))),
         }
     }
 
     async fn table_call(&self, name: &str, args: &[Value]) -> Result<Batch, ExecError> {
         let lower = name.to_ascii_lowercase();
         if lower == "expand" {
-            let (Some(prompt), Some(n)) = (args.first().and_then(|v| v.as_text()), args.get(1).and_then(|v| v.as_int())) else {
-                return Ok(Batch::empty(Arc::new(Schema::new(vec![Field::not_null("item", DataType::Text)]))));
+            let (Some(prompt), Some(n)) = (
+                args.first().and_then(|v| v.as_text()),
+                args.get(1).and_then(|v| v.as_int()),
+            ) else {
+                return Ok(Batch::empty(Arc::new(Schema::new(vec![Field::not_null(
+                    "item",
+                    DataType::Text,
+                )]))));
             };
             let prompt = format!(
                 "{prompt}\n\nReturn at most {n} items as a JSON array of strings, nothing else."
             );
-            let schema = serde_json::json!({"type": "array", "items": {"type": "string"}, "maxItems": n});
+            let schema =
+                serde_json::json!({"type": "array", "items": {"type": "string"}, "maxItems": n});
             let text = self
-                .model_call(self.settings().await.default_alias, prompt, Some(schema), None)
+                .model_call(
+                    self.settings().await.default_alias,
+                    prompt,
+                    Some(schema),
+                    None,
+                )
                 .await?;
             let items: Vec<String> = match serde_json::from_str::<serde_json::Value>(&text) {
-                Ok(serde_json::Value::Array(a)) => a.iter().map(|v| v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string())).collect(),
+                Ok(serde_json::Value::Array(a)) => a
+                    .iter()
+                    .map(|v| {
+                        v.as_str()
+                            .map(str::to_string)
+                            .unwrap_or_else(|| v.to_string())
+                    })
+                    .collect(),
                 Ok(serde_json::Value::Object(o)) => o
                     .values()
                     .find_map(|v| v.as_array())
-                    .map(|a| a.iter().map(|v| v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string())).collect())
+                    .map(|a| {
+                        a.iter()
+                            .map(|v| {
+                                v.as_str()
+                                    .map(str::to_string)
+                                    .unwrap_or_else(|| v.to_string())
+                            })
+                            .collect()
+                    })
                     .unwrap_or_default(),
-                _ => text.lines().map(|l| l.trim().trim_start_matches(['-', '*', ' ']).to_string()).filter(|l| !l.is_empty()).collect(),
+                _ => text
+                    .lines()
+                    .map(|l| l.trim().trim_start_matches(['-', '*', ' ']).to_string())
+                    .filter(|l| !l.is_empty())
+                    .collect(),
             };
             let schema = Arc::new(Schema::new(vec![Field::not_null("item", DataType::Text)]));
-            let rows = items.into_iter().take(n.max(0) as usize).map(|s| vec![Value::Text(s)]).collect();
+            let rows = items
+                .into_iter()
+                .take(n.max(0) as usize)
+                .map(|s| vec![Value::Text(s)])
+                .collect();
             return Batch::try_new(schema, rows).map_err(ExecError::from);
         }
         let Some(tool) = self.tools.get(&lower) else {
-            return Err(ExecError::Call(format!("no implementation for table function {name}")));
+            return Err(ExecError::Call(format!(
+                "no implementation for table function {name}"
+            )));
         };
         let statement = self.statement.lock().await.unwrap_or_default();
         let started = Instant::now();
@@ -607,10 +702,20 @@ impl CallSink for LiveSink {
             t.emit(TraceEvent::ToolCall {
                 statement,
                 tool: lower.clone(),
-                args: args.iter().map(Value::render).collect::<Vec<_>>().join(", "),
+                args: args
+                    .iter()
+                    .map(Value::render)
+                    .collect::<Vec<_>>()
+                    .join(", "),
                 bytes_out: result
                     .as_ref()
-                    .map(|b| b.rows.iter().flatten().map(|v| v.render().len() as u64).sum())
+                    .map(|b| {
+                        b.rows
+                            .iter()
+                            .flatten()
+                            .map(|v| v.render().len() as u64)
+                            .sum()
+                    })
                     .unwrap_or(0),
                 elapsed: started.elapsed(),
                 error: result.as_ref().err().map(|e| e.to_string()),
@@ -623,7 +728,12 @@ impl CallSink for LiveSink {
         self.store.scan(table).await
     }
 
-    async fn create_table(&self, name: &str, schema: Arc<Schema>, if_not_exists: bool) -> Result<bool, ExecError> {
+    async fn create_table(
+        &self,
+        name: &str,
+        schema: Arc<Schema>,
+        if_not_exists: bool,
+    ) -> Result<bool, ExecError> {
         self.store.create_table(name, schema, if_not_exists).await
     }
 

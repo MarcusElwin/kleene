@@ -44,7 +44,7 @@ impl fmt::Display for DataType {
 /// A scalar value.
 ///
 /// `Eq`, `Ord` and `Hash` are total so values can be deduplicated and used as
-/// memo keys: floats compare with [`f64::total_cmp`] and `NULL` sorts first.
+/// memo keys: floats order like DuckDB (`NaN` last and equal to itself) and `NULL` sorts first.
 /// This is *not* SQL three-valued comparison; the executor implements that on
 /// top with [`Value::sql_eq`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,11 +101,11 @@ impl Value {
     pub fn sql_cmp(&self, other: &Value) -> Option<Ordering> {
         match (self, other) {
             (Value::Null, _) | (_, Value::Null) => None,
-            (Value::Int(a), Value::Float(b)) => (*a as f64).partial_cmp(b),
-            (Value::Float(a), Value::Int(b)) => a.partial_cmp(&(*b as f64)),
+            (Value::Int(a), Value::Float(b)) => Some(float_cmp(*a as f64, *b)),
+            (Value::Float(a), Value::Int(b)) => Some(float_cmp(*a, *b as f64)),
             (Value::Bool(a), Value::Bool(b)) => Some(a.cmp(b)),
             (Value::Int(a), Value::Int(b)) => Some(a.cmp(b)),
-            (Value::Float(a), Value::Float(b)) => a.partial_cmp(b),
+            (Value::Float(a), Value::Float(b)) => Some(float_cmp(*a, *b)),
             (Value::Text(a), Value::Text(b)) => Some(a.cmp(b)),
             _ => None,
         }
@@ -220,6 +220,28 @@ impl Value {
     }
 }
 
+/// Float ordering with DuckDB's conventions: `NaN` equals `NaN` and sorts
+/// after every other value (including `inf`); `-0.0` equals `0.0`.
+fn float_cmp(a: f64, b: f64) -> Ordering {
+    match (a.is_nan(), b.is_nan()) {
+        (true, true) => Ordering::Equal,
+        (true, false) => Ordering::Greater,
+        (false, true) => Ordering::Less,
+        (false, false) => a.partial_cmp(&b).unwrap_or(Ordering::Equal),
+    }
+}
+
+/// Bits that hash equal exactly when [`float_cmp`] says equal.
+fn float_bits(f: f64) -> u64 {
+    if f.is_nan() {
+        u64::MAX
+    } else if f == 0.0 {
+        0
+    } else {
+        f.to_bits()
+    }
+}
+
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
         self.cmp(other) == Ordering::Equal
@@ -240,11 +262,14 @@ impl Ord for Value {
             (Value::Null, Value::Null) => Ordering::Equal,
             (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
             (Value::Int(a), Value::Int(b)) => a.cmp(b),
-            (Value::Float(a), Value::Float(b)) => a.total_cmp(b),
+            (Value::Float(a), Value::Float(b)) => float_cmp(*a, *b),
             (Value::Text(a), Value::Text(b)) => a.cmp(b),
             (Value::Json(a), Value::Json(b)) => a.to_string().cmp(&b.to_string()),
             (Value::Vector(a), Value::Vector(b)) => {
-                let by_elem = a.iter().zip(b).map(|(x, y)| x.total_cmp(y));
+                let by_elem = a
+                    .iter()
+                    .zip(b)
+                    .map(|(x, y)| float_cmp(f64::from(*x), f64::from(*y)));
                 for o in by_elem {
                     if o != Ordering::Equal {
                         return o;
@@ -264,12 +289,12 @@ impl Hash for Value {
             Value::Null => {}
             Value::Bool(b) => b.hash(state),
             Value::Int(i) => i.hash(state),
-            Value::Float(f) => f.to_bits().hash(state),
+            Value::Float(f) => float_bits(*f).hash(state),
             Value::Text(s) => s.hash(state),
             Value::Json(j) => j.to_string().hash(state),
             Value::Vector(v) => {
                 for x in v {
-                    x.to_bits().hash(state);
+                    float_bits(f64::from(*x)).hash(state);
                 }
             }
         }
@@ -423,6 +448,15 @@ mod tests {
     #[test]
     fn sql_eq_is_three_valued_and_numeric() {
         assert_eq!(Value::Null.sql_eq(&Value::Int(1)), None);
+        // DuckDB conventions: NaN = NaN, NaN sorts last, -0 = 0.
+        let nan = Value::Float(f64::NAN);
+        assert_eq!(nan.sql_eq(&Value::Float(-f64::NAN)), Some(true));
+        assert_eq!(
+            nan.sql_cmp(&Value::Float(f64::INFINITY)),
+            Some(Ordering::Greater)
+        );
+        assert_eq!(Value::Float(-0.0), Value::Float(0.0));
+        assert_eq!(Value::Float(-0.0).sql_eq(&Value::Int(0)), Some(true));
         assert_eq!(Value::Int(1).sql_eq(&Value::Float(1.0)), Some(true));
         assert_eq!(Value::from("a").sql_eq(&Value::from("b")), Some(false));
     }

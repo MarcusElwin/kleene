@@ -464,11 +464,6 @@ fn unsupported_constructs_have_hints() {
         ),
         ("SELECT row_number() OVER () FROM nodes", "window"),
         ("CREATE AGENT reviewer MODEL 'worker' PROMPT 'x'", "M3"),
-        (
-            "CREATE FUNCTION f(x TEXT) RETURNS TEXT AS PROMPT 'hi'",
-            "M2",
-        ),
-        ("CALL shell('ls')", "M2"),
         ("SELECT * FROM edges NATURAL JOIN nodes", "ON"),
         ("UPDATE nodes SET name = 'x'", "append-only"),
     ] {

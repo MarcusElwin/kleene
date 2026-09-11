@@ -32,18 +32,16 @@ fn arith(op: BinaryOp, l: &Value, r: &Value) -> Result<Value, ExecError> {
             BinaryOp::Plus => Value::Int(a.checked_add(*b).ok_or_else(overflow)?),
             BinaryOp::Minus => Value::Int(a.checked_sub(*b).ok_or_else(overflow)?),
             BinaryOp::Multiply => Value::Int(a.checked_mul(*b).ok_or_else(overflow)?),
-            BinaryOp::Divide => {
+            // `/` is float division; by zero it follows IEEE like DuckDB
+            // (`ieee_floating_point_ops`): inf, -inf or NaN.
+            BinaryOp::Divide => Value::Float(*a as f64 / *b as f64),
+            // Modulo by zero is NULL, as in DuckDB.
+            BinaryOp::Modulo => {
                 if *b == 0 {
                     Value::Null
                 } else {
-                    Value::Float(*a as f64 / *b as f64)
+                    Value::Int(a.wrapping_rem(*b))
                 }
-            }
-            BinaryOp::Modulo => {
-                if *b == 0 {
-                    return Err(ExecError::Eval("modulo by zero".into()));
-                }
-                Value::Int(a.wrapping_rem(*b))
             }
             _ => unreachable!("not arithmetic"),
         }),
@@ -62,19 +60,9 @@ fn arith(op: BinaryOp, l: &Value, r: &Value) -> Result<Value, ExecError> {
                 BinaryOp::Plus => Value::Float(a + b),
                 BinaryOp::Minus => Value::Float(a - b),
                 BinaryOp::Multiply => Value::Float(a * b),
-                BinaryOp::Divide => {
-                    if b == 0.0 {
-                        Value::Null
-                    } else {
-                        Value::Float(a / b)
-                    }
-                }
-                BinaryOp::Modulo => {
-                    if b == 0.0 {
-                        return Err(ExecError::Eval("modulo by zero".into()));
-                    }
-                    Value::Float(a % b)
-                }
+                BinaryOp::Divide => Value::Float(a / b),
+                // Float modulo by zero is NaN (IEEE), as in DuckDB.
+                BinaryOp::Modulo => Value::Float(a % b),
                 _ => unreachable!("not arithmetic"),
             })
         }
@@ -109,6 +97,11 @@ fn compare(op: BinaryOp, l: &Value, r: &Value) -> Result<Value, ExecError> {
 
 /// `x IN (values)` with SQL NULL semantics over already-evaluated candidates.
 pub(crate) fn in_values(x: &Value, candidates: &[Value], negated: bool) -> Value {
+    // An empty set decides regardless of the operand: `NULL IN ()` is false
+    // and `NULL NOT IN ()` is true (matters for `NOT IN (SELECT ...)`).
+    if candidates.is_empty() {
+        return Value::Bool(negated);
+    }
     if x.is_null() {
         return Value::Null;
     }
@@ -336,6 +329,9 @@ mod tests {
             in_values(&one, &[Value::Int(2), Value::Null], false),
             Value::Null
         );
+        assert_eq!(in_values(&Value::Null, &[], false), Value::Bool(false));
+        assert_eq!(in_values(&Value::Null, &[], true), Value::Bool(true));
+        assert_eq!(in_values(&Value::Null, &[Value::Int(1)], true), Value::Null);
         assert_eq!(in_values(&one, &[Value::Int(2)], false), Value::Bool(false));
         assert_eq!(in_values(&one, &[Value::Int(2)], true), Value::Bool(true));
         assert_eq!(
@@ -352,14 +348,25 @@ mod tests {
         );
         assert_eq!(
             arith(BinaryOp::Divide, &Value::Int(1), &Value::Int(0)).unwrap(),
-            Value::Null
+            Value::Float(f64::INFINITY)
         );
+        assert!(matches!(
+            arith(BinaryOp::Divide, &Value::Int(0), &Value::Int(0)).unwrap(),
+            Value::Float(f) if f.is_nan()
+        ));
         assert_eq!(
             arith(BinaryOp::Plus, &Value::Int(1), &Value::Float(1.5)).unwrap(),
             Value::Float(2.5)
         );
         assert!(arith(BinaryOp::Plus, &Value::Int(i64::MAX), &Value::Int(1)).is_err());
-        assert!(arith(BinaryOp::Modulo, &Value::Int(1), &Value::Int(0)).is_err());
+        assert_eq!(
+            arith(BinaryOp::Modulo, &Value::Int(1), &Value::Int(0)).unwrap(),
+            Value::Null
+        );
+        assert!(matches!(
+            arith(BinaryOp::Modulo, &Value::Float(1.0), &Value::Int(0)).unwrap(),
+            Value::Float(f) if f.is_nan()
+        ));
         assert_eq!(
             arith(BinaryOp::Plus, &Value::Null, &Value::Int(1)).unwrap(),
             Value::Null
