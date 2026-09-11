@@ -1,0 +1,18 @@
+data: {"id":"c1","object":"chat.completion.chunk","model":"gpt-5.4-mini","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}],"usage":null}
+
+data: {"id":"c1","object":"chat.completion.chunk","model":"gpt-5.4-mini","choices":[{"index":0,"delta":{"content":"Sure, "},"finish_reason":null}],"usage":null}
+
+data: {"id":"c1","object":"chat.completion.chunk","model":"gpt-5.4-mini","choices":[{"index":0,"delta":{"content":"checking."},"finish_reason":null}],"usage":null}
+
+data: {"id":"c1","object":"chat.completion.chunk","model":"gpt-5.4-mini","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_7","type":"function","function":{"name":"ls","arguments":""}}]},"finish_reason":null}],"usage":null}
+
+data: {"id":"c1","object":"chat.completion.chunk","model":"gpt-5.4-mini","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"path\": "}}]},"finish_reason":null}],"usage":null}
+
+data: {"id":"c1","object":"chat.completion.chunk","model":"gpt-5.4-mini","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"/etc\"}"}}]},"finish_reason":null}],"usage":null}
+
+data: {"id":"c1","object":"chat.completion.chunk","model":"gpt-5.4-mini","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":null}
+
+data: {"id":"c1","object":"chat.completion.chunk","model":"gpt-5.4-mini","choices":[],"usage":{"prompt_tokens":40,"completion_tokens":12,"total_tokens":52,"prompt_tokens_details":{"cached_tokens":10}}}
+
+data: [DONE]
+

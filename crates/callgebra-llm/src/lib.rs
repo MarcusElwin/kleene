@@ -3,18 +3,22 @@
 //! One request shape ([`CompletionRequest`]) covers everything Callgebra needs
 //! from a model: a cached system prefix, messages, optional tools, an optional
 //! JSON schema for the output, streaming and usage. Adapters map it to each
-//! vendor's wire format (M2). The [`Router`] resolves model aliases to ordered
+//! vendor's wire format over `reqwest`, no SDKs: [`AnthropicProvider`] speaks
+//! the Messages API and [`OpenAiCompatProvider`] the chat-completions API that
+//! everyone else exposes. The [`Router`] resolves model aliases to ordered
 //! `(provider, model)` candidates. [`ReplayProvider`] serves recorded fixtures
 //! so tests and re-runs cost nothing.
 
 #![forbid(unsafe_code)]
 
+pub mod adapters;
 mod http;
 pub mod replay;
 pub mod router;
 pub mod sse;
 pub mod types;
 
+pub use adapters::{AnthropicProvider, OpenAiCompatProvider};
 pub use replay::{RecordingProvider, ReplayProvider};
 pub use router::{Candidate, Router, RouterConfig};
 pub use types::{
