@@ -455,6 +455,7 @@ dependencies = [
 name = "callgebra-harness"
 version = "0.0.1"
 dependencies = [
+ "async-trait",
  "callgebra-algebra",
  "callgebra-core",
  "callgebra-exec",
