@@ -66,6 +66,8 @@ pub struct ExecContext {
     pub call_concurrency: usize,
     /// Rows per batch.
     pub batch_size: usize,
+    /// Cap on semi-naive rounds for recursive queries when the plan sets none.
+    pub max_recursion_rounds: Option<usize>,
     /// Where calls go.
     pub sink: Arc<dyn CallSink>,
 }
