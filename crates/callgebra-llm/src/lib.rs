@@ -9,8 +9,10 @@
 
 #![forbid(unsafe_code)]
 
+mod http;
 pub mod replay;
 pub mod router;
+pub mod sse;
 pub mod types;
 
 pub use replay::{RecordingProvider, ReplayProvider};
