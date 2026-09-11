@@ -2,18 +2,21 @@
 //!
 //! One DuckDB file per run holds session tables (`CREATE TABLE AS`), the memo
 //! of model calls, and the trace. The same tables are mounted back into every
-//! session's catalog as `trace_*` relations. M1 implements [`Store`] over
-//! DuckDB; this crate fixes the interface and ships an in-memory
-//! implementation for unit tests elsewhere.
+//! session's catalog as `trace_*` relations. [`DuckDbStore`] is the
+//! production store; [`MemoryStore`] serves unit tests elsewhere.
 
 #![forbid(unsafe_code)]
 
+#[cfg(feature = "duckdb")]
+pub mod duckdb;
 pub mod memory;
 
 use callgebra_core::{Batch, Schema};
 use std::sync::Arc;
 use thiserror::Error;
 
+#[cfg(feature = "duckdb")]
+pub use duckdb::{DuckDbStore, DuckDbTraceSink, MemoEntry};
 pub use memory::MemoryStore;
 
 /// Store failures.
