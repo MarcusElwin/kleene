@@ -160,10 +160,72 @@ pub fn standard_functions() -> Vec<FunctionDef> {
     v
 }
 
-/// A catalog pre-populated with [`standard_functions`].
+/// The model-call functions every session sees.
+///
+/// | name | signature | kind |
+/// |---|---|---|
+/// | `llm` | `(prompt TEXT [, model TEXT, effort TEXT]) -> TEXT` | one call per distinct argument tuple |
+/// | `llm_bool` | `(prompt TEXT) -> BOOLEAN` | structured yes/no |
+/// | `llm_json` | `(prompt TEXT, schema TEXT) -> JSON` | output validated against the schema |
+/// | `expand` | `(prompt TEXT, n BIGINT) -> TABLE(item TEXT)` | up to `n` generated rows |
+///
+/// All are `IMMUTABLE` for memo purposes: the same prompt to the same pinned
+/// model is served from the memo. That is a policy, not a fact about models,
+/// and the catalog says so.
+pub fn call_functions() -> Vec<FunctionDef> {
+    use crate::catalog::ModelAlias;
+    use DataType::*;
+    let worker = || CallKind::LlmScalar {
+        alias: ModelAlias::worker(),
+    };
+    vec![
+        FunctionDef {
+            name: "llm".into(),
+            args: vec![Text],
+            variadic: true,
+            returns: FunctionReturn::Scalar { data_type: Text },
+            call_kind: worker(),
+            volatility: Volatility::Immutable,
+            description: "ask the worker model; optional model alias and effort".into(),
+        },
+        FunctionDef {
+            name: "llm_bool".into(),
+            args: vec![Text],
+            variadic: false,
+            returns: FunctionReturn::Scalar { data_type: Bool },
+            call_kind: worker(),
+            volatility: Volatility::Immutable,
+            description: "ask the worker model a yes/no question".into(),
+        },
+        FunctionDef {
+            name: "llm_json".into(),
+            args: vec![Text, Text],
+            variadic: false,
+            returns: FunctionReturn::Scalar { data_type: Json },
+            call_kind: worker(),
+            volatility: Volatility::Immutable,
+            description: "ask the worker model for JSON matching a schema".into(),
+        },
+        FunctionDef {
+            name: "expand".into(),
+            args: vec![Text, Int],
+            variadic: false,
+            returns: FunctionReturn::Table {
+                schema: Schema::new(vec![Field::not_null("item", Text)]),
+            },
+            call_kind: CallKind::LlmTable {
+                alias: ModelAlias::worker(),
+            },
+            volatility: Volatility::Immutable,
+            description: "generate up to n items from a prompt, one row each".into(),
+        },
+    ]
+}
+
+/// A catalog pre-populated with [`standard_functions`] and [`call_functions`].
 pub fn standard_catalog() -> crate::catalog::Catalog {
     let mut c = crate::catalog::Catalog::new();
-    for f in standard_functions() {
+    for f in standard_functions().into_iter().chain(call_functions()) {
         c.add_function(f);
     }
     c
@@ -176,8 +238,12 @@ mod tests {
     #[test]
     fn standard_catalog_has_every_builtin_once() {
         let c = standard_catalog();
-        let n = standard_functions().len();
+        let n = standard_functions().len() + call_functions().len();
         assert_eq!(c.functions().count(), n);
+        assert!(matches!(
+            c.function("LLM").unwrap().call_kind,
+            CallKind::LlmScalar { .. }
+        ));
         assert!(c.function("UPPER").is_some());
         assert!(matches!(
             c.function("generate_series").unwrap().returns,

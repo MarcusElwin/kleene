@@ -394,11 +394,14 @@ dependencies = [
 name = "callgebra-algebra"
 version = "0.0.1"
 dependencies = [
+ "async-trait",
  "callgebra-core",
+ "callgebra-exec",
  "callgebra-sql",
  "serde",
  "serde_json",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]

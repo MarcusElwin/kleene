@@ -1,18 +1,28 @@
 //! The call algebra.
 //!
 //! A [`CallPlan`] is a [`LogicalPlan`] whose operators are annotated with the
-//! calls they imply ([`CallKind`]) and with cost estimates. The planner applies
-//! rewrite rules that respect [`Volatility`] fences, and `EXPLAIN` renders the
-//! result with estimated calls, tokens, dollars and depth per node.
+//! calls they imply ([`CallKind`]) and with cost estimates. The planner
+//! applies rewrite rules that respect [`Volatility`] fences, and `EXPLAIN`
+//! renders the result with estimated calls, tokens, dollars and depth per
+//! node, plus the complexity fragment the query lives in.
 //!
-//! Implemented in M2 (rules 1-3, 5, 8) and M5 (cost model, cascades, join
-//! ordering). This crate defines the types and the rule interface.
+//! M2 implements annotation, the cost model, the cheap-first, dedupe,
+//! semi-join and fence rules and `EXPLAIN`; M5 adds sampled selectivity,
+//! cascades, beam-limited recursion and join ordering.
 
 #![forbid(unsafe_code)]
+
+mod annotate;
+mod explain;
+mod rules;
 
 use callgebra_core::{CallKind, Catalog, Volatility};
 use callgebra_sql::LogicalPlan;
 use serde::{Deserialize, Serialize};
+
+pub use annotate::{annotate, CostModel};
+pub use explain::explain;
+pub use rules::{CheapFirst, Fences, SemiJoin};
 
 /// Estimated or measured cost of one operator.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
@@ -55,19 +65,58 @@ pub enum Fragment {
     Recursive,
 }
 
+impl Fragment {
+    /// Short badge text.
+    pub fn badge(self) -> &'static str {
+        match self {
+            Fragment::Conjunctive => "CQ",
+            Fragment::FirstOrder => "FO",
+            Fragment::Recursive => "REC",
+        }
+    }
+
+    /// One-line complexity note.
+    pub fn note(self) -> &'static str {
+        match self {
+            Fragment::Conjunctive => "conjunctive query: NP-complete combined, AC0 data",
+            Fragment::FirstOrder => "first-order: PSPACE-complete combined, AC0 data",
+            Fragment::Recursive => "recursive: Datalog and beyond, PTIME data, EXPTIME program",
+        }
+    }
+}
+
 /// One node of the call plan.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CallNode {
-    /// The relational operator.
+    /// The relational operator (children replaced by [`CallNode::children`]).
     pub op: LogicalPlan,
-    /// Calls this node makes, in evaluation order.
+    /// Calls this node makes per input row, in evaluation order.
     pub calls: Vec<CallKind>,
-    /// Most restrictive volatility of anything under this node.
+    /// Most restrictive volatility of anything at this node.
     pub volatility: Volatility,
     /// Cost estimate for this node alone.
     pub estimate: Estimate,
     /// Children, mirroring the logical plan.
     pub children: Vec<CallNode>,
+}
+
+impl CallNode {
+    /// Total estimate for this subtree.
+    pub fn total(&self) -> Estimate {
+        let mut t = self.estimate;
+        for c in &self.children {
+            t = t.plus(c.total());
+        }
+        t
+    }
+
+    /// Most restrictive volatility in the subtree.
+    pub fn subtree_volatility(&self) -> Volatility {
+        self.children
+            .iter()
+            .map(CallNode::subtree_volatility)
+            .fold(self.volatility, Volatility::max)
+    }
 }
 
 /// A planned statement.
@@ -83,6 +132,13 @@ pub struct CallPlan {
     pub rules_applied: Vec<String>,
 }
 
+impl CallPlan {
+    /// The logical plan after rewriting, for execution.
+    pub fn logical(&self) -> LogicalPlan {
+        annotate::to_logical(&self.root)
+    }
+}
+
 /// A rewrite rule over call plans.
 pub trait Rule: Send + Sync {
     /// Rule name for `EXPLAIN` and the trace.
@@ -91,16 +147,45 @@ pub trait Rule: Send + Sync {
     fn apply(&self, plan: &CallNode, catalog: &Catalog) -> Option<CallNode>;
 }
 
-/// Build a call plan from a logical plan.
-///
-/// Implemented in M2.
-pub fn plan(_logical: &LogicalPlan, _catalog: &Catalog) -> CallPlan {
-    todo!("M2: annotate operators with call kinds and estimates")
+/// The default rule set, in application order.
+pub fn default_rules() -> Vec<Box<dyn Rule>> {
+    vec![Box::new(SemiJoin), Box::new(CheapFirst), Box::new(Fences)]
 }
 
-/// Render a call plan as an indented tree with per-node estimates.
-///
-/// Implemented in M2.
-pub fn explain(_plan: &CallPlan) -> String {
-    todo!("M2: EXPLAIN rendering")
+/// Build a call plan from a logical plan: annotate, apply the default rules
+/// to a fixpoint (bounded), re-estimate.
+pub fn plan(logical: &LogicalPlan, catalog: &Catalog, cost: &CostModel) -> CallPlan {
+    plan_with(logical, catalog, cost, &default_rules())
+}
+
+/// [`plan`] with an explicit rule set.
+pub fn plan_with(
+    logical: &LogicalPlan,
+    catalog: &Catalog,
+    cost: &CostModel,
+    rules: &[Box<dyn Rule>],
+) -> CallPlan {
+    let mut root = annotate(logical, catalog, cost);
+    let mut applied = vec![];
+    for _round in 0..8 {
+        let mut changed = false;
+        for r in rules {
+            if let Some(next) = r.apply(&root, catalog) {
+                root = annotate(&annotate::to_logical(&next), catalog, cost);
+                applied.push(r.name().to_string());
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    let fragment = annotate::fragment(&root);
+    let total = root.total();
+    CallPlan {
+        root,
+        fragment,
+        total,
+        rules_applied: applied,
+    }
 }

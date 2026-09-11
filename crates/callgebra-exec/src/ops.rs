@@ -6,7 +6,7 @@ use crate::{builtins, ExecContext, ExecError, RECURSION_HARD_CAP};
 use async_recursion::async_recursion;
 use callgebra_core::{Row, Value};
 use callgebra_sql::{Expr, JoinKind, LogicalPlan, SortKey};
-use futures::StreamExt;
+use futures::{StreamExt, TryStreamExt};
 use std::cell::Cell;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
@@ -48,6 +48,67 @@ async fn eval_exprs(
         out.push(eval_expr(e, row, env, ctx).await?);
     }
     Ok(out)
+}
+
+/// Whether evaluating `exprs` may issue calls through the sink (anything
+/// that is not a builtin and not a column/literal). Rows are evaluated
+/// concurrently only then; pure rows go through the plain loop.
+fn may_call(exprs: &[Expr]) -> bool {
+    fn walk(e: &Expr) -> bool {
+        match e {
+            Expr::Function { name, args, .. } => {
+                !builtins::is_builtin(name) || args.iter().any(walk)
+            }
+            Expr::Exists { .. } | Expr::InSubquery { .. } | Expr::ScalarSubquery { .. } => true,
+            Expr::Binary { left, right, .. } => walk(left) || walk(right),
+            Expr::Unary { operand, .. } | Expr::Cast { operand, .. } => walk(operand),
+            Expr::Aggregate { args, .. } => args.iter().any(walk),
+            Expr::Case {
+                branches,
+                otherwise,
+            } => {
+                branches.iter().any(|(c, r)| walk(c) || walk(r))
+                    || otherwise.as_deref().is_some_and(walk)
+            }
+            Expr::InList { operand, list, .. } => walk(operand) || list.iter().any(walk),
+            Expr::Column { .. } | Expr::Literal(_) | Expr::OuterColumn { .. } => false,
+        }
+    }
+    exprs.iter().any(walk)
+}
+
+/// Evaluate `exprs` for every row, concurrently (bounded by
+/// `ctx.call_concurrency`) when calls may be involved, preserving order.
+///
+/// In-flight futures own `Arc`s of the environment and context rather than
+/// borrowing them: the recursive evaluator is boxed as a `Send` future, and
+/// borrowed captures would need a higher-ranked `Send` bound the compiler
+/// cannot prove.
+async fn eval_all_rows(
+    exprs: &[Expr],
+    rows: &[Row],
+    env: &Env,
+    ctx: &ExecContext,
+) -> Result<Vec<Row>, ExecError> {
+    if !may_call(exprs) || ctx.call_concurrency <= 1 {
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            out.push(eval_exprs(exprs, r, env, ctx).await?);
+        }
+        return Ok(out);
+    }
+    let env = Arc::new(env.clone());
+    let ctx = Arc::new(ctx.clone());
+    let exprs: Arc<Vec<Expr>> = Arc::new(exprs.to_vec());
+    let concurrency = ctx.call_concurrency;
+    futures::stream::iter(rows.iter().cloned())
+        .map(move |row| {
+            let (env, ctx, exprs) = (env.clone(), ctx.clone(), exprs.clone());
+            async move { eval_exprs(&exprs, &row, &env, &ctx).await }
+        })
+        .buffered(concurrency)
+        .try_collect()
+        .await
 }
 
 async fn is_true(
@@ -103,21 +164,18 @@ pub(crate) async fn eval_plan(
             .ok_or_else(|| ExecError::Eval(format!("unbound CTE {name}"))),
         LogicalPlan::Project { input, exprs, .. } => {
             let rows = eval_plan(input, env, ctx).await?;
-            let mut out = Vec::with_capacity(rows.len());
-            for r in &rows {
-                out.push(eval_exprs(exprs, r, env, ctx).await?);
-            }
-            Ok(out)
+            eval_all_rows(exprs, &rows, env, ctx).await
         }
         LogicalPlan::Filter { input, predicate } => {
             let rows = eval_plan(input, env, ctx).await?;
-            let mut out = Vec::with_capacity(rows.len());
-            for r in rows {
-                if is_true(predicate, &r, env, ctx).await? {
-                    out.push(r);
-                }
-            }
-            Ok(out)
+            let preds = std::slice::from_ref(predicate);
+            let verdicts = eval_all_rows(preds, &rows, env, ctx).await?;
+            Ok(rows
+                .into_iter()
+                .zip(verdicts)
+                .filter(|(_, v)| v[0] == Value::Bool(true))
+                .map(|(r, _)| r)
+                .collect())
         }
         LogicalPlan::Join {
             left,

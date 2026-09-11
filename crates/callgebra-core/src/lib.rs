@@ -18,7 +18,7 @@ pub mod value;
 
 pub use batch::{Batch, Row};
 pub use budget::{Budget, BudgetExceeded, BudgetUsage};
-pub use builtins::{standard_catalog, standard_functions};
+pub use builtins::{call_functions, standard_catalog, standard_functions};
 pub use catalog::{
     CallKind, Catalog, FunctionDef, FunctionReturn, ModelAlias, TableDef, TableSource, Volatility,
 };
