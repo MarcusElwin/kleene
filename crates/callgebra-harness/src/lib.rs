@@ -13,7 +13,7 @@
 pub mod repl;
 pub mod sink;
 
-pub use repl::{Repl, Rendered};
+pub use repl::{Rendered, Repl};
 pub use sink::StoreSink;
 
 use callgebra_core::{Budget, Catalog, ModelAlias, SessionId};

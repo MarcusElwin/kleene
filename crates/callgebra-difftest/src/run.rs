@@ -61,12 +61,19 @@ pub async fn run_callgebra(case: &Case) -> Result<Vec<Row>, String> {
 pub async fn run_oracle(case: &Case) -> Result<Vec<Row>, String> {
     let db = DuckDbStore::in_memory().map_err(|e| e.to_string())?;
     for t in &case.tables {
-        db.execute(&t.ddl()).await.map_err(|e| format!("oracle ddl: {e}"))?;
+        db.execute(&t.ddl())
+            .await
+            .map_err(|e| format!("oracle ddl: {e}"))?;
         for ins in inserts(t) {
-            db.execute(&ins).await.map_err(|e| format!("oracle insert: {e}"))?;
+            db.execute(&ins)
+                .await
+                .map_err(|e| format!("oracle insert: {e}"))?;
         }
     }
-    let b: Batch = db.query(&case.sql).await.map_err(|e| format!("oracle query: {e}"))?;
+    let b: Batch = db
+        .query(&case.sql)
+        .await
+        .map_err(|e| format!("oracle query: {e}"))?;
     Ok(b.rows)
 }
 
@@ -79,10 +86,18 @@ pub async fn run_case(case: &Case) -> Result<(), String> {
             .iter()
             .flat_map(|t| std::iter::once(t.ddl()).chain(inserts(t)))
             .collect();
-        format!("-- schema --\n{}\n-- query --\n{}", ddl.join(";\n"), case.sql)
+        format!(
+            "-- schema --\n{}\n-- query --\n{}",
+            ddl.join(";\n"),
+            case.sql
+        )
     };
-    let expected = run_oracle(case).await.map_err(|e| format!("{e}\n{}", describe()))?;
-    let actual = run_callgebra(case).await.map_err(|e| format!("{e}\n{}", describe()))?;
+    let expected = run_oracle(case)
+        .await
+        .map_err(|e| format!("{e}\n{}", describe()))?;
+    let actual = run_callgebra(case)
+        .await
+        .map_err(|e| format!("{e}\n{}", describe()))?;
     assert_same(&expected, &actual, case.ordered).map_err(|e| format!("{e}\n{}", describe()))
 }
 
@@ -102,7 +117,11 @@ pub fn parse_corpus(text: &str) -> Result<Case, String> {
     for stmt in ddl {
         let upper = stmt.to_ascii_uppercase();
         if upper.starts_with("CREATE TABLE") {
-            let name = stmt.split_whitespace().nth(2).ok_or("bad CREATE TABLE")?.to_string();
+            let name = stmt
+                .split_whitespace()
+                .nth(2)
+                .ok_or("bad CREATE TABLE")?
+                .to_string();
             let inner = stmt
                 .split_once('(')
                 .and_then(|(_, r)| r.rsplit_once(')'))
@@ -128,13 +147,20 @@ pub fn parse_corpus(text: &str) -> Result<Case, String> {
                 rows: vec![],
             });
         } else if upper.starts_with("INSERT INTO") {
-            let name = stmt.split_whitespace().nth(2).ok_or("bad INSERT")?.to_string();
+            let name = stmt
+                .split_whitespace()
+                .nth(2)
+                .ok_or("bad INSERT")?
+                .to_string();
             let t = tables
                 .iter_mut()
                 .find(|t| t.name.eq_ignore_ascii_case(&name))
                 .ok_or_else(|| format!("insert into unknown table {name}"))?;
             let values = stmt.split_once("VALUES").ok_or("INSERT without VALUES")?.1;
-            for row in values.split("),").map(|r| r.trim().trim_start_matches('(').trim_end_matches(')')) {
+            for row in values
+                .split("),")
+                .map(|r| r.trim().trim_start_matches('(').trim_end_matches(')'))
+            {
                 let mut vals = vec![];
                 for (i, cell) in split_cells(row).iter().enumerate() {
                     let cell = cell.trim();
@@ -143,10 +169,18 @@ pub fn parse_corpus(text: &str) -> Result<Case, String> {
                         callgebra_core::Value::Null
                     } else {
                         match ty {
-                            callgebra_core::DataType::Int => callgebra_core::Value::Int(cell.parse().map_err(|_| format!("bad int {cell}"))?),
-                            callgebra_core::DataType::Float => callgebra_core::Value::Float(cell.parse().map_err(|_| format!("bad float {cell}"))?),
-                            callgebra_core::DataType::Bool => callgebra_core::Value::Bool(cell.eq_ignore_ascii_case("true")),
-                            _ => callgebra_core::Value::Text(cell.trim_matches('\'').replace("''", "'")),
+                            callgebra_core::DataType::Int => callgebra_core::Value::Int(
+                                cell.parse().map_err(|_| format!("bad int {cell}"))?,
+                            ),
+                            callgebra_core::DataType::Float => callgebra_core::Value::Float(
+                                cell.parse().map_err(|_| format!("bad float {cell}"))?,
+                            ),
+                            callgebra_core::DataType::Bool => {
+                                callgebra_core::Value::Bool(cell.eq_ignore_ascii_case("true"))
+                            }
+                            _ => callgebra_core::Value::Text(
+                                cell.trim_matches('\'').replace("''", "'"),
+                            ),
                         }
                     });
                 }

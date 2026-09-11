@@ -105,7 +105,15 @@ async fn main() -> anyhow::Result<()> {
             }
             loop {
                 if interactive {
-                    write!(stdout, "{}", if buffer.is_empty() { "callgebra> " } else { "        -> " })?;
+                    write!(
+                        stdout,
+                        "{}",
+                        if buffer.is_empty() {
+                            "callgebra> "
+                        } else {
+                            "        -> "
+                        }
+                    )?;
                     stdout.flush()?;
                 }
                 let mut line = String::new();

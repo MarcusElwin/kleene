@@ -54,14 +54,20 @@ async fn tables_hide_internal_ones_and_drop_works() {
     assert!(s.tables().await.unwrap().is_empty());
     s.create_table("a", schema()).await.unwrap();
     s.create_table("b", schema()).await.unwrap();
-    assert_eq!(s.tables().await.unwrap(), vec!["a".to_string(), "b".to_string()]);
+    assert_eq!(
+        s.tables().await.unwrap(),
+        vec!["a".to_string(), "b".to_string()]
+    );
     assert!(matches!(
         s.create_table("a", schema()).await,
         Err(StoreError::AlreadyExists(_))
     ));
     s.drop_table("a").await.unwrap();
     assert_eq!(s.tables().await.unwrap(), vec!["b".to_string()]);
-    assert!(matches!(s.drop_table("a").await, Err(StoreError::NoSuchTable(_))));
+    assert!(matches!(
+        s.drop_table("a").await,
+        Err(StoreError::NoSuchTable(_))
+    ));
     assert!(matches!(s.scan("a").await, Err(StoreError::NoSuchTable(_))));
     let empty = Arc::new(Schema::empty());
     s.create_table("e", empty).await.unwrap();
@@ -71,11 +77,19 @@ async fn tables_hide_internal_ones_and_drop_works() {
 #[tokio::test]
 async fn arbitrary_sql_query_and_execute() {
     let s = DuckDbStore::in_memory().unwrap();
-    let b = s.query("SELECT 1 AS x, 'a' AS y, 2.5 AS z, NULL AS n").await.unwrap();
+    let b = s
+        .query("SELECT 1 AS x, 'a' AS y, 2.5 AS z, NULL AS n")
+        .await
+        .unwrap();
     assert_eq!(b.schema.names(), ["x", "y", "z", "n"]);
     assert_eq!(
         b.rows,
-        vec![vec![Value::Int(1), Value::from("a"), Value::Float(2.5), Value::Null]]
+        vec![vec![
+            Value::Int(1),
+            Value::from("a"),
+            Value::Float(2.5),
+            Value::Null
+        ]]
     );
     let b = s
         .query("WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 4) SELECT SUM(n) FROM r")
@@ -100,7 +114,10 @@ async fn trace_sink_records_every_event_kind() {
     let session = SessionId::new();
     let statement = StatementId::new();
     let call = CallId::new();
-    tracer.emit(TraceEvent::RunStarted { run, task: "t".into() });
+    tracer.emit(TraceEvent::RunStarted {
+        run,
+        task: "t".into(),
+    });
     tracer.emit(TraceEvent::SessionStarted {
         run,
         session,
@@ -164,7 +181,10 @@ async fn trace_sink_records_every_event_kind() {
     });
     tracer.emit(TraceEvent::Final { session, rows: 1 });
     sink.flush().await;
-    let b = s.query("SELECT sql, rows, calls, tokens, explain, error FROM trace_statements").await.unwrap();
+    let b = s
+        .query("SELECT sql, rows, calls, tokens, explain, error FROM trace_statements")
+        .await
+        .unwrap();
     assert_eq!(b.rows.len(), 1);
     assert_eq!(b.rows[0][0], Value::from("SELECT 'x'"));
     assert_eq!(b.rows[0][1], Value::Int(1));
@@ -172,8 +192,19 @@ async fn trace_sink_records_every_event_kind() {
     assert_eq!(b.rows[0][3], Value::Int(15));
     assert_eq!(b.rows[0][4], Value::from("π"));
     assert_eq!(b.rows[0][5], Value::Null);
-    let b = s.query("SELECT model, input_tokens, output_tokens, memo_hit FROM trace_calls").await.unwrap();
-    assert_eq!(b.rows, vec![vec![Value::from("m"), Value::Int(10), Value::Int(5), Value::Bool(false)]]);
+    let b = s
+        .query("SELECT model, input_tokens, output_tokens, memo_hit FROM trace_calls")
+        .await
+        .unwrap();
+    assert_eq!(
+        b.rows,
+        vec![vec![
+            Value::from("m"),
+            Value::Int(10),
+            Value::Int(5),
+            Value::Bool(false)
+        ]]
+    );
     for (table, n) in [
         ("trace_runs", 1),
         ("trace_sessions", 1),
@@ -181,10 +212,16 @@ async fn trace_sink_records_every_event_kind() {
         ("trace_rounds", 1),
         ("trace_final", 1),
     ] {
-        let b = s.query(&format!("SELECT COUNT(*) FROM {table}")).await.unwrap();
+        let b = s
+            .query(&format!("SELECT COUNT(*) FROM {table}"))
+            .await
+            .unwrap();
         assert_eq!(b.rows[0][0], Value::Int(n), "{table}");
     }
-    let b = s.query("SELECT depth, role FROM trace_sessions").await.unwrap();
+    let b = s
+        .query("SELECT depth, role FROM trace_sessions")
+        .await
+        .unwrap();
     assert_eq!(b.rows, vec![vec![Value::Int(0), Value::from("self")]]);
     // record() is non-blocking and safe from a plain sync context.
     sink.record(callgebra_trace::Traced {
@@ -224,9 +261,12 @@ async fn persists_to_a_file() {
     {
         let s = DuckDbStore::open(&path).unwrap();
         s.create_table("t", schema()).await.unwrap();
-        s.insert("t", callgebra_core::Batch::try_new(schema(), rows()).unwrap())
-            .await
-            .unwrap();
+        s.insert(
+            "t",
+            callgebra_core::Batch::try_new(schema(), rows()).unwrap(),
+        )
+        .await
+        .unwrap();
     }
     let s = DuckDbStore::open(&path).unwrap();
     assert_eq!(s.scan("t").await.unwrap().rows, rows());

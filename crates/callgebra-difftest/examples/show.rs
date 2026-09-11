@@ -5,7 +5,10 @@ use proptest::strategy::{Strategy, ValueTree};
 use proptest::test_runner::TestRunner;
 
 fn main() {
-    let n: usize = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(3);
+    let n: usize = std::env::args()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(3);
     let mut runner = TestRunner::default();
     for i in 0..n {
         let case = case_strategy().new_tree(&mut runner).unwrap().current();

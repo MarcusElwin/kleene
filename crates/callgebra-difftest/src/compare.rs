@@ -24,7 +24,10 @@ pub fn same_value(a: &Value, b: &Value) -> bool {
             }
         }
         (Value::Vector(x), Value::Vector(y)) => {
-            x.len() == y.len() && x.iter().zip(y).all(|(p, q)| close(f64::from(*p), f64::from(*q)))
+            x.len() == y.len()
+                && x.iter()
+                    .zip(y)
+                    .all(|(p, q)| close(f64::from(*p), f64::from(*q)))
         }
         _ => a == b,
     }
@@ -51,12 +54,7 @@ fn canon_cmp(a: &Row, b: &Row) -> Ordering {
 fn render(rows: &[Row], limit: usize) -> String {
     rows.iter()
         .take(limit)
-        .map(|r| {
-            r.iter()
-                .map(Value::render)
-                .collect::<Vec<_>>()
-                .join(" | ")
-        })
+        .map(|r| r.iter().map(Value::render).collect::<Vec<_>>().join(" | "))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -103,11 +101,19 @@ mod tests {
 
     #[test]
     fn tolerant_and_multiset() {
-        let e = vec![vec![Value::Int(1), Value::Float(0.3)], vec![Value::Null, Value::from("a")]];
-        let a = vec![vec![Value::Null, Value::from("a")], vec![Value::Float(1.0), Value::Float(0.1 + 0.2)]];
+        let e = vec![
+            vec![Value::Int(1), Value::Float(0.3)],
+            vec![Value::Null, Value::from("a")],
+        ];
+        let a = vec![
+            vec![Value::Null, Value::from("a")],
+            vec![Value::Float(1.0), Value::Float(0.1 + 0.2)],
+        ];
         assert!(assert_same(&e, &a, false).is_ok());
         assert!(assert_same(&e, &a, true).is_err());
         let short = vec![e[0].clone()];
-        assert!(assert_same(&e, &short, false).unwrap_err().contains("row count"));
+        assert!(assert_same(&e, &short, false)
+            .unwrap_err()
+            .contains("row count"));
     }
 }
