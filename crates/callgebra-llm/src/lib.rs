@@ -8,11 +8,13 @@
 //! everyone else exposes. [`RoutedProvider`] resolves model aliases to ordered
 //! `(provider, model)` candidates with failover, circuit breaking and a
 //! [`Pricing`] table. [`ReplayProvider`] serves recorded fixtures so tests and
-//! re-runs cost nothing.
+//! re-runs cost nothing. [`provider_from_env`] assembles the stack from the
+//! environment.
 
 #![forbid(unsafe_code)]
 
 pub mod adapters;
+pub mod env;
 mod http;
 pub mod replay;
 pub mod router;
@@ -20,6 +22,7 @@ pub mod sse;
 pub mod types;
 
 pub use adapters::{AnthropicProvider, OpenAiCompatProvider};
+pub use env::provider_from_env;
 pub use replay::{RecordingProvider, ReplayProvider};
 pub use router::{
     AliasConfig, Candidate, CircuitState, ModelPricing, Pricing, RoutedProvider, Router,
