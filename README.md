@@ -21,9 +21,16 @@ WHERE VERIFY(candidate)
 anti-semi-join that stops on the first refuting counterexample. `EXPLAIN`
 tells you how many calls that is before you spend them.
 
-Status: **M0 scaffold**. The workspace builds, the interface types are
-in place, and every command except `--version` says which milestone brings
-it. Read [`docs/PLAN.md`](docs/PLAN.md) for the
+Status: **M1 relational core**. The CallSQL frontend, the executor
+(joins, aggregation, correlated subqueries, recursive CTEs) and the DuckDB
+store work, and generated queries are checked against DuckDB. Try it:
+
+```bash
+cargo run -- repl -c "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 5) SELECT SUM(n) FROM r"
+cargo run -- trace "SELECT * FROM trace_statements"
+```
+
+Model calls, tools and the agent loop arrive in M2 and M3. Read [`docs/PLAN.md`](docs/PLAN.md) for the
 architecture, dialect, planner rules, harness design, TUI layout and
 milestones, and [`docs/RESEARCH.md`](docs/RESEARCH.md) for the sources.
 
