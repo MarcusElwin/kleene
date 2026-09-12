@@ -238,10 +238,33 @@ pub(crate) async fn eval_plan(
                 }
                 Some(inp) => {
                     let rows = eval_plan(inp, env, ctx).await?;
+                    // Arguments first (they may call), then one table call per
+                    // input row: concurrently for call functions, in order for
+                    // builtins. Output keeps input order.
+                    let arg_rows = eval_all_rows(args, &rows, env, ctx).await?;
+                    let results: Vec<Vec<Row>> = if name == "generate_series"
+                        || ctx.call_concurrency <= 1
+                    {
+                        let mut out = Vec::with_capacity(rows.len());
+                        for vals in arg_rows {
+                            out.push(call(vals).await?);
+                        }
+                        out
+                    } else {
+                        let sink = ctx.sink.clone();
+                        let name = Arc::new(name.clone());
+                        futures::stream::iter(arg_rows)
+                            .map(move |vals| {
+                                let (sink, name) = (sink.clone(), name.clone());
+                                async move { sink.table_call(&name, &vals).await.map(|b| b.rows) }
+                            })
+                            .buffered(ctx.call_concurrency)
+                            .try_collect()
+                            .await?
+                    };
                     let mut out = vec![];
-                    for r in &rows {
-                        let vals = eval_exprs(args, r, env, ctx).await?;
-                        for frow in call(vals).await? {
+                    for (r, frows) in rows.iter().zip(results) {
+                        for frow in frows {
                             out.push(concat(r, &frow));
                         }
                     }

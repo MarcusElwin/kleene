@@ -82,12 +82,6 @@ pub fn plan_sql(sql: &str, catalog: &Catalog) -> Result<Vec<Statement>, SqlError
     if let Some(stmt) = extensions::plan_extension(trimmed, catalog)? {
         return Ok(vec![stmt]);
     }
-    if let Some(hint) = m2_construct(trimmed) {
-        return Err(SqlError::Unsupported {
-            construct: hint.0.to_string(),
-            hint: hint.1.to_string(),
-        });
-    }
     let stmts = parse(sql)?;
     let single = stmts.len() == 1;
     let planner = planner::Planner::new(catalog);
@@ -121,20 +115,6 @@ fn strip_keyword<'a>(text: &'a str, kw: &str) -> Option<&'a str> {
             return Some(rest);
         }
     }
-    None
-}
-
-fn m2_construct(text: &str) -> Option<(&'static str, &'static str)> {
-    let upper: String = text
-        .split_whitespace()
-        .take(2)
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_ascii_uppercase();
-    if upper.starts_with("CREATE AGENT") {
-        return Some(("CREATE AGENT", "arrives in M3 (agent roles for SPAWN)"));
-    }
-    let _ = upper;
     None
 }
 

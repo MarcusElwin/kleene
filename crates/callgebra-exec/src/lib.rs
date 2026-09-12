@@ -265,8 +265,8 @@ pub async fn execute_statement(
         StatementKind::CreateFunction { .. } => Err(ExecError::Eval(
             "CREATE FUNCTION is handled by the harness".into(),
         )),
-        StatementKind::CreateAgent { .. } => {
-            Err(ExecError::Eval("CREATE AGENT arrives in M3".into()))
-        }
+        StatementKind::CreateAgent { .. } => Err(ExecError::Eval(
+            "CREATE AGENT is handled by the harness".into(),
+        )),
     }
 }

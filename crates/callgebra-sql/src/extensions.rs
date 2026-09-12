@@ -35,6 +35,9 @@ pub(crate) fn plan_extension(text: &str, catalog: &Catalog) -> Result<Option<Sta
     if head.starts_with("CREATE FUNCTION") || head.starts_with("CREATE OR REPLACE FUNCTION") {
         return plan_create_function(text).map(Some);
     }
+    if head.starts_with("CREATE AGENT") || head.starts_with("CREATE OR REPLACE AGENT") {
+        return plan_create_agent(text).map(Some);
+    }
     if words.first().is_some_and(|w| w == "CALL") {
         return plan_call(text, catalog).map(Some);
     }
@@ -155,6 +158,110 @@ fn data_type(word: &str) -> Result<DataType, SqlError> {
                 "types: BOOLEAN, BIGINT, DOUBLE, TEXT, JSON, VECTOR",
             ))
         }
+    })
+}
+
+/// Plan `CREATE [OR REPLACE] AGENT name [MODEL 'alias'] [EFFORT 'level']
+/// [TOOLS (a, b, ...)] [BUDGET (calls n, tokens n, dollars x, depth n)]
+/// [PROMPT '...']`. Clauses are optional and may come in any order.
+pub fn plan_create_agent(text: &str) -> Result<Statement, SqlError> {
+    const HINT: &str = "CREATE AGENT reviewer MODEL 'worker' EFFORT 'low' TOOLS (files, grep) BUDGET (calls 40, tokens 60000) PROMPT 'You review one hypothesis.'";
+    let mut sc = Scanner::new(text.trim().trim_end_matches(';'));
+    if !sc.eat_keyword("CREATE") {
+        return Err(parse_err("expected CREATE", HINT));
+    }
+    let replace = sc.eat_keyword("OR") && sc.eat_keyword("REPLACE");
+    if !sc.eat_keyword("AGENT") {
+        return Err(parse_err("expected AGENT", HINT));
+    }
+    let name = sc
+        .ident()
+        .ok_or_else(|| parse_err("expected an agent name", HINT))?;
+    let mut model = "worker".to_string();
+    let mut effort = None;
+    let mut tools = vec![];
+    let mut budget = vec![];
+    let mut prompt = String::new();
+    loop {
+        sc.skip_ws();
+        if sc.rest().is_empty() {
+            break;
+        }
+        if sc.eat_keyword("MODEL") {
+            model = sc
+                .quoted()
+                .ok_or_else(|| parse_err("MODEL expects a quoted alias", HINT))?;
+        } else if sc.eat_keyword("EFFORT") {
+            let e = sc
+                .quoted()
+                .ok_or_else(|| parse_err("EFFORT expects a quoted level", HINT))?;
+            let lower = e.to_ascii_lowercase();
+            if !matches!(lower.as_str(), "low" | "medium" | "high" | "max") {
+                return Err(parse_err(
+                    format!("unknown effort level {e}"),
+                    "EFFORT 'low', 'medium' or 'high'",
+                ));
+            }
+            effort = Some(lower);
+        } else if sc.eat_keyword("TOOLS") {
+            let list = sc
+                .parenthesised()
+                .ok_or_else(|| parse_err("TOOLS expects a parenthesised list", HINT))?;
+            tools = list
+                .split(',')
+                .map(|t| t.trim().to_ascii_lowercase())
+                .filter(|t| !t.is_empty())
+                .collect();
+        } else if sc.eat_keyword("BUDGET") {
+            let list = sc
+                .parenthesised()
+                .ok_or_else(|| parse_err("BUDGET expects a parenthesised list", HINT))?;
+            for part in list.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+                let mut it = part.split_whitespace();
+                let key = it.next().unwrap_or_default().to_ascii_lowercase();
+                if !matches!(
+                    key.as_str(),
+                    "calls" | "tokens" | "dollars" | "depth" | "turns"
+                ) {
+                    return Err(parse_err(
+                        format!("unknown budget dimension {key}"),
+                        "BUDGET (calls n, tokens n, dollars x, depth n, turns n)",
+                    ));
+                }
+                let value: f64 = it
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .ok_or_else(|| parse_err(format!("budget {key} needs a number"), HINT))?;
+                if it.next().is_some() {
+                    return Err(parse_err(format!("budget {key}: unexpected text"), HINT));
+                }
+                budget.push((key, value));
+            }
+        } else if sc.eat_keyword("PROMPT") {
+            prompt = sc
+                .quoted()
+                .ok_or_else(|| parse_err("PROMPT expects a quoted text", HINT))?;
+        } else {
+            return Err(parse_err(
+                format!(
+                    "unexpected clause: {}",
+                    sc.rest().chars().take(30).collect::<String>()
+                ),
+                HINT,
+            ));
+        }
+    }
+    Ok(Statement {
+        sql: text.trim().to_string(),
+        kind: StatementKind::CreateAgent {
+            name,
+            model,
+            effort,
+            tools,
+            budget,
+            prompt,
+            replace,
+        },
     })
 }
 
@@ -456,6 +563,65 @@ mod tests {
         let e = plan_create_function("CREATE FUNCTION f(x TEXT) RETURNS TEXT AS PYTHON 'x'")
             .unwrap_err();
         assert!(e.hint().is_some());
+    }
+
+    #[test]
+    fn create_agent_forms() {
+        let s = plan_create_agent(
+            "CREATE AGENT reviewer MODEL 'worker' EFFORT 'Low' TOOLS (files, grep, Lines) BUDGET (calls 40, tokens 60000, dollars 0.5) PROMPT 'You review; it''s strict.';",
+        )
+        .unwrap();
+        let StatementKind::CreateAgent {
+            name,
+            model,
+            effort,
+            tools,
+            budget,
+            prompt,
+            replace,
+        } = s.kind
+        else {
+            panic!()
+        };
+        assert_eq!(name, "reviewer");
+        assert_eq!(model, "worker");
+        assert_eq!(effort.as_deref(), Some("low"));
+        assert_eq!(tools, ["files", "grep", "lines"]);
+        assert_eq!(
+            budget,
+            vec![
+                ("calls".to_string(), 40.0),
+                ("tokens".to_string(), 60000.0),
+                ("dollars".to_string(), 0.5)
+            ]
+        );
+        assert_eq!(prompt, "You review; it's strict.");
+        assert!(!replace);
+
+        let s = plan_create_agent("CREATE OR REPLACE AGENT x").unwrap();
+        let StatementKind::CreateAgent {
+            model,
+            effort,
+            tools,
+            prompt,
+            replace,
+            ..
+        } = s.kind
+        else {
+            panic!()
+        };
+        assert_eq!(model, "worker");
+        assert!(effort.is_none() && tools.is_empty() && prompt.is_empty() && replace);
+
+        // Clauses in any order.
+        plan_create_agent("CREATE AGENT y PROMPT 'p' MODEL 'root'").unwrap();
+
+        let e = plan_create_agent("CREATE AGENT z COLOUR 'red'").unwrap_err();
+        assert!(e.to_string().contains("unexpected clause"), "{e}");
+        let e = plan_create_agent("CREATE AGENT z BUDGET (coins 3)").unwrap_err();
+        assert!(e.to_string().contains("unknown budget dimension"), "{e}");
+        let e = plan_create_agent("CREATE AGENT z EFFORT 'ultra'").unwrap_err();
+        assert!(e.to_string().contains("unknown effort"), "{e}");
     }
 
     #[test]

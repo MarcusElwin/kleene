@@ -168,6 +168,8 @@ pub fn standard_functions() -> Vec<FunctionDef> {
 /// | `llm_bool` | `(prompt TEXT) -> BOOLEAN` | structured yes/no |
 /// | `llm_json` | `(prompt TEXT, schema TEXT) -> JSON` | output validated against the schema |
 /// | `expand` | `(prompt TEXT, n BIGINT) -> TABLE(item TEXT)` | up to `n` generated rows |
+/// | `rlm` | `(question TEXT [, context TEXT]) -> TABLE(answer TEXT, detail JSON)` | child session at depth + 1 |
+/// | `spawn` | `(agent TEXT, task TEXT [, context TEXT]) -> TABLE(answer TEXT, detail JSON, session TEXT)` | declared agent as a child session |
 ///
 /// All are `IMMUTABLE` for memo purposes: the same prompt to the same pinned
 /// model is served from the memo. That is a policy, not a fact about models,
@@ -219,6 +221,39 @@ pub fn call_functions() -> Vec<FunctionDef> {
             volatility: Volatility::Immutable,
             description: "generate up to n items from a prompt, one row each".into(),
         },
+        FunctionDef {
+            name: "rlm".into(),
+            args: vec![Text],
+            variadic: true,
+            returns: FunctionReturn::Table {
+                schema: Schema::new(vec![
+                    Field::new("answer", Text),
+                    Field::new("detail", Json),
+                ]),
+            },
+            call_kind: CallKind::Recursive {
+                role: "self".into(),
+            },
+            volatility: Volatility::Stable,
+            description: "rlm(question [, context]): run a child session at depth+1 with context preloaded as table ctx(text); returns its FINAL rows (answer = first column, detail = the row as JSON)".into(),
+        },
+        FunctionDef {
+            name: "spawn".into(),
+            args: vec![Text, Text],
+            variadic: true,
+            returns: FunctionReturn::Table {
+                schema: Schema::new(vec![
+                    Field::new("answer", Text),
+                    Field::new("detail", Json),
+                    Field::new("session", Text),
+                ]),
+            },
+            call_kind: CallKind::Recursive {
+                role: "agent".into(),
+            },
+            volatility: Volatility::Stable,
+            description: "spawn(agent, task [, context]): run a declared agent (CREATE AGENT) as a child session, one child per input row, concurrently".into(),
+        },
     ]
 }
 
@@ -234,6 +269,23 @@ pub fn standard_catalog() -> crate::catalog::Catalog {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn delegation_functions_are_recursive_table_calls() {
+        let c = standard_catalog();
+        let rlm = c.function("rlm").unwrap();
+        assert!(matches!(rlm.call_kind, CallKind::Recursive { .. }));
+        assert!(rlm.variadic && rlm.args.len() == 1);
+        let FunctionReturn::Table { schema } = &rlm.returns else {
+            panic!()
+        };
+        assert_eq!(schema.names(), ["answer", "detail"]);
+        let spawn = c.function("spawn").unwrap();
+        let FunctionReturn::Table { schema } = &spawn.returns else {
+            panic!()
+        };
+        assert_eq!(schema.names(), ["answer", "detail", "session"]);
+    }
 
     #[test]
     fn standard_catalog_has_every_builtin_once() {
