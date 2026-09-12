@@ -176,6 +176,11 @@ impl Catalog {
         self.tables.remove(&name.to_ascii_lowercase())
     }
 
+    /// Remove a function; returns the definition if it existed.
+    pub fn remove_function(&mut self, name: &str) -> Option<FunctionDef> {
+        self.functions.remove(&name.to_ascii_lowercase())
+    }
+
     /// Look up a table by name (case-insensitive).
     pub fn table(&self, name: &str) -> Option<&TableDef> {
         self.tables.get(&name.to_ascii_lowercase())

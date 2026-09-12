@@ -51,9 +51,16 @@ agent's token cannot write `.github/workflows/`; a human moves it into place
 (see `ci/README.md`).
 
 DuckDB (`callgebra-store`, feature `duckdb`) builds from source the first time:
-about ten minutes on four cores and four gigabytes per build-profile variant
-(build, test and doc each get one). Keep `target/` between runs; set
-`DUCKDB_LIB_DIR` to a prebuilt library to skip the compile; CI caches it.
+about ten minutes on four cores and four gigabytes per variant. Three
+variants are normal and all needed: the `check` profile (clippy) has its own
+`target/debug/build/libduckdb-sys-*` output, and `cargo build` and
+`cargo test` link different `liblibduckdb_sys-*.rlib`s because dev-dependencies
+change feature unification. Always use the `--workspace --all-features`
+shape above; `-p`, `--exclude` or a different feature set makes a fourth.
+Keep `target/` between runs; when disk runs low, delete `target/doc`,
+`target/debug/incremental` and stale test binaries in `target/debug/deps`
+before touching DuckDB artifacts. Set `DUCKDB_LIB_DIR` to a prebuilt library
+to skip the compile; CI caches it.
 
 ## Branches and PRs
 

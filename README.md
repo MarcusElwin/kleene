@@ -21,16 +21,27 @@ WHERE VERIFY(candidate)
 anti-semi-join that stops on the first refuting counterexample. `EXPLAIN`
 tells you how many calls that is before you spend them.
 
-Status: **M1 relational core**. The CallSQL frontend, the executor
-(joins, aggregation, correlated subqueries, recursive CTEs) and the DuckDB
-store work, and generated queries are checked against DuckDB. Try it:
+Status: **M3 RLM harness**. The CallSQL frontend, the executor, the DuckDB
+store and the call algebra work; model functions, prompt-defined functions,
+`CALL` tools, memo, budgets and `EXPLAIN` are in; and `callgebra run` drives
+a model through the SQL turn loop to `FINAL`, spawning child sessions for
+`rlm(...)` and `spawn(...)`. Try it without a model:
 
 ```bash
 cargo run -- repl -c "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 5) SELECT SUM(n) FROM r"
+cargo run -- explain "SELECT c FROM candidates WHERE llm_bool('Is ' || c || ' a real place?')"
 cargo run -- trace "SELECT * FROM trace_statements"
 ```
 
-Model calls, tools and the agent loop arrive in M2 and M3. Read [`docs/PLAN.md`](docs/PLAN.md) for the
+and with one (`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`):
+
+```bash
+cargo run -- run @demos/oolong/task.txt --context demos/oolong/corpus.txt --budget-calls 60
+cargo run -- trace "SELECT depth, role, outcome, turns, calls FROM trace_sessions"
+```
+
+See [`demos/`](demos/README.md). The TUI (M4), the planner (M5), the
+self-learning loop (M6) and the benchmarks (M7) come next. Read [`docs/PLAN.md`](docs/PLAN.md) for the
 architecture, dialect, planner rules, harness design, TUI layout and
 milestones, and [`docs/RESEARCH.md`](docs/RESEARCH.md) for the sources.
 

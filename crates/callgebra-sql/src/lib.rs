@@ -23,7 +23,7 @@ pub mod types;
 pub use callgebra_core::Catalog;
 pub use error::SqlError;
 pub use expr::{AggregateFn, BinaryOp, Expr, Literal, UnaryOp};
-pub use extensions::{plan_call, plan_create_function};
+pub use extensions::{plan_call, plan_create_agent, plan_create_function};
 pub use plan::{JoinKind, LogicalPlan, SortKey};
 pub use statement::{FunctionBody, Statement, StatementKind};
 pub use types::type_of;

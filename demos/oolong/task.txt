@@ -1,0 +1,1 @@
+For each project mentioned in the context, total the hours logged and count how many times its milestone was 'shipped'. Answer with one row per project: project, total_hours, shipped_count, ordered by total_hours descending.

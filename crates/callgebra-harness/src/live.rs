@@ -2,12 +2,13 @@
 //! budget and trace, over the store-backed sink.
 
 use crate::sink::StoreSink;
+use crate::AgentRole;
 use callgebra_core::{
-    Batch, BudgetUsage, CallId, CallKind, Catalog, DataType, Field, FunctionDef, FunctionReturn,
-    ModelAlias, Schema, StatementId, Value, Volatility,
+    Batch, Budget, BudgetUsage, CallId, CallKind, Catalog, DataType, Field, FunctionDef,
+    FunctionReturn, ModelAlias, RunId, Schema, SessionId, StatementId, Value, Volatility,
 };
 use callgebra_exec::{BatchStream, CallSink, ExecError};
-use callgebra_llm::{CompletionRequest, Message, Provider, ProviderOptions};
+use callgebra_llm::{CompletionRequest, CompletionResponse, Message, Provider, ProviderOptions};
 use callgebra_sql::{FunctionBody, Statement};
 use callgebra_store::MemoEntry;
 use callgebra_tools::{Tool, ToolContext, ToolRegistry};
@@ -18,7 +19,7 @@ use std::time::Instant;
 use tokio::sync::{Mutex, RwLock};
 
 /// Per-session model settings, changed with `SET`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ModelSettings {
     /// Effort for calls that do not specify one.
     pub effort: Option<String>,
@@ -45,14 +46,86 @@ impl Default for ModelSettings {
 }
 
 /// A prompt-, SQL- or shell-defined function.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DefinedFunction {
     /// Argument names, in order.
     pub arg_names: Vec<String>,
+    /// Argument types, in order.
+    pub arg_types: Vec<DataType>,
     /// Return type.
     pub returns: DataType,
     /// Body.
     pub body: FunctionBody,
+    /// Declared volatility.
+    pub volatility: Volatility,
+}
+
+/// The catalog entry for a defined function.
+pub fn function_entry(name: &str, def: &DefinedFunction) -> FunctionDef {
+    let call_kind = match def.body {
+        FunctionBody::Prompt { .. } => CallKind::LlmScalar {
+            alias: ModelAlias::worker(),
+        },
+        FunctionBody::Sql { .. } => CallKind::Pure,
+        FunctionBody::Shell { .. } => CallKind::Tool {
+            tool: "shell".into(),
+        },
+    };
+    FunctionDef {
+        name: name.to_ascii_lowercase(),
+        args: def.arg_types.clone(),
+        variadic: false,
+        returns: FunctionReturn::Scalar {
+            data_type: def.returns,
+        },
+        call_kind,
+        volatility: def.volatility,
+        description: match &def.body {
+            FunctionBody::Prompt { template } => format!("prompt: {}", first_line(template)),
+            FunctionBody::Sql { query } => format!("sql: {}", first_line(query)),
+            FunctionBody::Shell { command } => format!("shell: {}", first_line(command)),
+        },
+    }
+}
+
+/// Which session a sink serves, for trace attribution and delegation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SessionMeta {
+    /// Session id.
+    pub id: SessionId,
+    /// Run the session belongs to.
+    pub run: RunId,
+    /// Depth; root is 0.
+    pub depth: u32,
+    /// The role the session runs as.
+    pub role: AgentRole,
+}
+
+impl Default for SessionMeta {
+    fn default() -> Self {
+        Self {
+            id: SessionId::new(),
+            run: RunId::new(),
+            depth: 0,
+            role: AgentRole::root(),
+        }
+    }
+}
+
+/// Runs child sessions for `rlm(...)` and `spawn(...)`; implemented by the
+/// harness, injected into the sink so the executor never sees sessions.
+#[async_trait::async_trait]
+pub trait ChildRunner: Send + Sync {
+    /// Run one child of `parent`. `agent` is `None` for `rlm` (the parent's
+    /// own role one level deeper) or a declared agent name for `spawn`.
+    /// Returns the child's `FINAL` relation.
+    async fn run_child(
+        &self,
+        parent: &LiveSink,
+        agent: Option<&str>,
+        task: String,
+        context: Option<String>,
+    ) -> Result<Batch, ExecError>;
 }
 
 /// Budget state shared by every call of a session.
@@ -80,6 +153,9 @@ pub struct LiveSink {
     statement: Mutex<Option<StatementId>>,
     /// System prefix for model calls (frozen per session for caching).
     system: RwLock<String>,
+    meta: RwLock<SessionMeta>,
+    agents: RwLock<HashMap<String, AgentRole>>,
+    runner: RwLock<Option<Arc<dyn ChildRunner>>>,
 }
 
 const SYSTEM_PREFIX: &str = "You are a function inside a SQL engine. Answer only with the value asked for: no preamble, no explanation, no markdown fences.";
@@ -105,7 +181,135 @@ impl LiveSink {
             budget: Mutex::new(BudgetState::default()),
             statement: Mutex::new(None),
             system: RwLock::new(SYSTEM_PREFIX.to_string()),
+            meta: RwLock::new(SessionMeta::default()),
+            agents: RwLock::new(HashMap::new()),
+            runner: RwLock::new(None),
         }
+    }
+
+    /// Which session this sink serves.
+    pub async fn meta(&self) -> SessionMeta {
+        self.meta.read().await.clone()
+    }
+
+    /// Set the session this sink serves.
+    pub async fn set_meta(&self, meta: SessionMeta) {
+        *self.meta.write().await = meta;
+    }
+
+    /// Install the runner that `rlm(...)` and `spawn(...)` delegate to.
+    pub async fn set_child_runner(&self, runner: Arc<dyn ChildRunner>) {
+        *self.runner.write().await = Some(runner);
+    }
+
+    /// The provider, if any (children share their parent's).
+    pub fn provider(&self) -> Option<Arc<dyn Provider>> {
+        self.provider.clone()
+    }
+
+    /// The tool registry.
+    pub fn tools(&self) -> Arc<ToolRegistry> {
+        self.tools.clone()
+    }
+
+    /// The tool context.
+    pub fn tool_ctx(&self) -> &ToolContext {
+        &self.tool_ctx
+    }
+
+    /// The tracer, if any.
+    pub fn tracer(&self) -> Option<Tracer> {
+        self.tracer.clone()
+    }
+
+    /// Replace the budget limits (children get a slice of their parent's).
+    pub async fn set_budget(&self, budget: Budget) {
+        self.budget.lock().await.budget = budget;
+    }
+
+    /// Replace the settings (children inherit their parent's).
+    pub async fn set_settings(&self, settings: ModelSettings) {
+        *self.settings.write().await = settings;
+    }
+
+    /// Count a finished child's spending against this session.
+    pub async fn charge_child(&self, usage: &BudgetUsage) {
+        let mut b = self.budget.lock().await;
+        b.usage.calls += usage.calls;
+        b.usage.tokens += usage.tokens;
+        b.usage.dollars += usage.dollars;
+    }
+
+    /// Declared agent roles, by lower-case name.
+    pub async fn agents(&self) -> HashMap<String, AgentRole> {
+        self.agents.read().await.clone()
+    }
+
+    /// Replace the declared agents (children inherit their parent's).
+    pub async fn set_agents(&self, agents: HashMap<String, AgentRole>) {
+        *self.agents.write().await = agents;
+    }
+
+    /// Prompt-, SQL- and shell-defined functions, by lower-case name.
+    pub async fn functions(&self) -> HashMap<String, DefinedFunction> {
+        self.functions.read().await.clone()
+    }
+
+    /// Replace the defined functions (children inherit their parent's; the
+    /// catalog entries travel with the base catalog).
+    pub async fn set_functions(&self, functions: HashMap<String, DefinedFunction>) {
+        *self.functions.write().await = functions;
+    }
+
+    /// Declare an agent role from a `CREATE AGENT` statement.
+    pub async fn define_agent(&self, stmt: &Statement) -> Result<String, ExecError> {
+        let callgebra_sql::StatementKind::CreateAgent {
+            name,
+            model,
+            effort,
+            tools,
+            budget,
+            prompt,
+            replace,
+        } = &stmt.kind
+        else {
+            return Err(ExecError::Eval("not a CREATE AGENT".into()));
+        };
+        let key = name.to_ascii_lowercase();
+        if key == "self" || key == "root" {
+            return Err(ExecError::Eval(format!("{name} is a reserved role name")));
+        }
+        if !replace && self.agents.read().await.contains_key(&key) {
+            return Err(ExecError::Eval(format!(
+                "agent {name} already exists; use CREATE OR REPLACE AGENT"
+            )));
+        }
+        let mut b = Budget::unbounded();
+        for (dim, v) in budget {
+            match dim.as_str() {
+                "calls" => b.calls = Some(*v as u64),
+                "tokens" => b.tokens = Some(*v as u64),
+                "dollars" => b.dollars = Some(*v),
+                "depth" => b.max_depth = Some(*v as u32),
+                "turns" => b.wall = None,
+                _ => {}
+            }
+        }
+        let turns = budget
+            .iter()
+            .find(|(d, _)| d == "turns")
+            .map(|(_, v)| *v as u32);
+        let role = AgentRole {
+            name: key.clone(),
+            model: ModelAlias(model.clone()),
+            effort: effort.clone(),
+            tools: tools.clone(),
+            budget: b,
+            prompt: prompt.clone(),
+            max_turns: turns,
+        };
+        self.agents.write().await.insert(key, role);
+        Ok(format!("defined agent {name}"))
     }
 
     /// The store-backed sink underneath.
@@ -229,39 +433,20 @@ impl LiveSink {
                 }
             }
         }
-        let call_kind = match body {
-            FunctionBody::Prompt { .. } => CallKind::LlmScalar {
-                alias: ModelAlias::worker(),
-            },
-            FunctionBody::Sql { .. } => CallKind::Pure,
-            FunctionBody::Shell { .. } => CallKind::Tool {
-                tool: "shell".into(),
-            },
-        };
-        let def = FunctionDef {
-            name: name.to_ascii_lowercase(),
-            args: args.iter().map(|(_, t)| *t).collect(),
-            variadic: false,
-            returns: FunctionReturn::Scalar {
-                data_type: *returns,
-            },
-            call_kind,
+        let defined = DefinedFunction {
+            arg_names: args.iter().map(|(n, _)| n.clone()).collect(),
+            arg_types: args.iter().map(|(_, t)| *t).collect(),
+            returns: *returns,
+            body: body.clone(),
             volatility: *volatility,
-            description: match body {
-                FunctionBody::Prompt { template } => format!("prompt: {}", first_line(template)),
-                FunctionBody::Sql { query } => format!("sql: {}", first_line(query)),
-                FunctionBody::Shell { command } => format!("shell: {}", first_line(command)),
-            },
         };
-        self.store.catalog().write().await.add_function(def);
-        self.functions.write().await.insert(
-            name.to_ascii_lowercase(),
-            DefinedFunction {
-                arg_names: args.iter().map(|(n, _)| n.clone()).collect(),
-                returns: *returns,
-                body: body.clone(),
-            },
-        );
+        let lower = name.to_ascii_lowercase();
+        self.store
+            .catalog()
+            .write()
+            .await
+            .add_function(function_entry(&lower, &defined));
+        self.functions.write().await.insert(lower, defined);
         Ok(format!("defined function {name}"))
     }
 
@@ -286,22 +471,18 @@ impl LiveSink {
         Ok(())
     }
 
-    /// Run one model request through memo, provider, budget and trace.
-    async fn model_call(
+    /// Build a request in this session's settings: system prefix, one user
+    /// message, optional JSON schema and effort override.
+    pub async fn request(
         &self,
         alias: ModelAlias,
         prompt: String,
         output_schema: Option<serde_json::Value>,
         effort: Option<String>,
-    ) -> Result<String, ExecError> {
-        let provider = self.provider.as_ref().ok_or_else(|| {
-            ExecError::Call(
-                "no model provider configured (set ANTHROPIC_API_KEY or OPENAI_API_KEY, or a CALLGEBRA_ROUTER_TOML)".into(),
-            )
-        })?;
+    ) -> CompletionRequest {
         let settings = self.settings().await;
-        let req = CompletionRequest {
-            alias: alias.clone(),
+        CompletionRequest {
+            alias,
             model: String::new(),
             system: self.system.read().await.clone(),
             messages: vec![Message::user(prompt)],
@@ -314,7 +495,20 @@ impl LiveSink {
                 temperature: None,
                 extra: Default::default(),
             },
-        };
+        }
+    }
+
+    /// Run one request through memo, provider, budget and trace. This is the
+    /// single path every model call takes, statement calls and session turns
+    /// alike.
+    pub async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse, ExecError> {
+        let provider = self.provider.as_ref().ok_or_else(|| {
+            ExecError::Call(
+                "no model provider configured (set ANTHROPIC_API_KEY or OPENAI_API_KEY, or a CALLGEBRA_ROUTER_TOML)".into(),
+            )
+        })?;
+        let settings = self.settings().await;
+        let alias = req.alias.clone();
         let fingerprint = req.fingerprint();
         let call_id = CallId::new();
         let statement = self.statement.lock().await.unwrap_or_default();
@@ -332,12 +526,28 @@ impl LiveSink {
         // until the router reports which one served).
         if !settings.no_memo {
             if let Ok(Some(hit)) = self.store.store().memo_get(&alias.0, &fingerprint).await {
-                let text = hit
-                    .response
-                    .get("text")
-                    .and_then(|t| t.as_str())
-                    .unwrap_or_default()
-                    .to_string();
+                let resp: CompletionResponse =
+                    match serde_json::from_value::<CompletionResponse>(hit.response.clone()) {
+                        Ok(r) => r,
+                        Err(_) => CompletionResponse {
+                            model: hit
+                                .response
+                                .get("model")
+                                .and_then(|m| m.as_str())
+                                .unwrap_or_default()
+                                .to_string(),
+                            content: vec![callgebra_llm::ContentBlock::Text {
+                                text: hit
+                                    .response
+                                    .get("text")
+                                    .and_then(|t| t.as_str())
+                                    .unwrap_or_default()
+                                    .to_string(),
+                            }],
+                            stop_reason: callgebra_llm::StopReason::EndTurn,
+                            usage: callgebra_llm::Usage::default(),
+                        },
+                    };
                 self.budget.lock().await.memo_hits += 1;
                 if let Some(t) = &self.tracer {
                     t.emit(TraceEvent::CallFinished {
@@ -351,30 +561,12 @@ impl LiveSink {
                         error: None,
                     });
                 }
-                return Ok(text);
+                return Ok(resp);
             }
         }
         self.reserve_call().await?;
-        let result = provider.complete(req).await;
-        match result {
+        match provider.complete(req).await {
             Ok(resp) => {
-                if resp.stop_reason == callgebra_llm::StopReason::Refusal {
-                    let msg = "the model declined this request".to_string();
-                    if let Some(t) = &self.tracer {
-                        t.emit(TraceEvent::CallFinished {
-                            call: call_id,
-                            input_tokens: resp.usage.input_tokens,
-                            output_tokens: resp.usage.output_tokens,
-                            cache_read_tokens: resp.usage.cache_read_tokens,
-                            cost_usd: resp.usage.cost_usd.unwrap_or(0.0),
-                            elapsed: started.elapsed(),
-                            memo_hit: false,
-                            error: Some(msg.clone()),
-                        });
-                    }
-                    return Err(ExecError::Call(msg));
-                }
-                let text = resp.text();
                 self.charge(&resp.usage).await?;
                 if let Some(t) = &self.tracer {
                     t.emit(TraceEvent::CallFinished {
@@ -385,12 +577,13 @@ impl LiveSink {
                         cost_usd: resp.usage.cost_usd.unwrap_or(0.0),
                         elapsed: started.elapsed(),
                         memo_hit: false,
-                        error: None,
+                        error: (resp.stop_reason == callgebra_llm::StopReason::Refusal)
+                            .then(|| "the model declined this request".to_string()),
                     });
                 }
-                if !settings.no_memo {
+                if !settings.no_memo && resp.stop_reason != callgebra_llm::StopReason::Refusal {
                     let entry = MemoEntry {
-                        response: serde_json::json!({ "text": text, "model": resp.model }),
+                        response: serde_json::to_value(&resp).unwrap_or_default(),
                         input_tokens: resp.usage.input_tokens,
                         output_tokens: resp.usage.output_tokens,
                         cost_usd: resp.usage.cost_usd,
@@ -401,7 +594,7 @@ impl LiveSink {
                         .memo_put(&alias.0, &fingerprint, &entry)
                         .await;
                 }
-                Ok(text)
+                Ok(resp)
             }
             Err(e) => {
                 if let Some(t) = &self.tracer {
@@ -419,6 +612,23 @@ impl LiveSink {
                 Err(ExecError::Call(e.to_string()))
             }
         }
+    }
+
+    /// One scalar model call: the response text, or an error if the model
+    /// declined.
+    async fn model_call(
+        &self,
+        alias: ModelAlias,
+        prompt: String,
+        output_schema: Option<serde_json::Value>,
+        effort: Option<String>,
+    ) -> Result<String, ExecError> {
+        let req = self.request(alias, prompt, output_schema, effort).await;
+        let resp = self.complete(req).await?;
+        if resp.stop_reason == callgebra_llm::StopReason::Refusal {
+            return Err(ExecError::Call("the model declined this request".into()));
+        }
+        Ok(resp.text())
     }
 
     fn bool_schema() -> serde_json::Value {
@@ -631,6 +841,34 @@ impl CallSink for LiveSink {
 
     async fn table_call(&self, name: &str, args: &[Value]) -> Result<Batch, ExecError> {
         let lower = name.to_ascii_lowercase();
+        if lower == "rlm" || lower == "spawn" {
+            let runner = self.runner.read().await.clone().ok_or_else(|| {
+                ExecError::Call(format!(
+                    "{lower} needs a running harness (callgebra run); the plain REPL cannot spawn sessions"
+                ))
+            })?;
+            let text = |i: usize| args.get(i).and_then(|v| v.as_text()).map(str::to_string);
+            let (agent, task, context, max) = if lower == "rlm" {
+                (None, text(0), text(1), 2)
+            } else {
+                (text(0), text(1), text(2), 3)
+            };
+            if args.len() > max {
+                return Err(ExecError::Call(format!(
+                    "{lower} takes at most {max} arguments, got {}",
+                    args.len()
+                )));
+            }
+            let Some(task) = task else {
+                return Err(ExecError::Call(format!("{lower}: the task must be text")));
+            };
+            if lower == "spawn" && agent.is_none() {
+                return Err(ExecError::Call("spawn: the agent name must be text".into()));
+            }
+            return runner
+                .run_child(self, agent.as_deref(), task, context)
+                .await;
+        }
         if lower == "expand" {
             let (Some(prompt), Some(n)) = (
                 args.first().and_then(|v| v.as_text()),

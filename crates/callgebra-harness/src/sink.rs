@@ -15,6 +15,22 @@ use tokio::sync::RwLock;
 pub struct StoreSink {
     store: DuckDbStore,
     catalog: Arc<RwLock<Catalog>>,
+    /// Table-name prefix for a child session's private tables (`None` for the
+    /// root). Physical names are `cgs_{ns}__{name}`; the root never lists them.
+    namespace: Option<String>,
+}
+
+/// Prefix marking a session namespace in physical table names.
+const NAMESPACE_MARK: &str = "cgs_";
+
+/// The physical prefix of a namespace.
+fn prefix(ns: &str) -> String {
+    format!("{NAMESPACE_MARK}{ns}__")
+}
+
+/// Whether a physical table name belongs to some session namespace.
+pub fn is_namespaced(physical: &str) -> bool {
+    physical.starts_with(NAMESPACE_MARK) && physical.contains("__")
 }
 
 fn store_err(e: StoreError) -> ExecError {
@@ -29,12 +45,45 @@ impl StoreSink {
     /// Wrap a store; the catalog starts from `base` (standard functions plus
     /// any virtual tables) and picks up every stored table.
     pub async fn new(store: DuckDbStore, base: Catalog) -> Result<Self, StoreError> {
+        Self::with_namespace(store, base, None).await
+    }
+
+    /// A sink whose tables live under a namespace, so concurrent child
+    /// sessions can each have their own `ctx` and scratch tables in one store.
+    pub async fn with_namespace(
+        store: DuckDbStore,
+        base: Catalog,
+        namespace: Option<String>,
+    ) -> Result<Self, StoreError> {
         let sink = Self {
             store,
             catalog: Arc::new(RwLock::new(base)),
+            namespace,
         };
         sink.refresh().await?;
         Ok(sink)
+    }
+
+    /// The namespace, if any.
+    pub fn namespace(&self) -> Option<&str> {
+        self.namespace.as_deref()
+    }
+
+    /// Physical table name for a logical one.
+    pub fn physical(&self, name: &str) -> String {
+        match &self.namespace {
+            Some(ns) => format!("{}{}", prefix(ns), name.to_ascii_lowercase()),
+            None => name.to_string(),
+        }
+    }
+
+    /// Logical name for a physical one, if it belongs to this sink.
+    fn logical(&self, physical: &str) -> Option<String> {
+        match &self.namespace {
+            Some(ns) => physical.strip_prefix(&prefix(ns)).map(str::to_string),
+            None if is_namespaced(physical) => None,
+            None => Some(physical.to_string()),
+        }
     }
 
     /// The catalog handle, shared with the planner.
@@ -51,8 +100,11 @@ impl StoreSink {
     pub async fn refresh(&self) -> Result<(), StoreError> {
         let names = self.store.tables().await?;
         let mut defs = Vec::with_capacity(names.len());
-        for n in names {
-            if let Some(schema) = self.store.schema(&n).await? {
+        for physical in names {
+            let Some(n) = self.logical(&physical) else {
+                continue;
+            };
+            if let Some(schema) = self.store.schema(&physical).await? {
                 defs.push(TableDef {
                     name: n,
                     schema: (*schema).clone(),
@@ -93,7 +145,15 @@ impl CallSink for StoreSink {
     }
 
     async fn scan(&self, table: &str) -> Result<BatchStream, ExecError> {
-        let batch = self.store.scan(table).await.map_err(store_err)?;
+        let batch = self
+            .store
+            .scan(&self.physical(table))
+            .await
+            .map_err(|e| match e {
+                StoreError::NoSuchTable(_) => StoreError::NoSuchTable(table.to_string()),
+                other => other,
+            })
+            .map_err(store_err)?;
         Ok(callgebra_exec::chunk(
             batch.schema.clone(),
             batch.rows,
@@ -107,7 +167,7 @@ impl CallSink for StoreSink {
         schema: Arc<Schema>,
         if_not_exists: bool,
     ) -> Result<bool, ExecError> {
-        match self.store.create_table(name, schema).await {
+        match self.store.create_table(&self.physical(name), schema).await {
             Ok(()) => {
                 self.refresh().await.map_err(store_err)?;
                 Ok(true)
@@ -118,11 +178,14 @@ impl CallSink for StoreSink {
     }
 
     async fn insert(&self, name: &str, batch: Batch) -> Result<(), ExecError> {
-        self.store.insert(name, batch).await.map_err(store_err)
+        self.store
+            .insert(&self.physical(name), batch)
+            .await
+            .map_err(store_err)
     }
 
     async fn drop_table(&self, name: &str, if_exists: bool) -> Result<(), ExecError> {
-        match self.store.drop_table(name).await {
+        match self.store.drop_table(&self.physical(name)).await {
             Ok(()) => {
                 self.refresh().await.map_err(store_err)?;
                 Ok(())

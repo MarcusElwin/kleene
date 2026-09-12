@@ -242,18 +242,17 @@ pub(crate) async fn eval_plan(
                     // input row: concurrently for call functions, in order for
                     // builtins. Output keeps input order.
                     let arg_rows = eval_all_rows(args, &rows, env, ctx).await?;
-                    let results: Vec<Vec<Row>> = if name == "generate_series"
-                        || ctx.call_concurrency <= 1
-                    {
-                        let mut out = Vec::with_capacity(rows.len());
-                        for vals in arg_rows {
-                            out.push(call(vals).await?);
-                        }
-                        out
-                    } else {
-                        let sink = ctx.sink.clone();
-                        let name = Arc::new(name.clone());
-                        futures::stream::iter(arg_rows)
+                    let results: Vec<Vec<Row>> =
+                        if name == "generate_series" || ctx.call_concurrency <= 1 {
+                            let mut out = Vec::with_capacity(rows.len());
+                            for vals in arg_rows {
+                                out.push(call(vals).await?);
+                            }
+                            out
+                        } else {
+                            let sink = ctx.sink.clone();
+                            let name = Arc::new(name.clone());
+                            futures::stream::iter(arg_rows)
                             .map(move |vals| {
                                 let (sink, name) = (sink.clone(), name.clone());
                                 async move { sink.table_call(&name, &vals).await.map(|b| b.rows) }
@@ -261,7 +260,7 @@ pub(crate) async fn eval_plan(
                             .buffered(ctx.call_concurrency)
                             .try_collect()
                             .await?
-                    };
+                        };
                     let mut out = vec![];
                     for (r, frows) in rows.iter().zip(results) {
                         for frow in frows {

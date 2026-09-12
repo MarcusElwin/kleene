@@ -34,6 +34,20 @@ pub enum TraceEvent {
         depth: u32,
         /// Agent role name.
         role: String,
+        /// The task the session was given.
+        task: String,
+    },
+    /// A session ended (with `FINAL`, an exhausted budget, a turn cap or an
+    /// error).
+    SessionFinished {
+        /// Session.
+        session: SessionId,
+        /// `final`, `budget_exhausted`, `turns_exhausted`, `cancelled` or `error`.
+        outcome: String,
+        /// Model turns taken.
+        turns: u32,
+        /// Usage of the session including its children.
+        usage: BudgetUsage,
     },
     /// A statement was submitted.
     StatementStarted {
