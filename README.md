@@ -33,7 +33,29 @@ statements the remaining budget cannot pay for; and `callgebra learn` runs
 the continual loop: generated and user tasks with code oracles, ratings and
 a curriculum, and a playbook of winning SQL adopted only after it wins a
 replay eval; and `callgebra bench` runs task packs under learning, frozen and
-plain-agent modes and records every task in `evals`. Try it without a model:
+plain-agent modes and records every task in `evals`.
+
+## Install
+
+Prebuilt binaries for macOS (Apple silicon, Intel) and Linux (x86_64,
+aarch64) are attached to every tagged release.
+
+```bash
+# curl: detects OS and architecture, verifies the SHA-256, installs to ~/.local/bin
+curl -fsSL https://raw.githubusercontent.com/MarcusElwin/callgebra/main/install.sh | sh
+
+# Homebrew (from the tap; see Formula/callgebra.rb)
+brew install MarcusElwin/callgebra/callgebra
+
+# From source (compiles DuckDB, about ten minutes)
+cargo install --git https://github.com/MarcusElwin/callgebra callgebra
+```
+
+`CALLGEBRA_VERSION=v0.1.0` pins the installer to a tag and
+`CALLGEBRA_INSTALL=/usr/local/bin` changes the destination. Releases are
+built by `ci/release.yml` on `v*` tags.
+
+Try it without a model:
 
 ```bash
 cargo run -- repl -c "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 5) SELECT SUM(n) FROM r"
