@@ -33,6 +33,23 @@ callgebra run @demos/repo-review/task.txt --workspace . --max-depth 1
 callgebra trace "SELECT s.role, st.sql, st.calls FROM trace_statements st JOIN trace_sessions s USING (session) ORDER BY st.started_at"
 ```
 
+## Watching live in the TUI
+
+`callgebra tui` attaches to the engine daemon (starting one in the
+background if none is listening) and shows the call tree, transcript and plan
+of every run as events arrive. `--run` starts a task on connect:
+
+```bash
+callgebra tui --run @demos/oolong/task.txt --context demos/oolong/corpus.txt
+```
+
+Keys: `j`/`k` move, `f` fold, `x` cancel the selected statement, `3` opens
+the trace explorer (SQL over the store), `d` detaches while the run continues.
+`callgebra attach` is the headless twin: it prints every event as a JSON
+line, and with `--run` exits when that run finishes. `callgebra daemon` runs
+the engine in the foreground; a client that reconnects resumes from its last
+cursor.
+
 ## Resuming
 
 A run that hits its turn cap (or is interrupted) can be continued:

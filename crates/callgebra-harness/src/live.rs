@@ -156,6 +156,8 @@ pub struct LiveSink {
     meta: RwLock<SessionMeta>,
     agents: RwLock<HashMap<String, AgentRole>>,
     runner: RwLock<Option<Arc<dyn ChildRunner>>>,
+    /// Set to stop the current statement at its next call.
+    cancelled: std::sync::atomic::AtomicBool,
 }
 
 const SYSTEM_PREFIX: &str = "You are a function inside a SQL engine. Answer only with the value asked for: no preamble, no explanation, no markdown fences.";
@@ -184,6 +186,28 @@ impl LiveSink {
             meta: RwLock::new(SessionMeta::default()),
             agents: RwLock::new(HashMap::new()),
             runner: RwLock::new(None),
+            cancelled: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// Stop the statement that is running (or the next one to start) at its
+    /// next model or tool call. Cleared when a new statement begins.
+    pub fn cancel_statement(&self) {
+        self.cancelled
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Clear a pending cancellation.
+    pub fn clear_cancel(&self) {
+        self.cancelled
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn check_cancelled(&self) -> Result<(), ExecError> {
+        if self.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
+            Err(ExecError::Cancelled)
+        } else {
+            Ok(())
         }
     }
 
@@ -502,6 +526,7 @@ impl LiveSink {
     /// single path every model call takes, statement calls and session turns
     /// alike.
     pub async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse, ExecError> {
+        self.check_cancelled()?;
         let provider = self.provider.as_ref().ok_or_else(|| {
             ExecError::Call(
                 "no model provider configured (set ANTHROPIC_API_KEY or OPENAI_API_KEY, or a CALLGEBRA_ROUTER_TOML)".into(),
@@ -933,6 +958,7 @@ impl CallSink for LiveSink {
                 "no implementation for table function {name}"
             )));
         };
+        self.check_cancelled()?;
         let statement = self.statement.lock().await.unwrap_or_default();
         let started = Instant::now();
         let result = tool.call(args, &self.tool_ctx).await;

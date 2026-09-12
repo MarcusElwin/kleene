@@ -82,10 +82,127 @@ enum Command {
     },
     /// Run evaluation task packs and report (M7).
     Bench,
-    /// Open the terminal UI (M4).
-    Tui,
-    /// Start the engine daemon (M4).
-    Daemon,
+    /// Open the terminal UI over the daemon (starting a daemon in the
+    /// background if none is listening).
+    Tui {
+        /// Start this task on connect (text, or `@path`).
+        #[arg(long)]
+        run: Option<String>,
+        /// Context file for `--run`.
+        #[arg(long)]
+        context: Option<PathBuf>,
+        /// Daemon socket. Default: `.callgebra/daemon.sock`.
+        #[arg(long)]
+        socket: Option<PathBuf>,
+    },
+    /// Attach to the daemon and print every event as a JSON line (headless
+    /// mode). With `--run`, exits when that run finishes.
+    Attach {
+        /// Start this task on connect (text, or `@path`).
+        #[arg(long)]
+        run: Option<String>,
+        /// Context file for `--run`.
+        #[arg(long)]
+        context: Option<PathBuf>,
+        /// Daemon socket. Default: `.callgebra/daemon.sock`.
+        #[arg(long)]
+        socket: Option<PathBuf>,
+    },
+    /// Start the engine daemon in the foreground.
+    Daemon {
+        /// Socket path. Default: `.callgebra/daemon.sock`.
+        #[arg(long)]
+        socket: Option<PathBuf>,
+    },
+}
+
+fn socket_path(cli: &Cli, socket: &Option<PathBuf>) -> PathBuf {
+    socket.clone().unwrap_or_else(|| {
+        db_path(cli)
+            .parent()
+            .map(|p| p.join("daemon.sock"))
+            .unwrap_or_else(|| PathBuf::from(".callgebra/daemon.sock"))
+    })
+}
+
+fn read_task(task: &str) -> anyhow::Result<String> {
+    Ok(match task.strip_prefix('@') {
+        Some(path) => std::fs::read_to_string(path)?,
+        None => task.to_string(),
+    })
+}
+
+fn start_request(
+    run: &Option<String>,
+    context: &Option<PathBuf>,
+    workspace: &Option<PathBuf>,
+) -> anyhow::Result<Option<callgebra_daemon::ClientRequest>> {
+    let Some(task) = run else {
+        return Ok(None);
+    };
+    let context = match context {
+        Some(p) => Some(std::fs::read_to_string(p)?),
+        None => None,
+    };
+    Ok(Some(callgebra_daemon::ClientRequest::StartRun {
+        task: read_task(task)?,
+        workspace: workspace
+            .as_ref()
+            .map(|w| w.display().to_string())
+            .unwrap_or_default(),
+        context,
+        max_turns: None,
+        max_depth: None,
+        budget_calls: None,
+    }))
+}
+
+async fn daemon_config(cli: &Cli) -> anyhow::Result<callgebra_harness::HarnessConfig> {
+    let workspace = cli
+        .workspace
+        .clone()
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let provider = match callgebra_llm::provider_from_env() {
+        Ok(p) => Some(p),
+        Err(e) => {
+            eprintln!("callgebra: no model provider ({e}); model calls will fail");
+            None
+        }
+    };
+    Ok(callgebra_harness::HarnessConfig {
+        workspace,
+        provider,
+        ..callgebra_harness::HarnessConfig::default()
+    })
+}
+
+/// Connect to the daemon, spawning one in the background if the socket is
+/// not answering.
+async fn ensure_daemon(cli: &Cli, socket: &PathBuf) -> anyhow::Result<()> {
+    if tokio::net::UnixStream::connect(socket).await.is_ok() {
+        return Ok(());
+    }
+    let exe = std::env::current_exe()?;
+    let mut cmd = std::process::Command::new(exe);
+    cmd.arg("--db")
+        .arg(db_path(cli))
+        .arg("daemon")
+        .arg("--socket")
+        .arg(socket)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    if let Some(w) = &cli.workspace {
+        cmd.arg("--workspace").arg(w);
+    }
+    cmd.spawn()?;
+    for _ in 0..100 {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        if tokio::net::UnixStream::connect(socket).await.is_ok() {
+            return Ok(());
+        }
+    }
+    anyhow::bail!("daemon did not start listening on {}", socket.display())
 }
 
 fn db_path(cli: &Cli) -> PathBuf {
@@ -441,17 +558,39 @@ async fn main() -> anyhow::Result<()> {
             );
             Ok(())
         }
-        Some(cmd) => {
-            let milestone = match cmd {
-                Command::Tui | Command::Daemon => "M4",
-                Command::Bench => "M7",
-                Command::Run { .. }
-                | Command::Resume { .. }
-                | Command::Repl { .. }
-                | Command::Trace { .. }
-                | Command::Explain { .. } => unreachable!(),
-            };
-            eprintln!("callgebra: not implemented yet; arrives in {milestone}, see docs/PLAN.md");
+        Some(Command::Daemon { socket }) => {
+            let socket = socket_path(&cli, socket);
+            let store = open_store(&cli)?;
+            let cfg = daemon_config(&cli).await?;
+            let daemon = callgebra_daemon::server::Daemon::new(store, cfg).await?;
+            eprintln!("callgebra daemon listening on {}", socket.display());
+            daemon.serve(&socket).await?;
+            Ok(())
+        }
+        Some(Command::Tui {
+            run,
+            context,
+            socket,
+        }) => {
+            let socket = socket_path(&cli, socket);
+            ensure_daemon(&cli, &socket).await?;
+            let start = start_request(run, context, &cli.workspace)?;
+            callgebra_tui::run(&socket, start).await?;
+            Ok(())
+        }
+        Some(Command::Attach {
+            run,
+            context,
+            socket,
+        }) => {
+            let socket = socket_path(&cli, socket);
+            ensure_daemon(&cli, &socket).await?;
+            let start = start_request(run, context, &cli.workspace)?;
+            callgebra_tui::headless(&socket, start).await?;
+            Ok(())
+        }
+        Some(Command::Bench) => {
+            eprintln!("callgebra: not implemented yet; arrives in M7, see docs/PLAN.md");
             std::process::exit(2)
         }
     }
