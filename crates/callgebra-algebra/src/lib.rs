@@ -6,9 +6,12 @@
 //! renders the result with estimated calls, tokens, dollars and depth per
 //! node, plus the complexity fragment the query lives in.
 //!
-//! M2 implements annotation, the cost model, the cheap-first, dedupe,
-//! semi-join and fence rules and `EXPLAIN`; M5 adds sampled selectivity,
-//! cascades, beam-limited recursion and join ordering.
+//! Rules: join ordering over call predicates (dynamic programming over
+//! relation subsets with branch-and-bound, run once), cascades through
+//! declared proxies, semi-joins for `EXISTS`, cheap-first conjunct ordering
+//! and volatility fences. Estimates use sampled selectivity (observed pass
+//! rates of call predicates), per-alias cost factors and beam-aware
+//! recursion costing.
 
 #![forbid(unsafe_code)]
 
@@ -20,9 +23,9 @@ use callgebra_core::{CallKind, Catalog, Volatility};
 use callgebra_sql::LogicalPlan;
 use serde::{Deserialize, Serialize};
 
-pub use annotate::{annotate, CostModel};
+pub use annotate::{annotate, beam_of, rounds_of, CostModel};
 pub use explain::explain;
-pub use rules::{CheapFirst, Fences, SemiJoin};
+pub use rules::{Cascade, CheapFirst, Fences, JoinOrder, SemiJoin};
 
 /// Estimated or measured cost of one operator.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
@@ -119,6 +122,52 @@ impl CallNode {
     }
 }
 
+/// A plan the planner considered and priced.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Alternative {
+    /// What it is (`as written`, `chosen`, a join order, ...).
+    pub label: String,
+    /// Its estimated total.
+    pub estimate: Estimate,
+    /// Whether it is the plan that was kept.
+    pub chosen: bool,
+}
+
+/// How big the search was.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct PlanSpace {
+    /// Relations joined.
+    pub relations: usize,
+    /// Distinct bushy join orders in the space.
+    pub orders: u64,
+    /// Subset splits actually priced.
+    pub evaluated: u64,
+    /// Splits skipped because their inputs already cost more than the best plan.
+    pub pruned: u64,
+}
+
+/// What a rule produced: the new tree plus what it learned on the way.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Rewrite {
+    /// The rewritten node.
+    pub node: CallNode,
+    /// Plans considered, if the rule searched.
+    pub alternatives: Vec<Alternative>,
+    /// Search size, if the rule searched.
+    pub plan_space: Option<PlanSpace>,
+}
+
+impl Rewrite {
+    /// A plain rewrite with nothing to report.
+    pub fn node(node: CallNode) -> Self {
+        Self {
+            node,
+            alternatives: vec![],
+            plan_space: None,
+        }
+    }
+}
+
 /// A planned statement.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CallPlan {
@@ -130,6 +179,12 @@ pub struct CallPlan {
     pub total: Estimate,
     /// Rewrite rules that fired, in order.
     pub rules_applied: Vec<String>,
+    /// Plans considered and priced (the chosen one included).
+    #[serde(default)]
+    pub alternatives: Vec<Alternative>,
+    /// Size of the join-order search, when one ran.
+    #[serde(default)]
+    pub plan_space: Option<PlanSpace>,
 }
 
 impl CallPlan {
@@ -141,15 +196,26 @@ impl CallPlan {
 
 /// A rewrite rule over call plans.
 pub trait Rule: Send + Sync {
-    /// Rule name for `EXPLAIN` and the trace.
+    /// Name, for `rules_applied`.
     fn name(&self) -> &'static str;
-    /// Apply once; return `Some` if the plan changed.
-    fn apply(&self, plan: &CallNode, catalog: &Catalog) -> Option<CallNode>;
+    /// Whether the rule runs once, before the fixpoint loop (searches that
+    /// would otherwise re-run on their own output).
+    fn once(&self) -> bool {
+        false
+    }
+    /// Try to rewrite; `None` when nothing applies.
+    fn apply(&self, plan: &CallNode, catalog: &Catalog, cost: &CostModel) -> Option<Rewrite>;
 }
 
 /// The default rule set, in application order.
 pub fn default_rules() -> Vec<Box<dyn Rule>> {
-    vec![Box::new(SemiJoin), Box::new(CheapFirst), Box::new(Fences)]
+    vec![
+        Box::new(JoinOrder),
+        Box::new(Cascade),
+        Box::new(SemiJoin),
+        Box::new(CheapFirst),
+        Box::new(Fences),
+    ]
 }
 
 /// Build a call plan from a logical plan: annotate, apply the default rules
@@ -167,13 +233,33 @@ pub fn plan_with(
 ) -> CallPlan {
     let mut root = annotate(logical, catalog, cost);
     let mut applied = vec![];
+    let mut alternatives = vec![];
+    let mut plan_space = None;
+    let mut take = |root: &mut CallNode, rw: Rewrite, name: &str| -> bool {
+        let next = annotate(&annotate::to_logical(&rw.node), catalog, cost);
+        let changed = annotate::to_logical(&next) != annotate::to_logical(root);
+        if !rw.alternatives.is_empty() {
+            alternatives = rw.alternatives;
+        }
+        if rw.plan_space.is_some() {
+            plan_space = rw.plan_space;
+        }
+        if changed {
+            *root = next;
+            applied.push(name.to_string());
+        }
+        changed
+    };
+    for r in rules.iter().filter(|r| r.once()) {
+        if let Some(rw) = r.apply(&root, catalog, cost) {
+            take(&mut root, rw, r.name());
+        }
+    }
     for _round in 0..8 {
         let mut changed = false;
-        for r in rules {
-            if let Some(next) = r.apply(&root, catalog) {
-                root = annotate(&annotate::to_logical(&next), catalog, cost);
-                applied.push(r.name().to_string());
-                changed = true;
+        for r in rules.iter().filter(|r| !r.once()) {
+            if let Some(rw) = r.apply(&root, catalog, cost) {
+                changed |= take(&mut root, rw, r.name());
             }
         }
         if !changed {
@@ -182,10 +268,15 @@ pub fn plan_with(
     }
     let fragment = annotate::fragment(&root);
     let total = root.total();
+    if let Some(chosen) = alternatives.iter_mut().find(|a| a.chosen) {
+        chosen.estimate = total;
+    }
     CallPlan {
         root,
         fragment,
         total,
         rules_applied: applied,
+        alternatives,
+        plan_space,
     }
 }

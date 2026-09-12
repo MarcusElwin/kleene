@@ -50,6 +50,11 @@ line, and with `--run` exits when that run finishes. `callgebra daemon` runs
 the engine in the foreground; a client that reconnects resumes from its last
 cursor.
 
+## Planner (`demos/planner`)
+
+`EXPLAIN` scripts showing join ordering over call predicates, cascades and
+beam-limited recursion: see [`planner/README.md`](planner/README.md).
+
 ## Resuming
 
 A run that hits its turn cap (or is interrupted) can be continued:

@@ -81,6 +81,12 @@ pub enum StatementKind {
         volatility: Volatility,
         /// `CREATE OR REPLACE`.
         replace: bool,
+        /// `PROXY name THRESHOLDS (low, high)`: a cheap scoring function the
+        /// planner may cascade this predicate through.
+        proxy: Option<(String, f64, f64)>,
+        /// `MODEL 'alias'`: the model tier a prompt function runs on
+        /// (default: the session's default alias).
+        model: Option<String>,
     },
     /// `CREATE AGENT name MODEL '...' EFFORT '...' TOOLS (...) BUDGET (...) PROMPT '...'`.
     CreateAgent {

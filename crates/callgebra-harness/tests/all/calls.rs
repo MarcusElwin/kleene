@@ -235,3 +235,64 @@ async fn no_provider_gives_a_clear_error() {
     assert!(out[0].is_error);
     assert!(out[0].text.contains("provider"), "{}", out[0].text);
 }
+
+#[tokio::test]
+async fn planner_cascade_refusal_and_sampled_selectivity_in_the_repl() {
+    let p = Arc::new(ScriptedProvider::new(
+        vec![
+            ("Score", "0.5"),
+            ("relevant", r#"{"answer": true}"#),
+            ("ok?", r#"{"answer": true}"#),
+        ],
+        "x",
+    ));
+    let f = repl(p).await;
+    let r = &f.repl;
+    let out = r
+        .submit(
+            "CREATE TABLE t AS SELECT 'row ' || generate_series AS x FROM generate_series(1, 4); \
+             CREATE FUNCTION score(t TEXT) RETURNS DOUBLE AS PROMPT 'Score {t} from 0 to 1' MODEL 'proxy'; \
+             CREATE FUNCTION rel(t TEXT) RETURNS BOOLEAN AS PROMPT 'Is {t} relevant?' PROXY score THRESHOLDS (0.2, 0.8); \
+             CREATE FUNCTION ok(t TEXT) RETURNS BOOLEAN AS PROMPT 'Is {t} ok?'",
+        )
+        .await;
+    assert!(out.iter().all(|o| !o.is_error), "{}", text(&out));
+    // A proxy must exist and score.
+    let bad = r
+        .submit("CREATE FUNCTION rel2(t TEXT) RETURNS BOOLEAN AS PROMPT 'x {t}' PROXY nope")
+        .await;
+    assert!(
+        bad[0].is_error && bad[0].text.contains("nope"),
+        "{}",
+        bad[0].text
+    );
+
+    // EXPLAIN shows the cascade; running it scores every row and asks the
+    // oracle only for the band (every score is 0.5 here, so all four).
+    let out = r.submit("EXPLAIN SELECT x FROM t WHERE rel(x)").await;
+    assert!(out[0].text.contains("cascade"), "{}", out[0].text);
+    assert!(out[0].text.contains("score("), "{}", out[0].text);
+    let out = r.submit("SELECT x FROM t WHERE rel(x)").await;
+    assert!(!out[0].is_error, "{}", out[0].text);
+    assert!(out[0].text.contains("4 rows"), "{}", out[0].text);
+    assert!(out[0].text.contains("8 calls"), "{}", out[0].text);
+
+    // Sampled selectivity: before any call the filter keeps half the rows;
+    // after four `true` answers the estimate follows the observed rate.
+    let before = r.submit("EXPLAIN SELECT x FROM t WHERE ok(x)").await;
+    assert!(before[0].text.contains("~2 rows"), "{}", before[0].text);
+    let out = r.submit("SELECT x FROM t WHERE ok(x)").await;
+    assert!(out[0].text.contains("4 rows"), "{}", out[0].text);
+    let after = r.submit("EXPLAIN SELECT x FROM t WHERE ok(x)").await;
+    assert!(after[0].text.contains("~4.0 rows"), "{}", after[0].text);
+
+    // A statement the remaining budget cannot pay for is refused up front,
+    // with the estimate, before any call is made.
+    r.submit("SET budget.calls = 14").await;
+    let out = r.submit("SELECT x FROM t WHERE rel(x) AND ok(x)").await;
+    assert!(out[0].is_error, "{}", out[0].text);
+    assert!(out[0].text.contains("refused"), "{}", out[0].text);
+    assert!(out[0].text.contains("remaining budget"), "{}", out[0].text);
+    assert!(out[0].text.contains("total:"), "{}", out[0].text);
+    drop(f.dir);
+}

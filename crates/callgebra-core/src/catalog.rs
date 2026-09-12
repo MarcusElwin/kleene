@@ -148,11 +148,28 @@ pub struct FunctionDef {
     pub description: String,
 }
 
+/// A cheap stand-in for an expensive boolean predicate, for cascades: rows
+/// the proxy scores at or above `high` pass without asking the oracle, rows
+/// below `low` are dropped, and only the band in between pays for the real
+/// call (the LOTUS cascade shape).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProxySpec {
+    /// The proxy function: same arguments as the oracle, returns a score in `[0, 1]`.
+    pub function: String,
+    /// Scores below this are rejected outright.
+    pub low: f64,
+    /// Scores at or above this are accepted outright.
+    pub high: f64,
+}
+
 /// Everything a session can see.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Catalog {
     tables: BTreeMap<String, TableDef>,
     functions: BTreeMap<String, FunctionDef>,
+    /// Proxies declared for oracle predicates, by oracle name.
+    #[serde(default)]
+    proxies: BTreeMap<String, ProxySpec>,
 }
 
 impl Catalog {
@@ -178,7 +195,26 @@ impl Catalog {
 
     /// Remove a function; returns the definition if it existed.
     pub fn remove_function(&mut self, name: &str) -> Option<FunctionDef> {
+        self.proxies.remove(&name.to_ascii_lowercase());
         self.functions.remove(&name.to_ascii_lowercase())
+    }
+
+    /// Declare (or clear) a proxy for an oracle predicate.
+    pub fn set_proxy(&mut self, oracle: &str, proxy: Option<ProxySpec>) {
+        let key = oracle.to_ascii_lowercase();
+        match proxy {
+            Some(p) => {
+                self.proxies.insert(key, p);
+            }
+            None => {
+                self.proxies.remove(&key);
+            }
+        }
+    }
+
+    /// The proxy declared for an oracle predicate, if any.
+    pub fn proxy(&self, oracle: &str) -> Option<&ProxySpec> {
+        self.proxies.get(&oracle.to_ascii_lowercase())
     }
 
     /// Look up a table by name (case-insensitive).

@@ -161,6 +161,17 @@ impl Repl {
                 }
             }
         }
+        if let Some(r) = self.sink.settings().await.max_recursion_rounds {
+            cost.recursion_rounds = r as f64;
+        }
+        // Sampled selectivity: the pass rate of every boolean call predicate
+        // this session has evaluated at least a few times.
+        for (name, (yes, total)) in self.sink.call_stats().await {
+            if total >= 3 {
+                cost.call_selectivity
+                    .insert(name, (yes as f64 / total as f64).clamp(0.01, 0.99));
+            }
+        }
         cost
     }
 
@@ -385,9 +396,38 @@ impl Repl {
                 }
             }
             _ => {
-                // Plan through the call algebra so rewrites (semi-join, cheap-first) apply.
-                let stmt = self.rewrite(stmt).await;
-                let ctx = ExecContext::new(self.sink.clone());
+                // Plan through the call algebra so rewrites (join order,
+                // cascade, semi-join, cheap-first) apply, then refuse up front
+                // what the remaining budget cannot pay for.
+                let (stmt, planned) = self.rewrite(stmt).await;
+                if let Some(cp) = &planned {
+                    let (budget, used) = self.sink.budget_state().await;
+                    let remaining = budget.remaining(&used);
+                    let over_calls = remaining
+                        .calls
+                        .is_some_and(|c| cp.total.calls > c as f64 + 0.5);
+                    let over_dollars = remaining
+                        .dollars
+                        .is_some_and(|d| cp.total.dollars > d + 1e-9);
+                    if over_calls || over_dollars {
+                        return Outcome::err(format!(
+                            "refused: this statement is estimated at ~{:.0} calls (~${:.4}) but the remaining budget is {} calls / {}; narrow the input (a filter, a LIMIT, a sample), use a cheaper alias, or ask for less\n{}",
+                            cp.total.calls,
+                            cp.total.dollars,
+                            remaining
+                                .calls
+                                .map(|c| c.to_string())
+                                .unwrap_or_else(|| "unlimited".into()),
+                            remaining
+                                .dollars
+                                .map(|d| format!("${d:.4}"))
+                                .unwrap_or_else(|| "unlimited $".into()),
+                            callgebra_algebra::explain(cp)
+                        ));
+                    }
+                }
+                let mut ctx = ExecContext::new(self.sink.clone());
+                ctx.max_recursion_rounds = self.sink.settings().await.max_recursion_rounds;
                 match execute_statement(&stmt, ctx).await {
                     Ok(StatementResult::Rows(b)) => Outcome {
                         text: format!(
@@ -424,11 +464,14 @@ impl Repl {
         }
     }
 
-    /// Apply the call-algebra rewrites to a statement's query plan.
-    async fn rewrite(&self, stmt: &Statement) -> Statement {
+    /// Apply the call-algebra rewrites to a statement's query plan, using the
+    /// store's row counts and this session's sampled selectivities. Returns
+    /// the rewritten statement and its plan (for statements that have one).
+    async fn rewrite(&self, stmt: &Statement) -> (Statement, Option<callgebra_algebra::CallPlan>) {
         let catalog = self.sink.catalog().read().await.clone();
-        let cost = CostModel::default();
+        let cost = self.cost_model().await;
         let mut s = stmt.clone();
+        let mut planned = None;
         match &mut s.kind {
             StatementKind::Query { plan }
             | StatementKind::Final { plan }
@@ -436,10 +479,11 @@ impl Repl {
             | StatementKind::Insert { plan, .. } => {
                 let cp = plan_calls(plan, &catalog, &cost);
                 *plan = cp.logical();
+                planned = Some(cp);
             }
             _ => {}
         }
-        s
+        (s, planned)
     }
 }
 

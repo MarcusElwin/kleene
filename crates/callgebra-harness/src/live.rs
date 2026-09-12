@@ -31,6 +31,10 @@ pub struct ModelSettings {
     pub cache_prefix: bool,
     /// Skip the memo (every call goes to the provider).
     pub no_memo: bool,
+    /// Round cap for recursive CTEs (`SET max_recursion_rounds`); also the
+    /// planner's round estimate.
+    #[serde(default)]
+    pub max_recursion_rounds: Option<usize>,
 }
 
 impl Default for ModelSettings {
@@ -41,6 +45,7 @@ impl Default for ModelSettings {
             max_tokens: 1024,
             cache_prefix: true,
             no_memo: false,
+            max_recursion_rounds: None,
         }
     }
 }
@@ -58,13 +63,16 @@ pub struct DefinedFunction {
     pub body: FunctionBody,
     /// Declared volatility.
     pub volatility: Volatility,
+    /// Model alias for prompt bodies (`MODEL 'alias'`); the session default when unset.
+    #[serde(default)]
+    pub alias: Option<ModelAlias>,
 }
 
 /// The catalog entry for a defined function.
 pub fn function_entry(name: &str, def: &DefinedFunction) -> FunctionDef {
     let call_kind = match def.body {
         FunctionBody::Prompt { .. } => CallKind::LlmScalar {
-            alias: ModelAlias::worker(),
+            alias: def.alias.clone().unwrap_or_else(ModelAlias::worker),
         },
         FunctionBody::Sql { .. } => CallKind::Pure,
         FunctionBody::Shell { .. } => CallKind::Tool {
@@ -158,6 +166,8 @@ pub struct LiveSink {
     runner: RwLock<Option<Arc<dyn ChildRunner>>>,
     /// Set to stop the current statement at its next call.
     cancelled: std::sync::atomic::AtomicBool,
+    /// Pass rates of boolean call predicates: name -> (true, total).
+    stats: RwLock<HashMap<String, (u64, u64)>>,
 }
 
 const SYSTEM_PREFIX: &str = "You are a function inside a SQL engine. Answer only with the value asked for: no preamble, no explanation, no markdown fences.";
@@ -187,6 +197,7 @@ impl LiveSink {
             agents: RwLock::new(HashMap::new()),
             runner: RwLock::new(None),
             cancelled: std::sync::atomic::AtomicBool::new(false),
+            stats: RwLock::new(HashMap::new()),
         }
     }
 
@@ -397,9 +408,16 @@ impl LiveSink {
             "budget.depth" => {
                 self.budget.lock().await.budget.max_depth = Some(value.parse().map_err(|_| bad("expects an integer"))?);
             }
+            "max_recursion_rounds" => {
+                let n: usize = value.parse().map_err(|_| bad("expects an integer"))?;
+                if n == 0 {
+                    return Err(bad("expects at least 1"));
+                }
+                self.settings.write().await.max_recursion_rounds = Some(n);
+            }
             other => {
                 return Err(ExecError::Eval(format!(
-                    "unknown setting {other}; known: effort, model.default, max_tokens, memo, cache_prefix, budget.calls, budget.tokens, budget.dollars, budget.depth"
+                    "unknown setting {other}; known: effort, model.default, max_tokens, memo, cache_prefix, max_recursion_rounds, budget.calls, budget.tokens, budget.dollars, budget.depth"
                 )))
             }
         }
@@ -433,6 +451,8 @@ impl LiveSink {
             body,
             volatility,
             replace,
+            proxy,
+            model,
         } = &stmt.kind
         else {
             return Err(ExecError::Eval("not a CREATE FUNCTION".into()));
@@ -463,15 +483,65 @@ impl LiveSink {
             returns: *returns,
             body: body.clone(),
             volatility: *volatility,
+            alias: model.as_ref().map(|m| ModelAlias(m.clone())),
         };
         let lower = name.to_ascii_lowercase();
-        self.store
-            .catalog()
-            .write()
-            .await
-            .add_function(function_entry(&lower, &defined));
+        let proxy_spec = match proxy {
+            Some((pname, low, high)) => {
+                let cat = self.store.catalog();
+                let cat = cat.read().await;
+                let Some(pdef) = cat.function(pname) else {
+                    return Err(ExecError::Eval(format!(
+                        "proxy function {pname} is not defined; define it first"
+                    )));
+                };
+                if pdef.returns
+                    != (callgebra_core::FunctionReturn::Scalar {
+                        data_type: callgebra_core::DataType::Float,
+                    })
+                {
+                    return Err(ExecError::Eval(format!(
+                        "proxy function {pname} must return DOUBLE (a score in [0, 1])"
+                    )));
+                }
+                if *returns != callgebra_core::DataType::Bool {
+                    return Err(ExecError::Eval(
+                        "only BOOLEAN predicates can have a PROXY".into(),
+                    ));
+                }
+                Some(callgebra_core::ProxySpec {
+                    function: pname.to_ascii_lowercase(),
+                    low: *low,
+                    high: *high,
+                })
+            }
+            None => None,
+        };
+        {
+            let catalog = self.store.catalog();
+            let mut cat = catalog.write().await;
+            cat.add_function(function_entry(&lower, &defined));
+            cat.set_proxy(&lower, proxy_spec);
+        }
         self.functions.write().await.insert(lower, defined);
         Ok(format!("defined function {name}"))
+    }
+
+    /// Observed pass rates of boolean call predicates, by function name:
+    /// `(true, total)`. The planner's sampled selectivity.
+    pub async fn call_stats(&self) -> HashMap<String, (u64, u64)> {
+        self.stats.read().await.clone()
+    }
+
+    async fn record_stat(&self, name: &str, value: &Value) {
+        if let Value::Bool(b) = value {
+            let mut stats = self.stats.write().await;
+            let e = stats.entry(name.to_string()).or_insert((0, 0));
+            e.1 += 1;
+            if *b {
+                e.0 += 1;
+            }
+        }
     }
 
     /// Charge tokens and dollars for a call whose slot `reserve_call` took.
@@ -725,7 +795,14 @@ impl LiveSink {
                     _ => (None, prompt),
                 };
                 let text = self
-                    .model_call(self.settings().await.default_alias, prompt, schema, None)
+                    .model_call(
+                        def.alias
+                            .clone()
+                            .unwrap_or(self.settings().await.default_alias),
+                        prompt,
+                        schema,
+                        None,
+                    )
                     .await?;
                 coerce_text(&text, def.returns)
             }
@@ -805,7 +882,9 @@ impl CallSink for LiveSink {
     async fn scalar_call(&self, name: &str, args: &[Value]) -> Result<Value, ExecError> {
         let lower = name.to_ascii_lowercase();
         if let Some(def) = self.functions.read().await.get(&lower).cloned() {
-            return self.run_defined(&lower, def, args).await;
+            let v = self.run_defined(&lower, def, args).await?;
+            self.record_stat(&lower, &v).await;
+            return Ok(v);
         }
         match lower.as_str() {
             "llm" => {
