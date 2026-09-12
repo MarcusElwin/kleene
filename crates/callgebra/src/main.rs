@@ -5,6 +5,7 @@
 use clap::{Parser, Subcommand};
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// Relational algebra for recursive model calls.
 #[derive(Parser, Debug)]
@@ -80,8 +81,12 @@ enum Command {
         /// `trace_rounds`, `trace_final`, `memo`).
         sql: String,
     },
-    /// Run evaluation task packs and report (M7).
-    Bench,
+    /// Benchmarks: run task packs under learning / frozen / plain modes,
+    /// build and import packs, report accuracy, cost and learning curves.
+    Bench {
+        #[command(subcommand)]
+        action: BenchAction,
+    },
     /// Open the terminal UI over the daemon (starting a daemon in the
     /// background if none is listening).
     Tui {
@@ -120,6 +125,200 @@ enum Command {
         #[arg(long)]
         socket: Option<PathBuf>,
     },
+}
+
+#[derive(Subcommand, Debug)]
+enum BenchAction {
+    /// Run a pack directory (with pack.json) in one mode and print the results.
+    Run {
+        /// Pack directory, e.g. tasks/terminal.
+        pack: PathBuf,
+        /// learning (playbook on), frozen (control), or plain (tool-calling agent baseline).
+        #[arg(long, default_value = "learning")]
+        mode: String,
+        /// Only the first N tasks.
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Record every model response as a fixture under this directory.
+        #[arg(long)]
+        record: Option<PathBuf>,
+        /// Serve model responses from fixtures under this directory (offline).
+        #[arg(long)]
+        replay: Option<PathBuf>,
+    },
+    /// Freeze tasks from a generator into a pack directory.
+    Build {
+        /// Output directory, e.g. tasks/oolong-like.
+        out: PathBuf,
+        /// Generator: sat3, graph, puzzle, corpus, repo, statements, contracts.
+        #[arg(long)]
+        from: String,
+        /// How many tasks.
+        #[arg(long, default_value_t = 20)]
+        count: usize,
+        /// Hardness dial in [0, 1].
+        #[arg(long, default_value_t = 0.5)]
+        dial: f64,
+        /// First seed.
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+    },
+    /// Write the built-in Terminal-Bench-style pack to a directory.
+    Terminal {
+        /// Output directory, e.g. tasks/terminal.
+        out: PathBuf,
+    },
+    /// Import a Harvey LAB checkout into a pack (matter folders copied in).
+    ImportLab {
+        /// LAB root containing task directories with task.json.
+        root: PathBuf,
+        /// Output directory, e.g. tasks/harvey-lab.
+        out: PathBuf,
+    },
+    /// Accuracy, calls and dollars per pack and mode over every recorded run.
+    Report,
+    /// The learning curve of one run as a sparkline and rolling mean.
+    Curve {
+        /// Run id (from `bench run` or the bench_runs table).
+        run: String,
+        /// Rolling window.
+        #[arg(long, default_value_t = 5)]
+        window: usize,
+    },
+    /// Every eval row as CSV on stdout.
+    Csv,
+}
+
+async fn run_bench(cli: &Cli, action: &BenchAction) -> anyhow::Result<()> {
+    use callgebra_harness::learn::bench::{sparkline, Mode};
+    use callgebra_harness::learn::packs::{import_lab, terminal_pack, Pack};
+    use callgebra_harness::learn::{Learn, LearnConfig};
+    match action {
+        BenchAction::Build {
+            out,
+            from,
+            count,
+            dial,
+            seed,
+        } => {
+            let ws = cli
+                .workspace
+                .clone()
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+            let name = out
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| from.clone());
+            let pack = Pack::from_generator(&name, from, *count, *dial, *seed, &ws)?;
+            pack.save(out)?;
+            println!(
+                "wrote {} tasks to {}",
+                pack.tasks.len(),
+                out.join("pack.json").display()
+            );
+            return Ok(());
+        }
+        BenchAction::Terminal { out } => {
+            let pack = terminal_pack();
+            pack.save(out)?;
+            println!(
+                "wrote {} tasks to {}",
+                pack.tasks.len(),
+                out.join("pack.json").display()
+            );
+            return Ok(());
+        }
+        BenchAction::ImportLab { root, out } => {
+            let pack = import_lab(root, out)?;
+            pack.save(out)?;
+            println!(
+                "imported {} LAB tasks to {}",
+                pack.tasks.len(),
+                out.join("pack.json").display()
+            );
+            return Ok(());
+        }
+        _ => {}
+    }
+    let store = open_store(cli)?;
+    let mut cfg = daemon_config(cli).await?;
+    if let BenchAction::Run { record, replay, .. } = action {
+        if let Some(dir) = replay {
+            cfg.provider = Some(Arc::new(callgebra_llm::ReplayProvider::new(dir.clone())));
+        } else if let Some(dir) = record {
+            if let Some(inner) = cfg.provider.take() {
+                cfg.provider = Some(Arc::new(callgebra_llm::RecordingProvider::new(
+                    inner,
+                    dir.clone(),
+                )));
+            }
+        }
+    }
+    let learn = Learn::new(store, cfg, LearnConfig::default()).await?;
+    match action {
+        BenchAction::Run {
+            pack, mode, limit, ..
+        } => {
+            let mode = Mode::parse(mode)
+                .ok_or_else(|| anyhow::anyhow!("mode must be learning, frozen or plain"))?;
+            let p = Pack::load(pack)?;
+            let report = learn.bench(pack, &p, mode, *limit).await?;
+            for r in &report.rows {
+                println!(
+                    "{} {:>3} {:<24} {} calls ${:.4} {}",
+                    if r.solved { "✓" } else { "✗" },
+                    r.seq + 1,
+                    r.task,
+                    r.calls,
+                    r.dollars,
+                    r.detail.lines().next().unwrap_or("")
+                );
+            }
+            println!(
+                "run {} · {} · {} · {}/{} solved ({:.0}%) · {} calls · ${:.4}
+curve {}",
+                report.run,
+                report.pack,
+                mode.label(),
+                report.rows.iter().filter(|r| r.solved).count(),
+                report.rows.len(),
+                report.accuracy() * 100.0,
+                report.calls(),
+                report.dollars(),
+                sparkline(&report.curve(5))
+            );
+        }
+        BenchAction::Report => print!("{}", learn.bench_summary().await?.render_table(200)),
+        BenchAction::Curve { run, window } => {
+            let points = learn.bench_curve(run).await?;
+            if points.is_empty() {
+                anyhow::bail!("no eval rows for run {run}");
+            }
+            let w = (*window).max(1);
+            let curve: Vec<f64> = (0..points.len())
+                .map(|i| {
+                    let lo = i.saturating_sub(w - 1);
+                    let slice = &points[lo..=i];
+                    slice.iter().filter(|(_, s)| *s).count() as f64 / slice.len() as f64
+                })
+                .collect();
+            println!("{}", sparkline(&curve));
+            for (i, ((seq, solved), c)) in points.iter().zip(&curve).enumerate() {
+                println!(
+                    "{:>3} {} rolling {:.2}",
+                    seq,
+                    if *solved { "✓" } else { "✗" },
+                    c
+                );
+                let _ = i;
+            }
+        }
+        BenchAction::Csv => print!("{}", learn.bench_csv().await?),
+        BenchAction::Build { .. }
+        | BenchAction::Terminal { .. }
+        | BenchAction::ImportLab { .. } => {}
+    }
+    Ok(())
 }
 
 #[derive(Subcommand, Debug)]
@@ -780,10 +979,7 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Some(Command::Learn { action }) => run_learn(&cli, action).await,
-        Some(Command::Bench) => {
-            eprintln!("callgebra: not implemented yet; arrives in M7, see docs/PLAN.md");
-            std::process::exit(2)
-        }
+        Some(Command::Bench { action }) => run_bench(&cli, action).await,
     }
 }
 

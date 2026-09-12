@@ -6,10 +6,13 @@
 //!
 //! Everything the loop knows lives in tables in the store (`tasks`,
 //! `task_ratings`, `solver_ratings`, `generator_state`, `playbook`,
-//! `evals`, and the `trace_tasks` view), so a restart is a resume and the
+//! `playbook_evals`, and the `trace_tasks` view), so a restart is a resume and the
 //! morning report is a query.
 
+pub mod bench;
 pub mod generators;
+pub mod packs;
+pub mod plain;
 pub mod ratings;
 pub mod verify;
 
@@ -28,7 +31,7 @@ const DDL: &[&str] = &[
     "CREATE TABLE IF NOT EXISTS solver_ratings (solver VARCHAR PRIMARY KEY, rating DOUBLE, games INTEGER, solved INTEGER, dollars DOUBLE)",
     "CREATE TABLE IF NOT EXISTS generator_state (generator VARCHAR PRIMARY KEY, dial DOUBLE, solve_rate DOUBLE, tried INTEGER, solved INTEGER, updated_at TIMESTAMP)",
     "CREATE TABLE IF NOT EXISTS playbook (version INTEGER PRIMARY KEY, kind VARCHAR, sql VARCHAR, wins INTEGER, tries INTEGER, avg_cost DOUBLE, adopted BOOLEAN, learned_from VARCHAR, eval_note VARCHAR, created_at TIMESTAMP)",
-    "CREATE TABLE IF NOT EXISTS evals (run_at TIMESTAMP, kind VARCHAR, candidate INTEGER, baseline_solved INTEGER, candidate_solved INTEGER, total INTEGER, baseline_dollars DOUBLE, candidate_dollars DOUBLE, adopted BOOLEAN)",
+    "CREATE TABLE IF NOT EXISTS playbook_evals (run_at TIMESTAMP, kind VARCHAR, candidate INTEGER, baseline_solved INTEGER, candidate_solved INTEGER, total INTEGER, baseline_dollars DOUBLE, candidate_dollars DOUBLE, adopted BOOLEAN)",
     "CREATE TABLE IF NOT EXISTS attempts (task VARCHAR, run VARCHAR, solver VARCHAR, solved BOOLEAN, detail VARCHAR, calls BIGINT, dollars DOUBLE, depth INTEGER, playbook_version INTEGER, recorded_at TIMESTAMP)",
     "CREATE OR REPLACE VIEW trace_tasks AS SELECT t.id AS task, t.kind, t.generator, t.source, t.dial, t.difficulty, t.status, a.run, a.solver, CASE WHEN a.solved THEN 1.0 ELSE 0.0 END AS solved, a.calls, a.dollars, a.depth, a.recorded_at FROM tasks t JOIN attempts a ON a.task = t.id",
 ];
@@ -203,6 +206,21 @@ impl Learn {
         &self.solver
     }
 
+    /// The store.
+    pub fn store(&self) -> &DuckDbStore {
+        &self.store
+    }
+
+    /// The harness configuration runs are derived from.
+    pub fn harness_cfg(&self) -> &HarnessConfig {
+        &self.harness_cfg
+    }
+
+    /// Alias the judge oracle uses.
+    pub fn judge_alias(&self) -> &str {
+        &self.cfg.judge_alias
+    }
+
     /// Add a user task. `verify` defaults to human review.
     pub async fn add_task(
         &self,
@@ -220,7 +238,7 @@ impl Learn {
             dial: 0.5,
             difficulty: ratings::BASELINE,
         };
-        self.insert(&t, "user").await
+        self.add_generated(&t, "user").await
     }
 
     /// Generate `count` tasks from a generator at its current dial.
@@ -243,7 +261,7 @@ impl Learn {
             else {
                 continue;
             };
-            ids.push(self.insert(&t, "generator").await?);
+            ids.push(self.add_generated(&t, "generator").await?);
         }
         Ok(ids)
     }
@@ -308,10 +326,15 @@ Aim for a task the agent solves about half the time. Reply with JSON only: {{\"t
                 "proposer returned an empty task".into(),
             ));
         }
-        self.insert(&t, "proposer").await
+        self.add_generated(&t, "proposer").await
     }
 
-    async fn insert(&self, t: &GeneratedTask, source: &str) -> Result<String, HarnessError> {
+    /// Store a task (from a generator, a pack or a user) as pending; returns its id.
+    pub async fn add_generated(
+        &self,
+        t: &GeneratedTask,
+        source: &str,
+    ) -> Result<String, HarnessError> {
         let id = callgebra_core::RunId::new().to_string();
         let verify = serde_json::to_string(&t.verify).unwrap_or_default();
         self.store
@@ -462,16 +485,42 @@ Aim for a task the agent solves about half the time. Reply with JSON only: {{\"t
         playbook: Vec<PlaybookExample>,
         replay: bool,
     ) -> Result<RunReport, HarnessError> {
+        self.run_task_in(task, playbook, replay, None).await
+    }
+
+    /// Run a task through the harness with a playbook; `workspace` overrides
+    /// the configured one (packs prepare a fresh directory per task).
+    pub(crate) async fn run_task_in(
+        &self,
+        task: &Task,
+        playbook: Vec<PlaybookExample>,
+        replay: bool,
+        workspace: Option<&std::path::Path>,
+    ) -> Result<RunReport, HarnessError> {
         let mut cfg = self.harness_cfg.clone();
         cfg.playbook = playbook;
         // Replays bypass the memo so both arms pay for every call and the
         // cost comparison is honest.
         cfg.no_memo = replay;
+        if let Some(w) = workspace {
+            cfg.workspace = w.to_path_buf();
+        }
         let harness = Harness::new(self.store.clone(), cfg).await?;
         harness.run(&task.task, task.context.clone()).await
     }
 
     async fn judge(&self, task: &Task, report: &RunReport) -> Verdict {
+        self.judge_in(task, report, &self.harness_cfg.workspace)
+            .await
+    }
+
+    /// Judge a run's `FINAL` with the task's oracle in `workspace`.
+    pub(crate) async fn judge_in(
+        &self,
+        task: &Task,
+        report: &RunReport,
+        workspace: &std::path::Path,
+    ) -> Verdict {
         match &report.root.outcome {
             Outcome::Final { answer } => {
                 let judge = self
@@ -479,9 +528,7 @@ Aim for a task the agent solves about half the time. Reply with JSON only: {{\"t
                     .provider
                     .clone()
                     .map(|p| (p, self.cfg.judge_alias.clone()));
-                task.verify
-                    .check(answer, &self.harness_cfg.workspace, judge)
-                    .await
+                task.verify.check(answer, workspace, judge).await
             }
             other => Verdict {
                 pass: false,
@@ -584,7 +631,7 @@ Aim for a task the agent solves about half the time. Reply with JSON only: {{\"t
         }))
     }
 
-    async fn run_depth(&self, run: &str) -> i64 {
+    pub(crate) async fn run_depth(&self, run: &str) -> i64 {
         self.store
             .query(&format!(
                 "SELECT COALESCE(MAX(depth), 0) FROM trace_sessions WHERE run = {}",
@@ -595,7 +642,12 @@ Aim for a task the agent solves about half the time. Reply with JSON only: {{\"t
             .unwrap_or(0)
     }
 
-    async fn rate(&self, task: &Task, solved: bool, dollars: f64) -> Result<(), HarnessError> {
+    pub(crate) async fn rate(
+        &self,
+        task: &Task,
+        solved: bool,
+        dollars: f64,
+    ) -> Result<(), HarnessError> {
         let (solver, sgames) = self.solver_rating().await?;
         let b = self
             .store
@@ -678,7 +730,7 @@ Aim for a task the agent solves about half the time. Reply with JSON only: {{\"t
         Ok(())
     }
 
-    async fn record_candidate(
+    pub(crate) async fn record_candidate(
         &self,
         task: &Task,
         sql: &str,
@@ -744,7 +796,7 @@ Aim for a task the agent solves about half the time. Reply with JSON only: {{\"t
         let adopted = c_solved >= b_solved && c_cost <= b_cost + 1e-9;
         self.store
             .execute(&format!(
-                "INSERT INTO evals VALUES ({}, {}, {version}, {b_solved}, {c_solved}, {}, {b_cost}, {c_cost}, {adopted})",
+                "INSERT INTO playbook_evals VALUES ({}, {}, {version}, {b_solved}, {c_solved}, {}, {b_cost}, {c_cost}, {adopted})",
                 now(),
                 s(kind),
                 ids.len()
@@ -907,7 +959,7 @@ Aim for a task the agent solves about half the time. Reply with JSON only: {{\"t
 /// The SQL that produced a solved task's `FINAL`: every statement of the root
 /// transcript that did not error, joined in order. That is the playbook
 /// candidate.
-fn winning_sql(report: &RunReport) -> Option<String> {
+pub(crate) fn winning_sql(report: &RunReport) -> Option<String> {
     let mut parts = vec![];
     for turn in &report.root.transcript {
         if let Some(sql) = &turn.sql {

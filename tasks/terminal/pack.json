@@ -1,0 +1,101 @@
+{
+  "name": "terminal",
+  "description": "Terminal-Bench-style shell tasks in a fresh workspace, judged by shell oracles over the files left behind",
+  "license": "original tasks, MIT",
+  "kind": "terminal",
+  "tasks": [
+    {
+      "id": "create-file",
+      "kind": null,
+      "task": "Create a file named hello.txt in the workspace containing exactly the text 'hello, world' (no trailing newline is fine). Then answer with FINAL over one row with column done = true.",
+      "context": null,
+      "context_file": null,
+      "setup": [],
+      "workspace_from": null,
+      "verify": {
+        "kind": "shell",
+        "command": "test -f hello.txt && grep -q 'hello, world' hello.txt"
+      },
+      "difficulty": 1000.0
+    },
+    {
+      "id": "count-lines",
+      "kind": null,
+      "task": "The workspace has a file data.txt. How many lines does it have? Answer with FINAL over one row with column lines (an integer).",
+      "context": null,
+      "context_file": null,
+      "setup": [
+        "printf 'a\\nb\\nc\\nd\\ne\\n' > data.txt"
+      ],
+      "workspace_from": null,
+      "verify": {
+        "kind": "shell",
+        "command": "grep -q '\"5\"' -"
+      },
+      "difficulty": 1000.0
+    },
+    {
+      "id": "rename-extension",
+      "kind": null,
+      "task": "Rename every .log file in the workspace to .txt (same base name). Then answer with FINAL over one row with column renamed = the number of files renamed.",
+      "context": null,
+      "context_file": null,
+      "setup": [
+        "touch a.log b.log c.log",
+        "echo keep > keep.md"
+      ],
+      "workspace_from": null,
+      "verify": {
+        "kind": "shell",
+        "command": "test -f a.txt && test -f b.txt && test -f c.txt && ! ls *.log 2>/dev/null && test -f keep.md"
+      },
+      "difficulty": 1000.0
+    },
+    {
+      "id": "grep-count",
+      "kind": null,
+      "task": "Count how many lines in notes.md mention the word TODO (case-insensitive). Answer with FINAL over one row with column todos (an integer).",
+      "context": null,
+      "context_file": null,
+      "setup": [
+        "printf 'TODO: x\\ndone\\ntodo: y\\nnothing\\nToDo z\\n' > notes.md"
+      ],
+      "workspace_from": null,
+      "verify": {
+        "kind": "shell",
+        "command": "grep -q '\"3\"' -"
+      },
+      "difficulty": 1000.0
+    },
+    {
+      "id": "sum-column",
+      "kind": null,
+      "task": "The workspace has sales.csv with a header row and columns region,amount. What is the total of the amount column? Answer with FINAL over one row with column total.",
+      "context": null,
+      "context_file": null,
+      "setup": [
+        "printf 'region,amount\\nnorth,10\\nsouth,25\\neast,5\\n' > sales.csv"
+      ],
+      "workspace_from": null,
+      "verify": {
+        "kind": "shell",
+        "command": "grep -q '\"40\"' -"
+      },
+      "difficulty": 1000.0
+    },
+    {
+      "id": "write-json",
+      "kind": null,
+      "task": "Write a file config.json in the workspace containing a JSON object with keys name (value \"callgebra\") and version (value 7). Answer with FINAL over one row with column done = true.",
+      "context": null,
+      "context_file": null,
+      "setup": [],
+      "workspace_from": null,
+      "verify": {
+        "kind": "shell",
+        "command": "python3 -c \"import json,sys; d=json.load(open('config.json')); sys.exit(0 if d.get('name')=='callgebra' and d.get('version')==7 else 1)\""
+      },
+      "difficulty": 1000.0
+    }
+  ]
+}
