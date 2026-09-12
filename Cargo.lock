@@ -407,6 +407,7 @@ dependencies = [
  "callgebra-trace",
  "callgebra-tui",
  "clap",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",

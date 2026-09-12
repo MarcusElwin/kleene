@@ -24,12 +24,7 @@ pub fn draw(f: &mut Frame<'_>, app: &App) {
         View::Session => draw_session(f, chunks[1], app),
         View::Plan => draw_plan(f, chunks[1], app),
         View::Trace => draw_trace(f, chunks[1], app),
-        View::Tasks => draw_placeholder(
-            f,
-            chunks[1],
-            "Tasks",
-            "The continual harness task board arrives in M6.",
-        ),
+        View::Tasks => draw_tasks(f, chunks[1], app),
         View::Help => draw_help(f, chunks[1]),
     }
     draw_keybar(f, chunks[2], app);
@@ -84,6 +79,7 @@ fn draw_keybar(f: &mut Frame<'_>, area: Rect, app: &App) {
     let keys = match app.view {
         View::Trace if app.editing => "type SQL  ⏎ run  Esc done",
         View::Trace => "1 session  2 plan  3 trace  4 tasks  ? help │ e edit  r rerun  q detach",
+        View::Tasks => "1 session  2 plan  3 trace  4 tasks  ? help │ r refresh (auto every 2s)  q detach",
         _ => "1 session  2 plan  3 trace  4 tasks  ? help │ j/k move  f fold  J/K scroll  x cancel  d detach  q quit",
     };
     let notice = app
@@ -428,38 +424,103 @@ fn draw_trace(f: &mut Frame<'_>, area: Rect, app: &App) {
     );
     f.render_widget(input, parts[0]);
     match &app.model.table {
-        Some((columns, rows)) => {
-            let widths: Vec<Constraint> = columns
-                .iter()
-                .enumerate()
-                .map(|(i, c)| {
-                    let w = rows
-                        .iter()
-                        .map(|r| r.get(i).map(|v| v.chars().count()).unwrap_or(0))
-                        .max()
-                        .unwrap_or(0)
-                        .max(c.chars().count())
-                        .min(40) as u16;
-                    Constraint::Length(w + 1)
-                })
-                .collect();
-            let header = Row::new(columns.iter().map(|c| Cell::from(c.as_str())))
-                .style(Style::default().add_modifier(Modifier::BOLD));
-            let body: Vec<Row> = rows
-                .iter()
-                .map(|r| Row::new(r.iter().map(|v| Cell::from(first_line(v, 40)))))
-                .collect();
-            let table = Table::new(body, widths).header(header).block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(format!(" {} rows ", rows.len())),
-            );
-            f.render_widget(table, parts[1]);
-        }
+        Some((columns, rows)) => f.render_widget(
+            table_widget(columns, rows, format!(" {} rows ", rows.len()), 40),
+            parts[1],
+        ),
         None => f.render_widget(
             Paragraph::new("Press r to run the query. Saved queries: trace_sessions, trace_statements, trace_calls, memo.")
                 .block(Block::default().borders(Borders::ALL).title(" RESULT ")),
             parts[1],
+        ),
+    }
+}
+
+fn table_widget<'a>(
+    columns: &'a [String],
+    rows: &'a [Vec<String>],
+    title: String,
+    max_cell: usize,
+) -> Table<'a> {
+    let widths: Vec<Constraint> = columns
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            let w = rows
+                .iter()
+                .map(|r| r.get(i).map(|v| v.chars().count()).unwrap_or(0))
+                .max()
+                .unwrap_or(0)
+                .max(c.chars().count())
+                .min(max_cell) as u16;
+            Constraint::Length(w + 1)
+        })
+        .collect();
+    let header = Row::new(columns.iter().map(|c| Cell::from(c.as_str())))
+        .style(Style::default().add_modifier(Modifier::BOLD));
+    let body: Vec<Row> = rows
+        .iter()
+        .map(|r| Row::new(r.iter().map(|v| Cell::from(first_line(v, max_cell)))))
+        .collect();
+    Table::new(body, widths)
+        .header(header)
+        .block(Block::default().borders(Borders::ALL).title(title))
+}
+
+fn draw_tasks(f: &mut Frame<'_>, area: Rect, app: &App) {
+    let m = &app.model;
+    let parts = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(4),
+            Constraint::Min(4),
+            Constraint::Min(4),
+        ])
+        .split(area);
+    // Solve-rate strip: recent outcomes as a sparkline, newest on the right.
+    let mut recent: Vec<u64> = m.outcomes.iter().rev().copied().collect();
+    if recent.is_empty() {
+        recent.push(0);
+    }
+    let solved: u64 = m.outcomes.iter().sum();
+    let rate = if m.outcomes.is_empty() {
+        0.0
+    } else {
+        solved as f64 / m.outcomes.len() as f64 * 100.0
+    };
+    let spark = ratatui::widgets::Sparkline::default()
+        .block(Block::default().borders(Borders::ALL).title(format!(
+            " recent outcomes · {} of {} solved ({rate:.0}%) ",
+            solved,
+            m.outcomes.len()
+        )))
+        .data(&recent)
+        .max(1)
+        .style(Style::default().fg(Color::Cyan));
+    f.render_widget(spark, parts[0]);
+    match &m.board {
+        Some((cols, rows)) => f.render_widget(
+            table_widget(cols, rows, " BOARD · pending / running / solved / failed / review, with each generator's dial ".into(), 20),
+            parts[1],
+        ),
+        None => f.render_widget(
+            Paragraph::new("No tasks yet. `callgebra learn generate puzzle` or `callgebra learn run` fills the board; r refreshes.")
+                .block(Block::default().borders(Borders::ALL).title(" BOARD ")),
+            parts[1],
+        ),
+    }
+    match &m.tasks {
+        Some((cols, rows)) => f.render_widget(
+            table_widget(cols, rows, format!(" RECENT TASKS ({}) ", rows.len()), 48),
+            parts[2],
+        ),
+        None => f.render_widget(
+            Paragraph::new("").block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" RECENT TASKS "),
+            ),
+            parts[2],
         ),
     }
 }
@@ -472,23 +533,13 @@ Fold       f, Enter or Space folds the selected session or statement
 Scroll     J/K scroll the transcript
 Cancel     x or Esc cancels the selected statement (a session row cancels its run)
 Trace      e edit the SQL, Enter runs it, r reruns it
+Tasks      the continual loop's board (callgebra learn); r refreshes, auto every 2s
 Leave      d or q detaches; the daemon and its runs keep going
 
 The tree shows sessions (■/● role id depth), their statements (▸/●) and
 model calls (λ). Dollars, tokens and memo hits accumulate in the title bar.";
     f.render_widget(
         Paragraph::new(text).block(Block::default().borders(Borders::ALL).title(" HELP ")),
-        area,
-    );
-}
-
-fn draw_placeholder(f: &mut Frame<'_>, area: Rect, title: &str, body: &str) {
-    f.render_widget(
-        Paragraph::new(body).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(format!(" {title} ")),
-        ),
         area,
     );
 }
@@ -614,7 +665,7 @@ mod tests {
         let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
         assert!(matches!(
             app.key(enter),
-            crate::Action::Send(callgebra_daemon::ClientRequest::Query { sql }) if sql == "S"
+            crate::Action::Send(callgebra_daemon::ClientRequest::Query { sql, .. }) if sql == "S"
         ));
     }
 

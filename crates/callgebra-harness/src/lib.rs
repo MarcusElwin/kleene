@@ -11,12 +11,29 @@
 
 #![forbid(unsafe_code)]
 
+pub mod learn;
 pub mod live;
 pub mod prompt;
 pub mod repl;
 pub mod session;
 pub mod sink;
 pub mod testing;
+
+/// A playbook entry: SQL that solved a task of some kind, shown to later
+/// sessions on the same kind as a learned example.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct PlaybookExample {
+    /// Task kind.
+    pub kind: String,
+    /// The winning SQL.
+    pub sql: String,
+    /// Times it was shown and the task was solved.
+    pub wins: u64,
+    /// Times it was shown.
+    pub tries: u64,
+    /// Ledger version.
+    pub version: i64,
+}
 
 pub use live::{ChildRunner, LiveSink, ModelSettings, SessionMeta};
 pub use repl::{Rendered, Repl, ReplConfig};

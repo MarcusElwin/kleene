@@ -162,10 +162,11 @@ async fn run_is_streamed_and_replayable() {
     let table = starter
         .call(&ClientRequest::Query {
             sql: "SELECT outcome, turns FROM trace_sessions".into(),
+            tag: None,
         })
         .await
         .unwrap();
-    let ServerMessage::Table { columns, rows } = table else {
+    let ServerMessage::Table { columns, rows, .. } = table else {
         panic!("{table:?}")
     };
     assert_eq!(columns, ["outcome", "turns"]);
@@ -211,6 +212,7 @@ async fn submit_opens_interactive_sessions_and_errors_are_messages() {
     let bad = c
         .call(&ClientRequest::Query {
             sql: "SELECT * FROM nope".into(),
+            tag: None,
         })
         .await
         .unwrap();

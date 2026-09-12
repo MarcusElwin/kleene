@@ -427,7 +427,7 @@ impl Daemon {
                     .collect();
                 ServerMessage::Submitted { session, results }
             }
-            ClientRequest::Query { sql } => {
+            ClientRequest::Query { sql, tag } => {
                 // The trace writer is asynchronous; make it catch up so the
                 // explorer sees everything the event stream already showed.
                 self.trace.flush().await;
@@ -439,6 +439,7 @@ impl Daemon {
                             .iter()
                             .map(|r| r.iter().map(|v| v.render()).collect())
                             .collect(),
+                        tag,
                     },
                     Err(e) => ServerMessage::Error {
                         message: e.to_string(),

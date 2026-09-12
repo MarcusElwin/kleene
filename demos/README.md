@@ -55,6 +55,30 @@ cursor.
 `EXPLAIN` scripts showing join ordering over call predicates, cascades and
 beam-limited recursion: see [`planner/README.md`](planner/README.md).
 
+## Continual loop
+
+`callgebra learn` keeps a `tasks` table fed by generators (`sat3`, `graph`,
+`puzzle`, `corpus`, `repo`), each with a code oracle, plus tasks you add and
+tasks the model proposes (judged by a separate `judge` call). Every attempt
+moves a Bradley-Terry rating for the task and for the solver configuration;
+the curriculum picks the pending task nearest even odds and steps a
+generator's dial up past a 70% solve rate and down below 30%. SQL that
+solved a task becomes a playbook candidate, adopted only if it solves at
+least as many replayed tasks of that kind at no more cost, and shown to
+later sessions of the same kind as a learned example. All of it is tables
+in the store, so stopping and starting again resumes.
+
+```bash
+callgebra learn generate puzzle --count 5
+callgebra learn add "How many .rs files are under crates/callgebra-sql?" --kind repo --expect "9"
+callgebra learn run --tasks 20 --budget-dollars 2 --generators puzzle,corpus,graph
+callgebra learn board          # pending / running / solved / failed / review per generator, with dials
+callgebra learn report         # SELECT generator, difficulty, AVG(solved), AVG(calls), AVG(depth) FROM trace_tasks GROUP BY 1, 2
+callgebra learn playbook       # the version ledger with eval notes
+callgebra learn revert 3       # withdraw a playbook version
+callgebra tui                  # view 4 is the live board
+```
+
 ## Resuming
 
 A run that hits its turn cap (or is interrupted) can be continued:

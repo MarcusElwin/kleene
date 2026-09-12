@@ -91,8 +91,31 @@ pub enum Action {
     None,
     /// Send a request.
     Send(ClientRequest),
+    /// Send several requests.
+    SendAll(Vec<ClientRequest>),
     /// Leave the UI; the daemon keeps running.
     Detach,
+}
+
+/// The queries that fill the tasks board.
+pub fn board_queries() -> Vec<ClientRequest> {
+    vec![
+        ClientRequest::Query {
+            sql: "SELECT t.generator, ROUND(COALESCE(g.dial, 0.3), 2) AS dial,                   SUM(CASE WHEN t.status = 'pending' THEN 1 ELSE 0 END) AS pending,                   SUM(CASE WHEN t.status = 'running' THEN 1 ELSE 0 END) AS running,                   SUM(CASE WHEN t.status = 'solved' THEN 1 ELSE 0 END) AS solved,                   SUM(CASE WHEN t.status = 'failed' THEN 1 ELSE 0 END) AS failed,                   SUM(CASE WHEN t.status = 'needs_review' THEN 1 ELSE 0 END) AS review                   FROM tasks t LEFT JOIN generator_state g ON g.generator = t.generator                   GROUP BY t.generator, g.dial ORDER BY t.generator"
+                .into(),
+            tag: Some("board".into()),
+        },
+        ClientRequest::Query {
+            sql: "SELECT status FROM tasks WHERE status IN ('solved', 'failed') ORDER BY updated_at DESC LIMIT 60"
+                .into(),
+            tag: Some("outcomes".into()),
+        },
+        ClientRequest::Query {
+            sql: "SELECT kind, generator, status, ROUND(difficulty) AS difficulty, attempts, COALESCE(last_detail, '') AS detail FROM tasks ORDER BY updated_at DESC LIMIT 30"
+                .into(),
+            tag: Some("tasks".into()),
+        },
+    ]
 }
 
 impl App {
@@ -130,6 +153,7 @@ impl App {
                     self.editing = false;
                     Action::Send(ClientRequest::Query {
                         sql: self.query.clone(),
+                        tag: None,
                     })
                 }
                 KeyCode::Backspace => {
@@ -160,8 +184,9 @@ impl App {
             }
             KeyCode::Char('4') => {
                 self.view = View::Tasks;
-                Action::None
+                Action::SendAll(board_queries())
             }
+            KeyCode::Char('r') if self.view == View::Tasks => Action::SendAll(board_queries()),
             KeyCode::Char('?') => {
                 self.view = View::Help;
                 Action::None
@@ -213,6 +238,7 @@ impl App {
             }
             KeyCode::Char('r') if self.view == View::Trace => Action::Send(ClientRequest::Query {
                 sql: self.query.clone(),
+                tag: None,
             }),
             _ => Action::None,
         }
@@ -249,6 +275,7 @@ async fn event_loop(
 ) -> Result<(), TuiError> {
     let mut keys = EventStream::new();
     let mut tick = tokio::time::interval(Duration::from_millis(250));
+    let mut ticks: u64 = 0;
     loop {
         let size = terminal.size()?;
         app.compact = size.width < 120 || size.height < 30;
@@ -269,6 +296,13 @@ async fn event_loop(
                             app.model.notice = Some(format!("send failed: {e}"));
                         }
                     }
+                    Action::SendAll(reqs) => {
+                        for req in reqs {
+                            if let Err(e) = writer.send(&req).await {
+                                app.model.notice = Some(format!("send failed: {e}"));
+                            }
+                        }
+                    }
                     Action::Detach => return Ok(()),
                 },
                 Some(Ok(Event::Resize(_, _))) => {}
@@ -276,7 +310,16 @@ async fn event_loop(
                 Some(Err(e)) => return Err(TuiError::Io(e)),
                 None => return Ok(()),
             },
-            _ = tick.tick() => {}
+            _ = tick.tick() => {
+                if app.view == View::Tasks {
+                    ticks += 1;
+                    if ticks.is_multiple_of(8) {
+                        for req in board_queries() {
+                            let _ = writer.send(&req).await;
+                        }
+                    }
+                }
+            }
         }
     }
 }
