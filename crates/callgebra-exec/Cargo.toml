@@ -1,0 +1,21 @@
+[package]
+name = "callgebra-exec"
+description = "Async pull-based executor for call plans: operators, semi-naive recursion, budgets"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+callgebra-core = { workspace = true }
+callgebra-sql = { workspace = true }
+callgebra-algebra = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[lints]
+workspace = true

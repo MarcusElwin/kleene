@@ -1,0 +1,66 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/callgebra-core",
+    "crates/callgebra-sql",
+    "crates/callgebra-algebra",
+    "crates/callgebra-exec",
+    "crates/callgebra-llm",
+    "crates/callgebra-tools",
+    "crates/callgebra-store",
+    "crates/callgebra-trace",
+    "crates/callgebra-harness",
+    "crates/callgebra-daemon",
+    "crates/callgebra-tui",
+    "crates/callgebra",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.88"
+license = "MIT"
+repository = "https://github.com/MarcusElwin/callgebra"
+authors = ["Marcus Elwin"]
+
+[workspace.dependencies]
+callgebra-core = { path = "crates/callgebra-core" }
+callgebra-sql = { path = "crates/callgebra-sql" }
+callgebra-algebra = { path = "crates/callgebra-algebra" }
+callgebra-exec = { path = "crates/callgebra-exec" }
+callgebra-llm = { path = "crates/callgebra-llm" }
+callgebra-tools = { path = "crates/callgebra-tools" }
+callgebra-store = { path = "crates/callgebra-store" }
+callgebra-trace = { path = "crates/callgebra-trace" }
+callgebra-harness = { path = "crates/callgebra-harness" }
+callgebra-daemon = { path = "crates/callgebra-daemon" }
+callgebra-tui = { path = "crates/callgebra-tui" }
+
+anyhow = "1"
+async-trait = "0.1"
+clap = { version = "4", features = ["derive"] }
+futures = "0.3"
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+sha2 = "0.10"
+sqlparser = { version = "0.62", features = ["visitor"] }
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "fs", "io-util", "process", "net"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+uuid = { version = "1", features = ["v7", "serde"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+todo = "allow"
+
+[profile.dev]
+debug = 1
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

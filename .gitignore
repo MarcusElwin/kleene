@@ -1,0 +1,5 @@
+/target
+*.duckdb
+*.duckdb.wal
+/results
+.callgebra/

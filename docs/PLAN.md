@@ -119,7 +119,7 @@ scripting and evaluation.
 |---|---|---|
 | **Hand-written interpreter over the `sqlparser` AST** | **Chosen** | Full control of the call algebra, of where async calls sit in the tree, of recursion and budgets. Small binary, fast builds. Every operator is ours to instrument. |
 | Apache DataFusion 55 | Rejected for v1 | Async scalar UDFs are hoisted only under Projection and Filter, table-function arguments are plan-time literals (no per-row fan-out), the memo-based optimizer is not what we want to study, and it pulls ~400 crates and minutes of compile time. Its `SqlToRel` planner (name resolution, coercion, decorrelation) remains an option for a later frontend swap. |
-| DuckDB (embedded, `duckdb` crate) | Used as **store and oracle**, not as engine | Its UDFs are synchronous, so calls would serialise, and there is no plan-level control. But it is one embedded file for session tables, memo and trace, it is Arrow-native and fast at analytics over large traces, and its SQL coverage (recursive CTEs, LATERAL, list functions) makes it the reference semantics for differential tests. Trade-off: the bundled build adds minutes to a clean compile; CI caches it and `DUCKDB_LIB_DIR` can point at a prebuilt library. |
+| DuckDB (embedded, `duckdb` crate) | Used as **store and oracle**, not as engine | Its UDFs are synchronous, so calls would serialise, and there is no plan-level control. But it is one embedded file for session tables, memo and trace, it is Arrow-native and fast at analytics over large traces, and its SQL coverage (recursive CTEs, LATERAL, list functions) makes it the reference semantics for differential tests. Trade-off: the bundled build adds about ten minutes to a clean release compile on four cores (measured 10m19s); CI caches it and `DUCKDB_LIB_DIR` can point at a prebuilt library. |
 | GlueSQL / Polars SQL | Rejected | Sync core (GlueSQL 0.20), no recursive CTEs, no LATERAL, Polars SQL is explicitly internal. |
 
 ### 3.2 SQL dialect: "CallSQL"
@@ -580,7 +580,8 @@ cancels the selected statement; `d` detaches (engine keeps running).
 callgebra/
 ├── Cargo.toml                 workspace, shared lints, release profile
 ├── crates/
-│   ├── callgebra-sql/         parse, validate subset, Catalog, LogicalPlan
+│   ├── callgebra-core/        shared interface types: Value, Batch, Schema, Budget, Catalog, ids
+│   ├── callgebra-sql/         parse, validate subset, LogicalPlan
 │   ├── callgebra-algebra/     CallPlan, CallKind, cost model, rules, EXPLAIN
 │   ├── callgebra-exec/        async operators, recursion, budgets, memo
 │   ├── callgebra-llm/         Provider trait, Anthropic, OpenAI-compat, Open Responses (feature), router, pricing, replay
