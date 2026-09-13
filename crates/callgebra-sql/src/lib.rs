@@ -13,32 +13,145 @@
 pub mod error;
 pub mod expr;
 pub mod plan;
+mod planner;
+mod scope;
+mod similar;
 pub mod statement;
+pub mod types;
 
 pub use callgebra_core::Catalog;
 pub use error::SqlError;
 pub use expr::{AggregateFn, BinaryOp, Expr, Literal, UnaryOp};
 pub use plan::{JoinKind, LogicalPlan, SortKey};
-pub use statement::{Statement, StatementKind};
+pub use statement::{FunctionBody, Statement, StatementKind};
+pub use types::type_of;
 
 /// Parse one or more CallSQL statements from text.
 ///
-/// Parsing is syntax-only; call [`plan()`] to validate and resolve.
+/// Parsing is syntax-only; call [`plan()`] or [`plan_sql()`] to validate and
+/// resolve.
 pub fn parse(sql: &str) -> Result<Vec<sqlparser::ast::Statement>, SqlError> {
     use sqlparser::dialect::PostgreSqlDialect;
     use sqlparser::parser::Parser;
-    Parser::parse_sql(&PostgreSqlDialect {}, sql).map_err(|e| SqlError::Parse {
-        message: e.to_string(),
-        hint: None,
+    Parser::parse_sql(&PostgreSqlDialect {}, sql).map_err(|e| {
+        let message = e.to_string();
+        let hint = parse_hint(sql);
+        SqlError::Parse { message, hint }
     })
 }
 
 /// Validate a parsed statement against the CallSQL subset and resolve it
 /// against the catalog, producing a [`Statement`] ready for the planner.
+pub fn plan(stmt: &sqlparser::ast::Statement, catalog: &Catalog) -> Result<Statement, SqlError> {
+    planner::Planner::new(catalog).plan_statement(stmt, stmt.to_string())
+}
+
+/// Parse, validate and resolve every statement in `sql`.
 ///
-/// Implemented in M1.
-pub fn plan(_stmt: &sqlparser::ast::Statement, _catalog: &Catalog) -> Result<Statement, SqlError> {
-    todo!("M1: subset validation and name resolution")
+/// `FINAL(expr)` and `FINAL FROM (query)` are recognised here before parsing,
+/// because they are CallSQL additions the parser does not know. A `FINAL`
+/// statement must be the only statement in the text.
+pub fn plan_sql(sql: &str, catalog: &Catalog) -> Result<Vec<Statement>, SqlError> {
+    let trimmed = sql.trim().trim_end_matches(';').trim();
+    if let Some(rest) = strip_keyword(trimmed, "FINAL") {
+        let rest = rest.trim();
+        let rewritten = if let Some(q) = strip_keyword(rest, "FROM") {
+            format!("SELECT * FROM {} AS final", q.trim())
+        } else {
+            format!("SELECT {} AS answer", rest)
+        };
+        let stmts = parse(&rewritten)?;
+        let [only] = stmts.as_slice() else {
+            return Err(SqlError::Parse {
+                message: "FINAL takes one expression or one query".into(),
+                hint: Some("FINAL(expr) or FINAL FROM (SELECT ...)".into()),
+            });
+        };
+        let planned = plan(only, catalog)?;
+        let StatementKind::Query { plan } = planned.kind else {
+            unreachable!("FINAL rewrites to a SELECT");
+        };
+        return Ok(vec![Statement {
+            sql: sql.trim().to_string(),
+            kind: StatementKind::Final { plan },
+        }]);
+    }
+    if let Some(hint) = m2_construct(trimmed) {
+        return Err(SqlError::Unsupported {
+            construct: hint.0.to_string(),
+            hint: hint.1.to_string(),
+        });
+    }
+    let stmts = parse(sql)?;
+    let single = stmts.len() == 1;
+    let planner = planner::Planner::new(catalog);
+    stmts
+        .iter()
+        .map(|s| {
+            let text = if single {
+                sql.trim().to_string()
+            } else {
+                s.to_string()
+            };
+            planner.plan_statement(s, text)
+        })
+        .collect()
+}
+
+/// One-line rendering of an error for the model: `error: ...` plus an
+/// optional `hint: ...` line.
+pub fn render_error(err: &SqlError) -> String {
+    match err.hint() {
+        Some(h) => format!("error: {err}\nhint: {h}"),
+        None => format!("error: {err}"),
+    }
+}
+
+fn strip_keyword<'a>(text: &'a str, kw: &str) -> Option<&'a str> {
+    let head: String = text.chars().take(kw.len()).collect();
+    if head.eq_ignore_ascii_case(kw) {
+        let rest = &text[head.len()..];
+        if rest.is_empty() || rest.starts_with(|c: char| c.is_whitespace() || c == '(') {
+            return Some(rest);
+        }
+    }
+    None
+}
+
+fn m2_construct(text: &str) -> Option<(&'static str, &'static str)> {
+    let upper: String = text
+        .split_whitespace()
+        .take(2)
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_uppercase();
+    if upper.starts_with("CREATE AGENT") {
+        return Some(("CREATE AGENT", "arrives in M3 (agent roles for SPAWN)"));
+    }
+    if upper.starts_with("CREATE FUNCTION") {
+        return Some((
+            "CREATE FUNCTION",
+            "arrives in M2 (prompt-, SQL- and shell-defined functions)",
+        ));
+    }
+    if upper.starts_with("CALL ") || upper == "CALL" {
+        return Some((
+            "CALL",
+            "arrives in M2 (side-effecting tools such as shell and write_file)",
+        ));
+    }
+    None
+}
+
+fn parse_hint(sql: &str) -> Option<String> {
+    let upper = sql.to_ascii_uppercase();
+    if upper.contains("SELEC ") {
+        return Some("did you mean SELECT?".into());
+    }
+    if upper.contains(" FORM ") {
+        return Some("did you mean FROM?".into());
+    }
+    None
 }
 
 #[cfg(test)]
@@ -64,8 +177,9 @@ mod tests {
     }
 
     #[test]
-    fn parse_errors_carry_a_message() {
+    fn parse_errors_carry_a_message_and_hint() {
         let err = parse("SELEC 1").unwrap_err();
         assert!(matches!(err, SqlError::Parse { .. }));
+        assert_eq!(err.hint(), Some("did you mean SELECT?"));
     }
 }

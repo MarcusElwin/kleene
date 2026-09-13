@@ -1,0 +1,20 @@
+[package]
+name = "callgebra-difftest"
+description = "Differential tests: CallSQL planner and executor against DuckDB on generated queries"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+callgebra-core = { workspace = true }
+callgebra-sql = { workspace = true }
+callgebra-exec = { workspace = true }
+callgebra-store = { workspace = true }
+proptest = "1"
+tokio = { workspace = true }
+
+[lints]
+workspace = true

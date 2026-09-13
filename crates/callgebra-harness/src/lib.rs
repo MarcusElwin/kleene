@@ -5,9 +5,16 @@
 //! model emits CallSQL; the harness parses, plans, checks the budget,
 //! executes, renders the result back, and repeats until `FINAL`. Child
 //! sessions are the same struct at depth + 1 with a role and a budget slice.
-//! Implemented in M3.
+//! The turn loop arrives in M3; [`Repl`] already runs single statements
+//! against a store, which is what `callgebra repl` uses.
 
 #![forbid(unsafe_code)]
+
+pub mod repl;
+pub mod sink;
+
+pub use repl::{Rendered, Repl};
+pub use sink::StoreSink;
 
 use callgebra_core::{Budget, Catalog, ModelAlias, SessionId};
 use serde::{Deserialize, Serialize};
