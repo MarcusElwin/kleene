@@ -1,9 +1,17 @@
 name: CI
 
 on:
+  # Branch pushes are covered by the pull_request trigger while a PR is open;
+  # listing claude/** here ran every commit twice, and both jobs then raced to
+  # save the same rust-cache key.
   push:
-    branches: ["main", "claude/**"]
+    branches: ["main"]
   pull_request:
+
+# A new push supersedes the run it replaces. At ~30 min a job that matters.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
