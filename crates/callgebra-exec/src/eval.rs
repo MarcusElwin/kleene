@@ -359,7 +359,11 @@ mod tests {
     fn in_over_an_empty_subquery() {
         for x in [Value::Null, Value::Int(1), Value::from("a")] {
             assert_eq!(in_values(&x, &[], false), Value::Bool(false), "{x:?} IN ()");
-            assert_eq!(in_values(&x, &[], true), Value::Bool(true), "{x:?} NOT IN ()");
+            assert_eq!(
+                in_values(&x, &[], true),
+                Value::Bool(true),
+                "{x:?} NOT IN ()"
+            );
         }
     }
 
