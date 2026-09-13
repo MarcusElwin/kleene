@@ -1647,10 +1647,12 @@ impl<'c> Planner<'c> {
                     | BinaryOp::Minus
                     | BinaryOp::Multiply
                     | BinaryOp::Divide
-                    | BinaryOp::Modulo => {
-                        if !is_numeric_or_any(lt) || !is_numeric_or_any(rt) {
-                            return Err(type_err(format!("arithmetic needs numeric operands, got {lt} and {rt}; use || for text")));
-                        }
+                    | BinaryOp::Modulo
+                        if !is_numeric_or_any(lt) || !is_numeric_or_any(rt) =>
+                    {
+                        return Err(type_err(format!(
+                            "arithmetic needs numeric operands, got {lt} and {rt}; use || for text"
+                        )));
                     }
                     _ => {}
                 }
