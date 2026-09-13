@@ -562,10 +562,8 @@ pub(crate) fn fragment(node: &CallNode) -> Fragment {
                     *fo = true;
                 }
             }
-            LogicalPlan::Project { exprs, .. } => {
-                if exprs.iter().any(has_negation) {
-                    *fo = true;
-                }
+            LogicalPlan::Project { exprs, .. } if exprs.iter().any(has_negation) => {
+                *fo = true;
             }
             _ => {}
         }
