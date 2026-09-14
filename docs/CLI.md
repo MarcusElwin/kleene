@@ -40,14 +40,23 @@ Read it before piping it into a shell if that is your habit:
 [`install.sh`](../install.sh) is a hundred lines of POSIX `sh` and needs only
 `curl` and `tar`.
 
-**While the repository is private**, the raw URL above returns 404 to an
-anonymous `curl`, so fetch the script with a token too. `gh auth token`
-prints the one the GitHub CLI holds:
+**While the repository is private**, the raw URL above returns 404, with or
+without a token: `raw.githubusercontent.com` does not serve private files.
+Fetch the script through the API's contents endpoint instead, which returns
+the file itself with the `vnd.github.raw` accept header. `gh auth token`
+prints the token the GitHub CLI holds:
 
 ```bash
 export GITHUB_TOKEN="$(gh auth token)"
-curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" \
-  https://raw.githubusercontent.com/MarcusElwin/callgebra/main/install.sh | sh
+curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github.raw" \
+  "https://api.github.com/repos/MarcusElwin/callgebra/contents/install.sh?ref=main" | sh
+```
+
+or, letting `gh` handle the authentication:
+
+```bash
+export GITHUB_TOKEN="$(gh auth token)"
+gh api -H "Accept: application/vnd.github.raw" repos/MarcusElwin/callgebra/contents/install.sh | sh
 ```
 
 The script downloads release assets through the GitHub API with the same
