@@ -544,10 +544,13 @@ impl<'c> Planner<'c> {
                 "WITH RECURSIVE name AS (base_query UNION [ALL] recursive_query)",
             ));
         };
-        if cte.query.order_by.is_some() || cte.query.limit_clause.is_some() {
+        // A trailing ORDER BY / LIMIT on a recursive CTE applies to each
+        // round's recursive term: keep the best `k` new rows per round, a
+        // beam search. (Ordering the final result belongs in the body.)
+        if cte.query.order_by.is_some() && cte.query.limit_clause.is_none() {
             return Err(unsupported(
-                "ORDER BY / LIMIT inside a recursive CTE",
-                "order or limit in the body that uses the CTE",
+                "ORDER BY without LIMIT inside a recursive CTE",
+                "ORDER BY score LIMIT k here keeps the top k rows of each round (beam search); order the final result in the body that uses the CTE",
             ));
         }
         let all = matches!(
@@ -558,7 +561,13 @@ impl<'c> Planner<'c> {
         let base_plan = Self::apply_column_aliases(base.plan, &base.scope, &cte.alias)?;
         let schema = base_plan.schema();
         let env2 = env.with(name, schema.clone());
-        let rec = self.plan_set_expr(right, None, None, outer, &env2)?;
+        let rec = self.plan_set_expr(
+            right,
+            cte.query.order_by.as_ref(),
+            cte.query.limit_clause.as_ref(),
+            outer,
+            &env2,
+        )?;
         if rec.scope.items.len() != schema.len() {
             return Err(type_err(format!(
                 "recursive term of {name} has {} columns, base has {}",

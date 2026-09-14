@@ -21,13 +21,15 @@ WHERE VERIFY(candidate)
 anti-semi-join that stops on the first refuting counterexample. `EXPLAIN`
 tells you how many calls that is before you spend them.
 
-Status: **M4 daemon and TUI**. The CallSQL frontend, the executor, the
+Status: **M5 planner**. The CallSQL frontend, the executor, the
 DuckDB store and the call algebra work; model functions, prompt-defined
 functions, `CALL` tools, memo, budgets and `EXPLAIN` are in; `callgebra run`
 drives a model through the SQL turn loop to `FINAL`, spawning child sessions
-for `rlm(...)` and `spawn(...)`; and `callgebra tui` watches it all live over
+for `rlm(...)` and `spawn(...)`; `callgebra tui` watches it all live over
 the engine daemon (call tree, transcript, plan, trace explorer, cancel,
-detach). Try it without a model:
+detach); and the planner orders joins around call predicates, cascades
+oracles through declared proxies, costs beam-limited recursion and refuses
+statements the remaining budget cannot pay for. Try it without a model:
 
 ```bash
 cargo run -- repl -c "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 5) SELECT SUM(n) FROM r"
@@ -43,8 +45,8 @@ cargo run -- tui --run @demos/oolong/task.txt --context demos/oolong/corpus.txt
 cargo run -- trace "SELECT depth, role, outcome, turns, calls FROM trace_sessions"
 ```
 
-See [`demos/`](demos/README.md). The planner (M5), the self-learning loop
-(M6) and the benchmarks (M7) come next. Read [`docs/PLAN.md`](docs/PLAN.md) for the
+See [`demos/`](demos/README.md) and [`demos/planner/`](demos/planner/README.md).
+The self-learning loop (M6) and the benchmarks (M7) come next. Read [`docs/PLAN.md`](docs/PLAN.md) for the
 architecture, dialect, planner rules, harness design, TUI layout and
 milestones, and [`docs/RESEARCH.md`](docs/RESEARCH.md) for the sources.
 

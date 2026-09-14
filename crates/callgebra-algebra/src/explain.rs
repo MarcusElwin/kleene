@@ -76,8 +76,21 @@ fn op_label(op: &LogicalPlan) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
-        LogicalPlan::Recursive { name, all, .. } => {
-            format!("μ {name}{}", if *all { " (bag)" } else { "" })
+        LogicalPlan::Recursive {
+            name,
+            all,
+            recursive,
+            max_rounds,
+            ..
+        } => {
+            let mut s = format!("μ {name}{}", if *all { " (bag)" } else { "" });
+            if let Some(k) = crate::annotate::beam_of(recursive) {
+                s += &format!(" beam {k}");
+            }
+            if let Some(r) = max_rounds {
+                s += &format!(" ≤{r} rounds");
+            }
+            s
         }
     }
 }
@@ -245,6 +258,25 @@ pub fn explain(plan: &CallPlan) -> String {
     ));
     if !plan.rules_applied.is_empty() {
         out.push_str(&format!("rules: {}\n", plan.rules_applied.join(", ")));
+    }
+    if let Some(ps) = &plan.plan_space {
+        out.push_str(&format!(
+            "plan space: {} relations, {} join orders, {} splits priced, {} pruned\n",
+            ps.relations, ps.orders, ps.evaluated, ps.pruned
+        ));
+    }
+    if !plan.alternatives.is_empty() {
+        out.push_str("alternatives:\n");
+        for a in &plan.alternatives {
+            out.push_str(&format!(
+                "  {} {}: ~{} calls, ~${:.4}, ~{} rows\n",
+                if a.chosen { "▶" } else { " " },
+                a.label,
+                fmt_num(a.estimate.calls),
+                a.estimate.dollars,
+                fmt_num(a.estimate.rows)
+            ));
+        }
     }
     out
 }

@@ -31,6 +31,13 @@ pub struct CostModel {
     pub usd_per_output_token: f64,
     /// Fraction of call inputs expected to be distinct (dedupe rule).
     pub distinct_fraction: f64,
+    /// Observed pass rate of boolean call predicates, by function name
+    /// (lower case): the sampled selectivity. Missing names fall back to
+    /// `filter_selectivity`.
+    pub call_selectivity: HashMap<String, f64>,
+    /// Token and dollar multiplier per model alias, relative to `worker`.
+    /// Missing aliases cost 1.0; `proxy` defaults to 0.1.
+    pub alias_factor: HashMap<String, f64>,
 }
 
 impl Default for CostModel {
@@ -47,17 +54,24 @@ impl Default for CostModel {
             usd_per_input_token: 2e-6,
             usd_per_output_token: 1e-5,
             distinct_fraction: 1.0,
+            call_selectivity: HashMap::new(),
+            alias_factor: HashMap::from([("proxy".to_string(), 0.1)]),
         }
     }
 }
 
 impl CostModel {
-    /// Cost of `n` model calls.
-    fn calls(&self, n: f64) -> Estimate {
-        let tokens = n * (self.tokens_in_per_call + self.tokens_out_per_call);
+    /// Cost of `n` calls on the worker tier.
+    pub fn calls(&self, n: f64) -> Estimate {
+        self.calls_factor(n, 1.0)
+    }
+
+    fn calls_factor(&self, n: f64, factor: f64) -> Estimate {
+        let tokens = n * (self.tokens_in_per_call + self.tokens_out_per_call) * factor;
         let dollars = n
             * (self.tokens_in_per_call * self.usd_per_input_token
-                + self.tokens_out_per_call * self.usd_per_output_token);
+                + self.tokens_out_per_call * self.usd_per_output_token)
+            * factor;
         Estimate {
             rows: 0.0,
             calls: n,
@@ -66,6 +80,213 @@ impl CostModel {
             depth: 0,
         }
     }
+
+    /// Cost multiplier of a model alias.
+    pub fn factor(&self, alias: &str) -> f64 {
+        self.alias_factor
+            .get(&alias.to_ascii_lowercase())
+            .copied()
+            .unwrap_or(1.0)
+    }
+
+    /// Cost of `n` invocations of each call in `kinds`.
+    pub fn calls_for(&self, kinds: &[CallKind], n: f64) -> Estimate {
+        let mut est = Estimate::default();
+        for k in kinds {
+            let factor = match k {
+                CallKind::Pure => continue,
+                CallKind::Tool { .. } => 0.0,
+                CallKind::LlmScalar { alias } | CallKind::LlmTable { alias } => {
+                    self.factor(&alias.0)
+                }
+                CallKind::Recursive { .. } => 1.0,
+            };
+            est = est.plus(self.calls_factor(n, factor));
+        }
+        est
+    }
+
+    /// Selectivity of one boolean call predicate by name.
+    pub fn selectivity_of(&self, function: &str) -> Option<f64> {
+        self.call_selectivity
+            .get(&function.to_ascii_lowercase())
+            .copied()
+    }
+}
+
+/// Top-level conjuncts of a predicate.
+pub(crate) fn conjuncts(e: &Expr) -> Vec<Expr> {
+    match e {
+        Expr::Binary {
+            op: callgebra_sql::BinaryOp::And,
+            left,
+            right,
+        } => {
+            let mut v = conjuncts(left);
+            v.extend(conjuncts(right));
+            v
+        }
+        other => vec![other.clone()],
+    }
+}
+
+/// Names of call functions in an expression (lower case, with repeats).
+pub(crate) fn call_names(e: &Expr, catalog: &Catalog, out: &mut Vec<String>) {
+    match e {
+        Expr::Function { name, args, .. } => {
+            for a in args {
+                call_names(a, catalog, out);
+            }
+            if catalog
+                .function(name)
+                .is_some_and(|d| d.call_kind != CallKind::Pure)
+            {
+                out.push(name.to_ascii_lowercase());
+            }
+        }
+        Expr::Binary { left, right, .. } => {
+            call_names(left, catalog, out);
+            call_names(right, catalog, out);
+        }
+        Expr::Unary { operand, .. } | Expr::Cast { operand, .. } => {
+            call_names(operand, catalog, out)
+        }
+        Expr::Aggregate { args, .. } => {
+            for a in args {
+                call_names(a, catalog, out);
+            }
+        }
+        Expr::Case {
+            branches,
+            otherwise,
+        } => {
+            for (c, r) in branches {
+                call_names(c, catalog, out);
+                call_names(r, catalog, out);
+            }
+            if let Some(o) = otherwise {
+                call_names(o, catalog, out);
+            }
+        }
+        Expr::InList { operand, list, .. } => {
+            call_names(operand, catalog, out);
+            for l in list {
+                call_names(l, catalog, out);
+            }
+        }
+        Expr::InSubquery { operand, .. } => call_names(operand, catalog, out),
+        Expr::Exists { .. }
+        | Expr::ScalarSubquery { .. }
+        | Expr::Column { .. }
+        | Expr::Literal(_)
+        | Expr::OuterColumn { .. } => {}
+    }
+}
+
+/// Whether a pure conjunct is an equality between two columns (a join key).
+pub(crate) fn is_equijoin(e: &Expr) -> bool {
+    matches!(
+        e,
+        Expr::Binary {
+            op: callgebra_sql::BinaryOp::Eq,
+            left,
+            right
+        } if matches!(**left, Expr::Column { .. }) && matches!(**right, Expr::Column { .. })
+    )
+}
+
+/// The fraction of rows that reach the oracle in a cascade conjunct of the
+/// shape `p >= high OR (p >= low AND oracle(...))`: `high - low`.
+fn cascade_band(e: &Expr) -> Option<f64> {
+    use callgebra_sql::BinaryOp;
+    let Expr::Binary {
+        op: BinaryOp::Or,
+        left,
+        right,
+    } = e
+    else {
+        return None;
+    };
+    let hi = threshold(left)?;
+    let Expr::Binary {
+        op: BinaryOp::And,
+        left: band,
+        ..
+    } = &**right
+    else {
+        return None;
+    };
+    let lo = threshold(band)?;
+    Some((hi - lo).clamp(0.0, 1.0))
+}
+
+fn threshold(e: &Expr) -> Option<f64> {
+    let Expr::Binary {
+        op: callgebra_sql::BinaryOp::GtEq,
+        right,
+        ..
+    } = e
+    else {
+        return None;
+    };
+    match &**right {
+        Expr::Literal(l) => match &l.0 {
+            callgebra_core::Value::Float(f) => Some(*f),
+            callgebra_core::Value::Int(i) => Some(*i as f64),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Cost of evaluating an ordered conjunction over `rows` inputs the way the
+/// executor does (left to right, short-circuiting): pure conjuncts narrow
+/// the survivors, call conjuncts pay one call per survivor. Returns the
+/// estimate (rows = survivors) and the calls found.
+pub(crate) fn predicate_cost(
+    pred: &Expr,
+    catalog: &Catalog,
+    cost: &CostModel,
+    rows: f64,
+    join_keys: bool,
+) -> (Estimate, Vec<CallKind>) {
+    let mut survivors = rows;
+    let mut est = Estimate::default();
+    let mut all_calls = vec![];
+    for c in conjuncts(pred) {
+        let mut kinds = vec![];
+        calls_in_expr(&c, catalog, &mut kinds);
+        let (sub, _) = subquery_cost(std::slice::from_ref(&c), catalog, cost, survivors);
+        est = est.plus(sub);
+        if kinds.is_empty() {
+            survivors *= if join_keys && is_equijoin(&c) {
+                cost.join_selectivity
+            } else {
+                cost.filter_selectivity
+            };
+            continue;
+        }
+        let band = cascade_band(&c).unwrap_or(1.0);
+        let n = survivors * band * cost.distinct_fraction;
+        est = est.plus(cost.calls_for(&kinds, n));
+        let mut names = vec![];
+        call_names(&c, catalog, &mut names);
+        let mut sel = 1.0;
+        let mut known = false;
+        for name in &names {
+            if let Some(s) = cost.selectivity_of(name) {
+                sel *= s;
+                known = true;
+            }
+        }
+        if !known {
+            sel = cost.filter_selectivity;
+        }
+        survivors *= sel;
+        all_calls.extend(kinds);
+    }
+    est.rows = survivors.max(0.0);
+    (est, all_calls)
 }
 
 /// Call kinds of every function referenced in an expression, catalog order
@@ -263,11 +484,70 @@ fn subquery_cost(
 
 /// Annotate a plan (children first).
 pub fn annotate(plan: &LogicalPlan, catalog: &Catalog, cost: &CostModel) -> CallNode {
-    let children: Vec<CallNode> = plan
-        .children()
-        .into_iter()
-        .map(|c| annotate(c, catalog, cost))
-        .collect();
+    annotate_in(plan, catalog, cost, &HashMap::new())
+}
+
+/// The recursive term's `LIMIT k` (possibly under a projection), which makes
+/// the fixpoint a beam search with frontier `k`.
+pub fn beam_of(recursive: &LogicalPlan) -> Option<usize> {
+    match recursive {
+        LogicalPlan::Limit { limit: Some(k), .. } => Some(*k),
+        LogicalPlan::Project { input, .. } => beam_of(input),
+        _ => None,
+    }
+}
+
+/// Rounds a recursion will run: `MAXRECURSION` if given, else the model's guess.
+pub fn rounds_of(max_rounds: Option<usize>, cost: &CostModel) -> f64 {
+    max_rounds
+        .map(|r| r as f64)
+        .unwrap_or(cost.recursion_rounds)
+        .max(1.0)
+}
+
+fn annotate_in(
+    plan: &LogicalPlan,
+    catalog: &Catalog,
+    cost: &CostModel,
+    cte_rows: &HashMap<String, f64>,
+) -> CallNode {
+    let children: Vec<CallNode> = match plan {
+        LogicalPlan::With { ctes, body } => {
+            let mut scope = cte_rows.clone();
+            let mut kids = vec![];
+            for (name, p) in ctes {
+                let node = annotate_in(p, catalog, cost, &scope);
+                scope.insert(name.to_ascii_lowercase(), node.estimate.rows);
+                kids.push(node);
+            }
+            kids.push(annotate_in(body, catalog, cost, &scope));
+            kids
+        }
+        LogicalPlan::Recursive {
+            name,
+            base,
+            recursive,
+            body,
+            ..
+        } => {
+            let base_node = annotate_in(base, catalog, cost, cte_rows);
+            let mut scope = cte_rows.clone();
+            scope.insert(name.to_ascii_lowercase(), base_node.estimate.rows);
+            let rec_node = annotate_in(recursive, catalog, cost, &scope);
+            let total = fixpoint_rows(plan, &base_node, &rec_node, catalog, cost, cte_rows).0;
+            scope.insert(name.to_ascii_lowercase(), total);
+            vec![
+                base_node,
+                rec_node,
+                annotate_in(body, catalog, cost, &scope),
+            ]
+        }
+        other => other
+            .children()
+            .into_iter()
+            .map(|c| annotate_in(c, catalog, cost, cte_rows))
+            .collect(),
+    };
     let in_rows: f64 = children.first().map(|c| c.estimate.rows).unwrap_or(1.0);
     let (calls, volatility, mut estimate) = match plan {
         LogicalPlan::Scan { table, .. } => {
@@ -293,45 +573,56 @@ pub fn annotate(plan: &LogicalPlan, catalog: &Catalog, cost: &CostModel) -> Call
                 ..Estimate::default()
             },
         ),
-        LogicalPlan::CteRef { .. } => (
+        LogicalPlan::CteRef { name, .. } => (
             vec![],
             Volatility::Stable,
             Estimate {
-                rows: cost.default_rows,
+                rows: cte_rows
+                    .get(&name.to_ascii_lowercase())
+                    .copied()
+                    .unwrap_or(cost.default_rows),
                 ..Estimate::default()
             },
         ),
         LogicalPlan::Project { exprs, .. } => {
             let calls = expr_list_calls(exprs, catalog);
-            let n_calls = calls.len() as f64 * in_rows * cost.distinct_fraction;
-            let mut est = cost.calls(n_calls);
+            let mut est = cost.calls_for(&calls, in_rows * cost.distinct_fraction);
             est.rows = in_rows;
             let (sub, _) = subquery_cost(exprs, catalog, cost, in_rows);
             (calls, expr_list_volatility(exprs, catalog), est.plus(sub))
         }
         LogicalPlan::Filter { predicate, .. } => {
-            let exprs = std::slice::from_ref(predicate);
-            let calls = expr_list_calls(exprs, catalog);
-            let n_calls = calls.len() as f64 * in_rows * cost.distinct_fraction;
-            let mut est = cost.calls(n_calls);
-            est.rows = in_rows * cost.filter_selectivity;
-            let (sub, _) = subquery_cost(exprs, catalog, cost, in_rows);
-            (calls, expr_list_volatility(exprs, catalog), est.plus(sub))
+            let (est, calls) = predicate_cost(predicate, catalog, cost, in_rows, false);
+            (calls, volatility_of_expr(predicate, catalog), est)
         }
         LogicalPlan::Join { kind, on, .. } => {
             let l = children.first().map(|c| c.estimate.rows).unwrap_or(1.0);
             let r = children.get(1).map(|c| c.estimate.rows).unwrap_or(1.0);
             let pairs = l * r;
-            let exprs: Vec<Expr> = on.iter().cloned().collect();
-            let calls = expr_list_calls(&exprs, catalog);
-            let mut est = cost.calls(calls.len() as f64 * pairs);
+            let (mut est, calls) = match on {
+                Some(p) => predicate_cost(p, catalog, cost, pairs, true),
+                None => (
+                    Estimate {
+                        rows: pairs,
+                        ..Estimate::default()
+                    },
+                    vec![],
+                ),
+            };
+            let matched = est.rows;
+            // A semi/anti join keeps left rows that have (no) match: the
+            // fraction of left rows with at least one match.
+            let left_hit = (matched / r.max(1.0))
+                .min(l)
+                .max(l * cost.filter_selectivity);
             est.rows = match kind {
                 JoinKind::Cross => pairs,
-                JoinKind::Inner => (pairs * cost.join_selectivity).max(1.0),
-                JoinKind::Left => (pairs * cost.join_selectivity).max(l),
-                JoinKind::Semi => l * cost.filter_selectivity,
-                JoinKind::Anti => l * (1.0 - cost.filter_selectivity),
+                JoinKind::Inner => matched.max(1.0),
+                JoinKind::Left => matched.max(l),
+                JoinKind::Semi => left_hit,
+                JoinKind::Anti => (l - left_hit).max(0.0),
             };
+            let exprs: Vec<Expr> = on.iter().cloned().collect();
             (calls, expr_list_volatility(&exprs, catalog), est)
         }
         LogicalPlan::TableFunction {
@@ -342,13 +633,13 @@ pub fn annotate(plan: &LogicalPlan, catalog: &Catalog, cost: &CostModel) -> Call
             let kind = def.map(|d| d.call_kind.clone()).unwrap_or(CallKind::Pure);
             let vol = def.map(|d| d.volatility).unwrap_or(Volatility::Stable);
             let mut calls = expr_list_calls(args, catalog);
-            let mut est = cost.calls(calls.len() as f64 * per_input);
+            let mut est = cost.calls_for(&calls, per_input);
             match &kind {
                 CallKind::Pure => {}
                 k => {
                     calls.push(k.clone());
                     if matches!(k, CallKind::LlmTable { .. } | CallKind::Recursive { .. }) {
-                        est = est.plus(cost.calls(per_input));
+                        est = est.plus(cost.calls_for(std::slice::from_ref(k), per_input));
                     }
                 }
             }
@@ -366,7 +657,7 @@ pub fn annotate(plan: &LogicalPlan, catalog: &Catalog, cost: &CostModel) -> Call
             let mut exprs = group_by.clone();
             exprs.extend(aggregates.iter().cloned());
             let calls = expr_list_calls(&exprs, catalog);
-            let mut est = cost.calls(calls.len() as f64 * in_rows);
+            let mut est = cost.calls_for(&calls, in_rows);
             est.rows = if group_by.is_empty() {
                 1.0
             } else {
@@ -377,7 +668,7 @@ pub fn annotate(plan: &LogicalPlan, catalog: &Catalog, cost: &CostModel) -> Call
         LogicalPlan::Sort { keys, .. } => {
             let exprs: Vec<Expr> = keys.iter().map(|k| k.expr.clone()).collect();
             let calls = expr_list_calls(&exprs, catalog);
-            let mut est = cost.calls(calls.len() as f64 * in_rows);
+            let mut est = cost.calls_for(&calls, in_rows);
             est.rows = in_rows;
             (calls, expr_list_volatility(&exprs, catalog), est)
         }
@@ -420,18 +711,20 @@ pub fn annotate(plan: &LogicalPlan, catalog: &Catalog, cost: &CostModel) -> Call
             },
         ),
         LogicalPlan::Recursive { .. } => {
-            // children: base, recursive, body. The recursive term runs once per round.
-            let rec = children.get(1).map(CallNode::total).unwrap_or_default();
-            let rounds = cost.recursion_rounds;
+            // children: base, recursive, body. The recursive term runs once
+            // per round over that round's frontier; the child node shows the
+            // first round, so the remaining rounds are added here.
+            let (_, extra) =
+                fixpoint_rows(plan, &children[0], &children[1], catalog, cost, cte_rows);
             let body_rows = children.get(2).map(|c| c.estimate.rows).unwrap_or(in_rows);
             (
                 vec![],
                 Volatility::Immutable,
                 Estimate {
                     rows: body_rows,
-                    calls: rec.calls * (rounds - 1.0).max(0.0),
-                    tokens: rec.tokens * (rounds - 1.0).max(0.0),
-                    dollars: rec.dollars * (rounds - 1.0).max(0.0),
+                    calls: extra.calls,
+                    tokens: extra.tokens,
+                    dollars: extra.dollars,
                     depth: 0,
                 },
             )
@@ -453,6 +746,54 @@ pub fn annotate(plan: &LogicalPlan, catalog: &Catalog, cost: &CostModel) -> Call
 /// live in [`CallNode::children`]).
 fn strip_children(plan: &LogicalPlan) -> LogicalPlan {
     plan.clone()
+}
+
+/// Simulate the rounds of a fixpoint: the total rows produced and the cost
+/// of every round after the first (the first is the recursive child's own
+/// estimate). Round `i + 1` runs the recursive term over round `i`'s
+/// frontier, so a beam `LIMIT k` caps every frontier at `k`; the loop stops
+/// when the frontier empties or the round cap hits.
+fn fixpoint_rows(
+    plan: &LogicalPlan,
+    base: &CallNode,
+    first_round: &CallNode,
+    catalog: &Catalog,
+    cost: &CostModel,
+    cte_rows: &HashMap<String, f64>,
+) -> (f64, Estimate) {
+    let LogicalPlan::Recursive {
+        name,
+        recursive,
+        max_rounds,
+        ..
+    } = plan
+    else {
+        return (base.estimate.rows, Estimate::default());
+    };
+    let rounds = rounds_of(*max_rounds, cost) as usize;
+    let mut total = base.estimate.rows;
+    let mut frontier = first_round.estimate.rows;
+    total += frontier;
+    let mut extra = Estimate::default();
+    for _ in 1..rounds {
+        if frontier < 0.5 {
+            break;
+        }
+        let mut scope = cte_rows.clone();
+        scope.insert(name.to_ascii_lowercase(), frontier);
+        let round = annotate_in(recursive, catalog, cost, &scope);
+        let t = round.total();
+        extra = extra.plus(Estimate {
+            rows: 0.0,
+            calls: t.calls,
+            tokens: t.tokens,
+            dollars: t.dollars,
+            depth: t.depth,
+        });
+        frontier = round.estimate.rows;
+        total += frontier;
+    }
+    (total, extra)
 }
 
 /// Rebuild the logical plan from a call node (children come from the node).

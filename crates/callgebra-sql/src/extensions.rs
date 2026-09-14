@@ -329,15 +329,50 @@ pub fn plan_create_function(text: &str) -> Result<Statement, SqlError> {
     } else {
         return Err(parse_err("expected PROMPT, SQL or SHELL after AS", HINT));
     };
-    let volatility = if sc.eat_keyword("IMMUTABLE") {
-        Volatility::Immutable
-    } else if sc.eat_keyword("STABLE") {
-        Volatility::Stable
-    } else if sc.eat_keyword("VOLATILE") {
-        Volatility::Volatile
-    } else {
-        default_vol
-    };
+    let mut volatility = default_vol;
+    let mut proxy = None;
+    let mut model = None;
+    loop {
+        if sc.eat_keyword("MODEL") {
+            model = Some(sc.quoted().ok_or_else(|| {
+                parse_err("expected a quoted model alias after MODEL", "MODEL 'proxy'")
+            })?);
+        } else if sc.eat_keyword("IMMUTABLE") {
+            volatility = Volatility::Immutable;
+        } else if sc.eat_keyword("STABLE") {
+            volatility = Volatility::Stable;
+        } else if sc.eat_keyword("VOLATILE") {
+            volatility = Volatility::Volatile;
+        } else if sc.eat_keyword("PROXY") {
+            const PHINT: &str = "PROXY score_fn THRESHOLDS (0.2, 0.8)";
+            let pname = sc
+                .ident()
+                .ok_or_else(|| parse_err("expected a proxy function name", PHINT))?;
+            let (low, high) = if sc.eat_keyword("THRESHOLDS") {
+                let t = sc
+                    .parenthesised()
+                    .ok_or_else(|| parse_err("expected THRESHOLDS (low, high)", PHINT))?;
+                let nums: Vec<f64> = t
+                    .split(',')
+                    .map(|x| x.trim().parse::<f64>())
+                    .collect::<Result<_, _>>()
+                    .map_err(|_| parse_err("thresholds must be numbers", PHINT))?;
+                if nums.len() != 2
+                    || !(0.0..=1.0).contains(&nums[0])
+                    || nums[0] > nums[1]
+                    || nums[1] > 1.0
+                {
+                    return Err(parse_err("thresholds must be 0 <= low <= high <= 1", PHINT));
+                }
+                (nums[0], nums[1])
+            } else {
+                (0.2, 0.8)
+            };
+            proxy = Some((pname, low, high));
+        } else {
+            break;
+        }
+    }
     sc.skip_ws();
     if !sc.rest().is_empty() {
         return Err(parse_err(
@@ -368,6 +403,8 @@ pub fn plan_create_function(text: &str) -> Result<Statement, SqlError> {
             body,
             volatility,
             replace,
+            proxy,
+            model,
         },
     })
 }
@@ -520,6 +557,8 @@ mod tests {
             body,
             volatility,
             replace,
+            proxy: _,
+            model: _,
         } = s.kind
         else {
             panic!()

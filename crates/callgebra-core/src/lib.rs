@@ -20,7 +20,8 @@ pub use batch::{Batch, Row};
 pub use budget::{Budget, BudgetExceeded, BudgetUsage};
 pub use builtins::{call_functions, standard_catalog, standard_functions};
 pub use catalog::{
-    CallKind, Catalog, FunctionDef, FunctionReturn, ModelAlias, TableDef, TableSource, Volatility,
+    CallKind, Catalog, FunctionDef, FunctionReturn, ModelAlias, ProxySpec, TableDef, TableSource,
+    Volatility,
 };
 pub use error::CoreError;
 pub use ids::{CallId, RunId, SessionId, StatementId};
