@@ -54,7 +54,7 @@ binary. `kleene-core` changes deliberately and first (see `CLAUDE.md`).
 | `kleene-trace` | The event model | `TraceEvent`, `Tracer`, `TraceSink`, `FanoutSink` |
 | `kleene-harness` | Sessions, the REPL, prompts, roles, learning, benchmarks | `Harness`, `HarnessConfig`, `Session`, `Repl`, `LiveSink`, `StoreSink`, `AgentRole`, `learn::Learn` |
 | `kleene-daemon` | The engine as a server | `Daemon`, `Client`, `ClientRequest`, `ServerMessage`, `Cursor`, `EventLog` |
-| `kleene-tui` | The terminal client | `App`, `Model`, `View`, `headless()` |
+| `kleene-tui` | The terminal client and the setup wizard | `App`, `Model`, `View`, `Theme`, `setup::SetupApp`, `headless()` |
 | `kleene` | The CLI | `main.rs` only |
 | `kleene-difftest` | Property-based equivalence with DuckDB | `generator`, `run`, `compare` |
 
@@ -194,7 +194,12 @@ ordered list of `(provider, model)` candidates with default options, skips
 candidates whose circuit breaker is open, prices usage from a `Pricing`
 table, and is what the harness holds. `ReplayProvider` serves recorded
 fixtures for tests and offline benchmarks; `RecordingProvider` writes them.
-Configuration comes from the environment or a TOML file; see
+
+Configuration is `ProviderSettings`: the config file `kleene setup` writes
+(`~/.config/kleene/config.toml`, owner-readable) with the environment layered
+on top field by field, so `KEY=... kleene run` still wins. The setup wizard
+itself lives in `kleene-tui::setup` as a pure state machine with a renderer,
+shared by `kleene setup` and the TUI's first start; see
 [`CLI.md`](CLI.md#configuring-a-model-provider).
 
 ## Planner
@@ -253,6 +258,7 @@ the same provider, tools and budget, the baseline for cost parity.
 | Tool semantics and the workspace jail | `crates/kleene-tools/src/tools/`, `paths.rs` |
 | Store schema | `crates/kleene-store/src/duckdb.rs` |
 | Daemon protocol | `crates/kleene-daemon/src/lib.rs` |
-| TUI layout and keys | `crates/kleene-tui/src/ui.rs`, `lib.rs` |
+| TUI layout, keys, theme | `crates/kleene-tui/src/ui.rs`, `lib.rs`, `theme.rs` |
+| Provider config file and the setup wizard | `crates/kleene-llm/src/config.rs`, `crates/kleene-tui/src/setup.rs` |
 | The learning loop | `crates/kleene-harness/src/learn/` |
 | CLI wiring | `crates/kleene/src/main.rs` |
