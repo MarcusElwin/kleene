@@ -411,7 +411,7 @@ pub struct MemoEntry {
 
 const TRACE_DDL: &str = r#"
 CREATE TABLE IF NOT EXISTS trace_runs (run VARCHAR PRIMARY KEY, started_at TIMESTAMP, task VARCHAR);
-CREATE TABLE IF NOT EXISTS trace_sessions (session VARCHAR PRIMARY KEY, run VARCHAR, parent VARCHAR, depth INTEGER, role VARCHAR, started_at TIMESTAMP);
+CREATE TABLE IF NOT EXISTS trace_sessions (session VARCHAR PRIMARY KEY, run VARCHAR, parent VARCHAR, depth INTEGER, role VARCHAR, started_at TIMESTAMP, task VARCHAR, finished_at TIMESTAMP, outcome VARCHAR, turns INTEGER, calls BIGINT, tokens BIGINT, dollars DOUBLE);
 CREATE TABLE IF NOT EXISTS trace_statements (statement VARCHAR PRIMARY KEY, session VARCHAR, sql VARCHAR, started_at TIMESTAMP, finished_at TIMESTAMP, rows BIGINT, calls BIGINT, tokens BIGINT, dollars DOUBLE, error VARCHAR, explain VARCHAR, estimate VARCHAR);
 CREATE TABLE IF NOT EXISTS trace_calls (call VARCHAR PRIMARY KEY, statement VARCHAR, alias VARCHAR, model VARCHAR, fingerprint VARCHAR, started_at TIMESTAMP, finished_at TIMESTAMP, input_tokens BIGINT, output_tokens BIGINT, cache_read_tokens BIGINT, cost_usd DOUBLE, memo_hit BOOLEAN, error VARCHAR);
 CREATE TABLE IF NOT EXISTS trace_tool_calls (statement VARCHAR, tool VARCHAR, args VARCHAR, bytes_out BIGINT, elapsed_ms BIGINT, error VARCHAR, recorded_at TIMESTAMP);
@@ -658,12 +658,21 @@ fn event_sql(t: &Traced) -> String {
             s(&run.to_string()),
             s(task)
         ),
-        TraceEvent::SessionStarted { run, session, parent, depth, role } => format!(
-            "INSERT OR REPLACE INTO trace_sessions VALUES ({}, {}, {}, {depth}, {}, {at})",
+        TraceEvent::SessionStarted { run, session, parent, depth, role, task } => format!(
+            "INSERT OR REPLACE INTO trace_sessions (session, run, parent, depth, role, started_at, task) VALUES ({}, {}, {}, {depth}, {}, {at}, {})",
             s(&session.to_string()),
             s(&run.to_string()),
             opt(&parent.map(|p| p.to_string())),
-            s(role)
+            s(role),
+            s(task)
+        ),
+        TraceEvent::SessionFinished { session, outcome, turns, usage } => format!(
+            "UPDATE trace_sessions SET finished_at = {at}, outcome = {}, turns = {turns}, calls = {}, tokens = {}, dollars = {} WHERE session = {}",
+            s(outcome),
+            usage.calls,
+            usage.tokens,
+            usage.dollars,
+            s(&session.to_string())
         ),
         TraceEvent::StatementStarted { session, statement, sql } => format!(
             "INSERT OR REPLACE INTO trace_statements (statement, session, sql, started_at) VALUES ({}, {}, {}, {at})",

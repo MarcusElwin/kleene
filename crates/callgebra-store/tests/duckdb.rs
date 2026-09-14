@@ -124,6 +124,7 @@ async fn trace_sink_records_every_event_kind() {
         parent: None,
         depth: 0,
         role: "self".into(),
+        task: "t".into(),
     });
     tracer.emit(TraceEvent::StatementStarted {
         session,

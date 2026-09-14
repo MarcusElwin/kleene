@@ -34,11 +34,12 @@ fn error(text: String) -> Rendered {
         text,
         is_error: true,
         is_final: false,
+        rows: None,
     }
 }
 
 /// The rendering of one statement's outcome.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Rendered {
     /// Text to show.
     pub text: String,
@@ -46,6 +47,8 @@ pub struct Rendered {
     pub is_error: bool,
     /// `FINAL` was reached.
     pub is_final: bool,
+    /// The `FINAL` relation itself (only set when `is_final`).
+    pub rows: Option<callgebra_core::Batch>,
 }
 
 /// What a REPL is built from.
@@ -95,6 +98,22 @@ impl Repl {
             session: SessionId::new(),
             tracer: cfg.tracer,
         })
+    }
+
+    /// A REPL over an existing live sink (the harness builds the sink itself
+    /// so children get namespaces, roles and budget slices).
+    pub fn from_sink(
+        sink: Arc<LiveSink>,
+        session: SessionId,
+        tracer: Option<Tracer>,
+        render: RenderOptions,
+    ) -> Self {
+        Self {
+            sink,
+            render,
+            session,
+            tracer,
+        }
     }
 
     /// The live sink (settings, budget, functions).
@@ -172,7 +191,7 @@ impl Repl {
                     Err(e) => {
                         let mut out = self.run_pending(pending).await;
                         if out.last().is_none_or(|r| !r.is_error && !r.is_final) {
-                            out.push(error(render_error(&e)));
+                            out.push(self.failed_to_plan(&piece, &e));
                         }
                         return out;
                     }
@@ -184,7 +203,7 @@ impl Repl {
                 Err(e) => {
                     let mut out = self.run_pending(pending).await;
                     if out.last().is_none_or(|r| !r.is_error && !r.is_final) {
-                        out.push(error(render_error(&e)));
+                        out.push(self.failed_to_plan(&piece, &e));
                     }
                     return out;
                 }
@@ -215,7 +234,7 @@ impl Repl {
                             s
                         }
                         Err(e) => {
-                            out.push(error(render_error(&e)));
+                            out.push(self.failed_to_plan(&text, &e));
                             break;
                         }
                     }
@@ -229,6 +248,28 @@ impl Repl {
             }
         }
         out
+    }
+
+    /// Render a parse or planning failure, and trace it like any other failed
+    /// statement so the transcript in `trace_statements` is complete.
+    fn failed_to_plan(&self, sql: &str, e: &callgebra_sql::SqlError) -> Rendered {
+        let text = render_error(e);
+        if let Some(t) = &self.tracer {
+            let id = StatementId::new();
+            t.emit(TraceEvent::StatementStarted {
+                session: self.session,
+                statement: id,
+                sql: sql.to_string(),
+            });
+            t.emit(TraceEvent::StatementFinished {
+                statement: id,
+                rows: 0,
+                usage: BudgetUsage::default(),
+                error: Some(text.clone()),
+                elapsed: std::time::Duration::ZERO,
+            });
+        }
+        error(text)
     }
 
     async fn run_one(&self, stmt: &Statement) -> Rendered {
@@ -278,6 +319,7 @@ impl Repl {
             text,
             is_error: rendered.error.is_some(),
             is_final: rendered.is_final,
+            rows: rendered.rows_batch,
         }
     }
 
@@ -287,7 +329,10 @@ impl Repl {
                 Ok(m) => Outcome::ok(m),
                 Err(e) => Outcome::err(e.to_string()),
             },
-            StatementKind::CreateAgent { .. } => Outcome::err("CREATE AGENT arrives in M3".into()),
+            StatementKind::CreateAgent { .. } => match self.sink.define_agent(stmt).await {
+                Ok(m) => Outcome::ok(m),
+                Err(e) => Outcome::err(e.to_string()),
+            },
             StatementKind::Set { key, value } => match self.sink.apply_set(key, value).await {
                 Ok(m) => Outcome::ok(m),
                 Err(e) => Outcome::err(e.to_string()),
@@ -329,6 +374,7 @@ impl Repl {
                     rows: inner_outcome.rows,
                     error: inner_outcome.error,
                     is_final: false,
+                    rows_batch: None,
                 }
             }
             _ => {
@@ -346,18 +392,21 @@ impl Repl {
                         rows: b.len() as u64,
                         error: None,
                         is_final: false,
+                        rows_batch: None,
                     },
                     Ok(StatementResult::Final(b)) => Outcome {
                         text: format!("FINAL\n{}", b.render_table(self.render.max_rows)),
                         rows: b.len() as u64,
                         error: None,
                         is_final: true,
+                        rows_batch: Some(b),
                     },
                     Ok(StatementResult::Affected { rows, message }) => Outcome {
                         text: message,
                         rows,
                         error: None,
                         is_final: false,
+                        rows_batch: None,
                     },
                     Ok(StatementResult::Set { key, value }) => {
                         Outcome::ok(format!("set {key} = {value}"))
@@ -392,6 +441,7 @@ struct Outcome {
     rows: u64,
     error: Option<String>,
     is_final: bool,
+    rows_batch: Option<callgebra_core::Batch>,
 }
 
 impl Outcome {
@@ -401,6 +451,7 @@ impl Outcome {
             rows: 0,
             error: None,
             is_final: false,
+            rows_batch: None,
         }
     }
     fn err(text: String) -> Self {
@@ -409,6 +460,7 @@ impl Outcome {
             rows: 0,
             error: Some(text),
             is_final: false,
+            rows_batch: None,
         }
     }
 }

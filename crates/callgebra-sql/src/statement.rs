@@ -96,6 +96,8 @@ pub enum StatementKind {
         budget: Vec<(String, f64)>,
         /// System prompt.
         prompt: String,
+        /// `OR REPLACE` was given.
+        replace: bool,
     },
     /// `CALL tool(args) [FROM query]`: a volatile side effect, once per input row.
     Call {

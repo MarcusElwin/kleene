@@ -1,0 +1,119 @@
+Meeting notes 2026-03-01. Project Heron: Amara shipped the ingest milestone; 2 hours logged. Coffee machine on the third floor is broken again.
+
+Meeting notes 2026-03-02. Project Kestrel: Dana demoed the export milestone; 9 hours logged. Reminder that the parking garage closes at 22:00.
+
+Meeting notes 2026-03-03. Project Osprey: Goran scoped the billing milestone; 7 hours logged. The design review moved to the small room.
+
+Meeting notes 2026-03-04. Project Plover: Bao cancelled the search milestone; 5 hours logged. Weekly all-hands is cancelled next week.
+
+Meeting notes 2026-03-05. Project Sandpiper: Eitan reviewed the auth milestone; 3 hours logged. New badge readers arrive on Thursday.
+
+Meeting notes 2026-03-06. Project Tern: Hana delayed the report milestone; 10 hours logged. Coffee machine on the third floor is broken again.
+
+Meeting notes 2026-03-07. Project Heron: Chidi delayed the ingest milestone; 8 hours logged. Reminder that the parking garage closes at 22:00.
+
+Meeting notes 2026-03-08. Project Kestrel: Farah shipped the export milestone; 6 hours logged. The design review moved to the small room.
+
+Meeting notes 2026-03-09. Project Osprey: Amara demoed the billing milestone; 4 hours logged. Weekly all-hands is cancelled next week.
+
+Meeting notes 2026-03-10. Project Plover: Dana scoped the search milestone; 2 hours logged. New badge readers arrive on Thursday.
+
+Meeting notes 2026-03-11. Project Sandpiper: Goran cancelled the auth milestone; 9 hours logged. Coffee machine on the third floor is broken again.
+
+Meeting notes 2026-03-12. Project Tern: Bao reviewed the report milestone; 7 hours logged. Reminder that the parking garage closes at 22:00.
+
+Meeting notes 2026-03-13. Project Heron: Eitan reviewed the ingest milestone; 5 hours logged. The design review moved to the small room.
+
+Meeting notes 2026-03-14. Project Kestrel: Hana delayed the export milestone; 3 hours logged. Weekly all-hands is cancelled next week.
+
+Meeting notes 2026-03-15. Project Osprey: Chidi shipped the billing milestone; 10 hours logged. New badge readers arrive on Thursday.
+
+Meeting notes 2026-03-16. Project Plover: Farah demoed the search milestone; 8 hours logged. Coffee machine on the third floor is broken again.
+
+Meeting notes 2026-03-17. Project Sandpiper: Amara scoped the auth milestone; 6 hours logged. Reminder that the parking garage closes at 22:00.
+
+Meeting notes 2026-03-18. Project Tern: Dana cancelled the report milestone; 4 hours logged. The design review moved to the small room.
+
+Meeting notes 2026-03-19. Project Heron: Goran cancelled the ingest milestone; 2 hours logged. Weekly all-hands is cancelled next week.
+
+Meeting notes 2026-03-20. Project Kestrel: Bao reviewed the export milestone; 9 hours logged. New badge readers arrive on Thursday.
+
+Meeting notes 2026-03-21. Project Osprey: Eitan delayed the billing milestone; 7 hours logged. Coffee machine on the third floor is broken again.
+
+Meeting notes 2026-03-22. Project Plover: Hana shipped the search milestone; 5 hours logged. Reminder that the parking garage closes at 22:00.
+
+Meeting notes 2026-03-23. Project Sandpiper: Chidi demoed the auth milestone; 3 hours logged. The design review moved to the small room.
+
+Meeting notes 2026-03-24. Project Tern: Farah scoped the report milestone; 10 hours logged. Weekly all-hands is cancelled next week.
+
+Meeting notes 2026-03-25. Project Heron: Amara scoped the ingest milestone; 8 hours logged. New badge readers arrive on Thursday.
+
+Meeting notes 2026-03-26. Project Kestrel: Dana cancelled the export milestone; 6 hours logged. Coffee machine on the third floor is broken again.
+
+Meeting notes 2026-03-27. Project Osprey: Goran reviewed the billing milestone; 4 hours logged. Reminder that the parking garage closes at 22:00.
+
+Meeting notes 2026-03-28. Project Plover: Bao delayed the search milestone; 2 hours logged. The design review moved to the small room.
+
+Meeting notes 2026-03-01. Project Sandpiper: Eitan shipped the auth milestone; 9 hours logged. Weekly all-hands is cancelled next week.
+
+Meeting notes 2026-03-02. Project Tern: Hana demoed the report milestone; 7 hours logged. New badge readers arrive on Thursday.
+
+Meeting notes 2026-03-03. Project Heron: Chidi demoed the ingest milestone; 5 hours logged. Coffee machine on the third floor is broken again.
+
+Meeting notes 2026-03-04. Project Kestrel: Farah scoped the export milestone; 3 hours logged. Reminder that the parking garage closes at 22:00.
+
+Meeting notes 2026-03-05. Project Osprey: Amara cancelled the billing milestone; 10 hours logged. The design review moved to the small room.
+
+Meeting notes 2026-03-06. Project Plover: Dana reviewed the search milestone; 8 hours logged. Weekly all-hands is cancelled next week.
+
+Meeting notes 2026-03-07. Project Sandpiper: Goran delayed the auth milestone; 6 hours logged. New badge readers arrive on Thursday.
+
+Meeting notes 2026-03-08. Project Tern: Bao shipped the report milestone; 4 hours logged. Coffee machine on the third floor is broken again.
+
+Meeting notes 2026-03-09. Project Heron: Eitan shipped the ingest milestone; 2 hours logged. Reminder that the parking garage closes at 22:00.
+
+Meeting notes 2026-03-10. Project Kestrel: Hana demoed the export milestone; 9 hours logged. The design review moved to the small room.
+
+Meeting notes 2026-03-11. Project Osprey: Chidi scoped the billing milestone; 7 hours logged. Weekly all-hands is cancelled next week.
+
+Meeting notes 2026-03-12. Project Plover: Farah cancelled the search milestone; 5 hours logged. New badge readers arrive on Thursday.
+
+Meeting notes 2026-03-13. Project Sandpiper: Amara reviewed the auth milestone; 3 hours logged. Coffee machine on the third floor is broken again.
+
+Meeting notes 2026-03-14. Project Tern: Dana delayed the report milestone; 10 hours logged. Reminder that the parking garage closes at 22:00.
+
+Meeting notes 2026-03-15. Project Heron: Goran delayed the ingest milestone; 8 hours logged. The design review moved to the small room.
+
+Meeting notes 2026-03-16. Project Kestrel: Bao shipped the export milestone; 6 hours logged. Weekly all-hands is cancelled next week.
+
+Meeting notes 2026-03-17. Project Osprey: Eitan demoed the billing milestone; 4 hours logged. New badge readers arrive on Thursday.
+
+Meeting notes 2026-03-18. Project Plover: Hana scoped the search milestone; 2 hours logged. Coffee machine on the third floor is broken again.
+
+Meeting notes 2026-03-19. Project Sandpiper: Chidi cancelled the auth milestone; 9 hours logged. Reminder that the parking garage closes at 22:00.
+
+Meeting notes 2026-03-20. Project Tern: Farah reviewed the report milestone; 7 hours logged. The design review moved to the small room.
+
+Meeting notes 2026-03-21. Project Heron: Amara reviewed the ingest milestone; 5 hours logged. Weekly all-hands is cancelled next week.
+
+Meeting notes 2026-03-22. Project Kestrel: Dana delayed the export milestone; 3 hours logged. New badge readers arrive on Thursday.
+
+Meeting notes 2026-03-23. Project Osprey: Goran shipped the billing milestone; 10 hours logged. Coffee machine on the third floor is broken again.
+
+Meeting notes 2026-03-24. Project Plover: Bao demoed the search milestone; 8 hours logged. Reminder that the parking garage closes at 22:00.
+
+Meeting notes 2026-03-25. Project Sandpiper: Eitan scoped the auth milestone; 6 hours logged. The design review moved to the small room.
+
+Meeting notes 2026-03-26. Project Tern: Hana cancelled the report milestone; 4 hours logged. Weekly all-hands is cancelled next week.
+
+Meeting notes 2026-03-27. Project Heron: Chidi cancelled the ingest milestone; 2 hours logged. New badge readers arrive on Thursday.
+
+Meeting notes 2026-03-28. Project Kestrel: Farah reviewed the export milestone; 9 hours logged. Coffee machine on the third floor is broken again.
+
+Meeting notes 2026-03-01. Project Osprey: Amara delayed the billing milestone; 7 hours logged. Reminder that the parking garage closes at 22:00.
+
+Meeting notes 2026-03-02. Project Plover: Dana shipped the search milestone; 5 hours logged. The design review moved to the small room.
+
+Meeting notes 2026-03-03. Project Sandpiper: Goran demoed the auth milestone; 3 hours logged. Weekly all-hands is cancelled next week.
+
+Meeting notes 2026-03-04. Project Tern: Bao scoped the report milestone; 10 hours logged. New badge readers arrive on Thursday.

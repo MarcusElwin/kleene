@@ -36,6 +36,23 @@ fn catalog() -> Catalog {
         volatility: Volatility::Volatile,
         description: "run a command".into(),
     });
+    c.add_function(callgebra_core::FunctionDef {
+        name: "chunks".into(),
+        args: vec![DataType::Text, DataType::Int],
+        variadic: true,
+        returns: callgebra_core::FunctionReturn::Table {
+            schema: Schema::new(vec![
+                Field::new("ordinal", DataType::Int),
+                Field::new("text", DataType::Text),
+                Field::new("tokens", DataType::Int),
+            ]),
+        },
+        call_kind: callgebra_core::CallKind::Tool {
+            tool: "chunks".into(),
+        },
+        volatility: Volatility::Immutable,
+        description: "split text".into(),
+    });
     c.add_table(table(
         "edges",
         &[
@@ -463,7 +480,6 @@ fn unsupported_constructs_have_hints() {
             "LEFT JOIN",
         ),
         ("SELECT row_number() OVER () FROM nodes", "window"),
-        ("CREATE AGENT reviewer MODEL 'worker' PROMPT 'x'", "M3"),
         ("SELECT * FROM edges NATURAL JOIN nodes", "ON"),
         ("UPDATE nodes SET name = 'x'", "append-only"),
     ] {
@@ -583,4 +599,56 @@ fn create_function_and_call_statements() {
     assert_eq!(p.schema().fields[1].data_type, DataType::Bool);
     let p = query("SELECT e.item FROM nodes n CROSS JOIN LATERAL expand(n.name, 3) AS e");
     assert_eq!(names(&p), ["item"]);
+}
+
+#[test]
+fn create_agent_statements() {
+    let s = one("CREATE AGENT reviewer MODEL 'worker' EFFORT 'low' TOOLS (files, grep) BUDGET (calls 40) PROMPT 'Review.'");
+    let StatementKind::CreateAgent {
+        name,
+        tools,
+        budget,
+        replace,
+        ..
+    } = s.kind
+    else {
+        panic!("{s:?}")
+    };
+    assert_eq!(name, "reviewer");
+    assert_eq!(tools, ["files", "grep"]);
+    assert_eq!(budget, vec![("calls".to_string(), 40.0)]);
+    assert!(!replace);
+    let s = one("CREATE OR REPLACE AGENT x");
+    assert!(matches!(
+        s.kind,
+        StatementKind::CreateAgent { replace: true, .. }
+    ));
+    let e = render_error(&err("CREATE AGENT x FLAVOUR 'x'"));
+    assert!(e.contains("hint"), "{e}");
+    let e = render_error(&err("CREATE AGENT x BUDGET (coins 3)"));
+    assert!(e.contains("unknown budget dimension"), "{e}");
+}
+
+#[test]
+fn rlm_and_spawn_are_lateral_table_functions() {
+    let p = query("SELECT c.ordinal, r.answer FROM chunks('abc', 2) c CROSS JOIN LATERAL rlm('what?', c.text) r");
+    let tf = find(
+        &p,
+        &|x| matches!(x, LogicalPlan::TableFunction { name, .. } if name == "rlm"),
+    )
+    .unwrap();
+    let LogicalPlan::TableFunction { input, schema, .. } = tf else {
+        panic!()
+    };
+    assert!(input.is_some());
+    assert_eq!(
+        schema.names(),
+        ["ordinal", "text", "tokens", "answer", "detail"]
+    );
+    let p = query("SELECT s.answer, s.session FROM spawn('reviewer', 'check it') s");
+    assert_eq!(names(&p), ["answer", "session"]);
+    // Context is optional (the harness checks the upper bound at call time).
+    query("SELECT * FROM rlm('q')");
+    let e = render_error(&err("SELECT * FROM spawn('a')"));
+    assert!(e.contains("argument"), "{e}");
 }

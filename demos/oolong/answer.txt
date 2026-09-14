@@ -1,0 +1,7 @@
+project | total_hours | shipped_count
+Tern | 73 | 1
+Osprey | 70 | 2
+Kestrel | 63 | 2
+Sandpiper | 57 | 1
+Plover | 50 | 2
+Heron | 47 | 2
