@@ -8,6 +8,9 @@
 #   CALLGEBRA_INSTALL   directory to install into (default: ~/.local/bin,
 #                       or /usr/local/bin when run as root)
 #   CALLGEBRA_REPO      owner/repo (default: MarcusElwin/callgebra)
+#   GITHUB_TOKEN        (or GH_TOKEN) a token with read access; needed while
+#                       the repository is private, and raises the API rate
+#                       limit otherwise
 set -eu
 
 REPO="${CALLGEBRA_REPO:-MarcusElwin/callgebra}"
@@ -34,16 +37,52 @@ case "$arch" in
 esac
 target="$arch_part-$os_part"
 
+api="https://api.github.com/repos/$REPO"
+token="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+# Every GitHub request goes through here so the token, when given, is sent
+# consistently. Output goes to stdout; a failing status returns non-zero.
+fetch() {
+  if [ -n "$token" ]; then
+    curl -fsSL -H "Authorization: Bearer $token" "$@"
+  else
+    curl -fsSL "$@"
+  fi
+}
+
 if [ -n "${CALLGEBRA_VERSION:-}" ]; then
-  tag="$CALLGEBRA_VERSION"
+  release_url="$api/releases/tags/$CALLGEBRA_VERSION"
 else
-  tag="$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
-    | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)"
-  [ -n "$tag" ] || die "could not determine the latest release of $REPO"
+  release_url="$api/releases/latest"
 fi
+release="$(fetch -H "Accept: application/vnd.github+json" "$release_url" 2>/dev/null)" || {
+  if [ -n "$token" ]; then
+    die "no release found at $release_url (has a v* tag been pushed and built yet?)"
+  else
+    die "no release found at $release_url: either none has been published yet, or \
+$REPO is private and needs GITHUB_TOKEN set. To build from source instead: \
+cargo install --git https://github.com/$REPO callgebra"
+  fi
+}
+tag="$(printf '%s' "$release" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)"
+[ -n "$tag" ] || die "could not read the release tag from $release_url"
 version="${tag#v}"
 name="$BIN-$version-$target"
-base="https://github.com/$REPO/releases/download/$tag"
+
+# Release assets are downloaded through the API asset URL with the
+# octet-stream accept header. That path works for public and private
+# repositories alike; the browser download URL does not for private ones.
+asset_url() {
+  # One key per line, then remember the last asset url and print it when the
+  # matching name comes along.
+  printf '%s' "$release" | tr ',' '\n' | awk -v want="$1" '
+    /"url": *"[^"]*\/releases\/assets\/[0-9]+"/ { sub(/.*"url": *"/, ""); sub(/".*/, ""); url = $0 }
+    /"name": *"/ { n = $0; sub(/.*"name": *"/, "", n); sub(/".*/, "", n); if (n == want && url != "") { print url; exit } }
+  '
+}
+tarball_url="$(asset_url "$name.tar.gz")"
+sum_url="$(asset_url "$name.tar.gz.sha256")"
+[ -n "$tarball_url" ] || die "release $tag has no asset $name.tar.gz (unsupported target, or the release build is still running)"
+[ -n "$sum_url" ] || die "release $tag has no checksum for $name.tar.gz"
 
 if [ -n "${CALLGEBRA_INSTALL:-}" ]; then
   dest="$CALLGEBRA_INSTALL"
@@ -57,8 +96,8 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
 say "downloading $name.tar.gz"
-curl -fsSL -o "$tmp/$name.tar.gz" "$base/$name.tar.gz"
-curl -fsSL -o "$tmp/$name.tar.gz.sha256" "$base/$name.tar.gz.sha256"
+fetch -H "Accept: application/octet-stream" -o "$tmp/$name.tar.gz" "$tarball_url"
+fetch -H "Accept: application/octet-stream" -o "$tmp/$name.tar.gz.sha256" "$sum_url"
 
 expected="$(awk '{print $1}' "$tmp/$name.tar.gz.sha256")"
 if command -v sha256sum >/dev/null 2>&1; then
