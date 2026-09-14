@@ -40,14 +40,23 @@ Read it before piping it into a shell if that is your habit:
 [`install.sh`](../install.sh) is a hundred lines of POSIX `sh` and needs only
 `curl` and `tar`.
 
-**While the repository is private**, the raw URL above returns 404 to an
-anonymous `curl`, so fetch the script with a token too. `gh auth token`
-prints the one the GitHub CLI holds:
+**While the repository is private**, the raw URL above returns 404, with or
+without a token: `raw.githubusercontent.com` does not serve private files.
+Fetch the script through the API's contents endpoint instead, which returns
+the file itself with the `vnd.github.raw` accept header. `gh auth token`
+prints the token the GitHub CLI holds:
 
 ```bash
 export GITHUB_TOKEN="$(gh auth token)"
-curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" \
-  https://raw.githubusercontent.com/MarcusElwin/callgebra/main/install.sh | sh
+curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github.raw" \
+  "https://api.github.com/repos/MarcusElwin/callgebra/contents/install.sh?ref=main" | sh
+```
+
+or, letting `gh` handle the authentication:
+
+```bash
+export GITHUB_TOKEN="$(gh auth token)"
+gh api -H "Accept: application/vnd.github.raw" repos/MarcusElwin/callgebra/contents/install.sh | sh
 ```
 
 The script downloads release assets through the GitHub API with the same
@@ -67,9 +76,22 @@ brew install MarcusElwin/callgebra/callgebra
 ```
 
 This installs from the tap `MarcusElwin/homebrew-callgebra`, whose formula is
-the template in [`Formula/callgebra.rb`](../Formula/callgebra.rb). Until the
-tap exists, `brew install --formula ./Formula/callgebra.rb` from a checkout
-works once the release checksums are filled in.
+the template in [`Formula/callgebra.rb`](../Formula/callgebra.rb). Homebrew
+refuses a formula given by path (`Homebrew requires formulae to be in a tap`),
+so until that tap exists, make a local one from a checkout:
+
+```bash
+brew tap-new marcuselwin/callgebra
+cp Formula/callgebra.rb "$(brew --repository marcuselwin/callgebra)/Formula/"
+brew install --HEAD marcuselwin/callgebra/callgebra
+```
+
+`--HEAD` clones `main` and builds with cargo (about ten minutes, DuckDB
+included), so it works before the first release and while the repository is
+private, as long as git can authenticate to GitHub (`gh auth setup-git`, or
+an SSH remote). Without `--HEAD` the formula downloads release binaries, which
+needs a published release with its checksums pasted into the formula, and a
+public repository.
 
 ### cargo
 
@@ -81,6 +103,18 @@ Needs Rust 1.88 or newer and about ten minutes: DuckDB is compiled from source
 on the first build. `rustup` picks the toolchain pinned in
 `rust-toolchain.toml` automatically inside a checkout; `cargo install --git`
 uses your default toolchain.
+
+While the repository is private, `cargo install --git` over HTTPS fails with
+`failed to authenticate when downloading repository`: cargo fetches with its
+own git library, which does not consult your credential helper. Any of these
+works instead:
+
+```bash
+cargo install --path crates/callgebra                    # from a checkout you already have
+CARGO_NET_GIT_FETCH_WITH_CLI=true \
+  cargo install --git https://github.com/MarcusElwin/callgebra callgebra   # let the git CLI authenticate
+cargo install --git ssh://git@github.com/MarcusElwin/callgebra callgebra   # over SSH
+```
 
 ### Check
 
