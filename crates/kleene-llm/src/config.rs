@@ -8,6 +8,8 @@
 //! `KEY=... kleene run` one-off keeps working, and CI never needs the file.
 //!
 //! ```toml
+//! router = "/home/me/.config/kleene/router.toml"   # optional; top level, before the tables
+//!
 //! [anthropic]
 //! api_key = "sk-ant-..."
 //!
@@ -15,8 +17,6 @@
 //! api_key = "sk-..."
 //! base_url = "https://api.openai.com/v1"
 //! model = "gpt-5.4-mini"
-//!
-//! router = "/home/me/.config/kleene/router.toml"
 //! ```
 
 use crate::types::ProviderError;

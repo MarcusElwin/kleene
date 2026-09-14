@@ -224,11 +224,10 @@ impl SetupApp {
                 Field::new(
                     "Base URL",
                     "e.g. http://localhost:11434/v1 for Ollama",
-                    if o_is_openai {
-                        "http://localhost:11434/v1".to_string()
-                    } else {
-                        o.base_url.clone().unwrap_or_default()
-                    },
+                    o.base_url
+                        .clone()
+                        .filter(|_| !o_is_openai)
+                        .unwrap_or_else(|| "http://localhost:11434/v1".to_string()),
                     false,
                     false,
                 ),
@@ -808,7 +807,7 @@ mod tests {
     #[test]
     fn existing_settings_prefill_and_survive() {
         let existing = ProviderSettings::parse(
-            "[anthropic]\napi_key = 'sk-ant-old'\n[openai_compat]\napi_key = 'sk-old'\nmodel = 'gpt-5.4-mini'\nrouter = '/r.toml'\n",
+            "router = '/r.toml'\n[anthropic]\napi_key = 'sk-ant-old'\n[openai_compat]\napi_key = 'sk-old'\nmodel = 'gpt-5.4-mini'\n",
         )
         .unwrap();
         let app = SetupApp::new(existing, "/tmp/x/config.toml".into());

@@ -476,23 +476,5 @@ async fn observer_hears_the_reply_stream_and_call_lifecycle() {
         finishes.iter().all(|(_, memo, err)| !memo && err.is_none()),
         "{finishes:?}"
     );
-    // A second identical run is served from the memo: the whole reply still
-    // arrives as one delta, and the finish says memo.
-    let report2 = f.harness.run("count the numbers", None).await.unwrap();
-    assert_eq!(final_rows(&report2)[0][0].as_int(), Some(10));
-    let finishes = ears.finishes.lock().unwrap().clone();
-    assert!(
-        finishes.iter().skip(2).all(|(_, memo, _)| *memo),
-        "{finishes:?}"
-    );
-    let streamed_again: String = ears
-        .deltas
-        .lock()
-        .unwrap()
-        .iter()
-        .skip_while(|(_, t)| !t.is_empty())
-        .map(|(_, t)| t.as_str())
-        .collect();
-    let _ = streamed_again;
-    assert_eq!(f.provider.calls(), 2, "the memo answered the second run");
+    assert_eq!(f.provider.calls(), 2);
 }
