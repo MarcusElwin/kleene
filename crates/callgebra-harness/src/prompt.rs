@@ -27,6 +27,8 @@ pub struct PromptContext<'a> {
     pub max_depth: u32,
     /// Turn cap.
     pub max_turns: u32,
+    /// Learned playbook entries for this task's kind (may be empty).
+    pub playbook: &'a [crate::PlaybookExample],
 }
 
 /// Size of a preloaded context, for the task message.
@@ -100,6 +102,20 @@ This session runs at depth {} of {}; you have at most {} turns.\n",
     }
     let _ = writeln!(out, "## Budget\n{}\n", render_budget(cx.budget));
     out.push_str(EXAMPLE);
+    if !cx.playbook.is_empty() {
+        out.push_str("\n## Learned playbook (SQL that solved earlier tasks of this kind; adapt, do not copy blindly)\n");
+        for p in cx.playbook {
+            let _ = writeln!(
+                out,
+                "-- {} (v{}, {}/{} wins)\n```sql\n{}\n```",
+                p.kind,
+                p.version,
+                p.wins,
+                p.tries,
+                p.sql.trim()
+            );
+        }
+    }
     if !cx.role.prompt.is_empty() {
         let _ = write!(out, "\n## Your role\n{}\n", cx.role.prompt.trim());
     }
@@ -469,6 +485,7 @@ mod tests {
             depth: 1,
             max_depth: 2,
             max_turns: 12,
+            playbook: &[],
         };
         let a = system_prompt(&cx);
         let b = system_prompt(&cx);

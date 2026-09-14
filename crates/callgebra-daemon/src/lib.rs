@@ -64,10 +64,13 @@ pub enum ClientRequest {
         /// CallSQL text.
         sql: String,
     },
-    /// Run DuckDB SQL over the store (trace explorer).
+    /// Run DuckDB SQL over the store (trace explorer, task board).
     Query {
         /// SQL.
         sql: String,
+        /// Echoed on the reply so a client can route it (`board`, `trace`).
+        #[serde(default)]
+        tag: Option<String>,
     },
     /// Cancel a statement (the session continues; the model sees the error).
     Cancel {
@@ -148,6 +151,9 @@ pub enum ServerMessage {
         columns: Vec<String>,
         /// Rows rendered as text.
         rows: Vec<Vec<String>>,
+        /// The request's tag.
+        #[serde(default)]
+        tag: Option<String>,
     },
     /// Reply to `ListRuns`.
     Runs {

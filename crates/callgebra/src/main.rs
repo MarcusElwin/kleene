@@ -108,12 +108,202 @@ enum Command {
         #[arg(long)]
         socket: Option<PathBuf>,
     },
+    /// The continual, self-learning loop: generated and user tasks, code
+    /// oracles, ratings, curriculum and a replay-gated playbook.
+    Learn {
+        #[command(subcommand)]
+        action: LearnAction,
+    },
     /// Start the engine daemon in the foreground.
     Daemon {
         /// Socket path. Default: `.callgebra/daemon.sock`.
         #[arg(long)]
         socket: Option<PathBuf>,
     },
+}
+
+#[derive(Subcommand, Debug)]
+enum LearnAction {
+    /// Run the loop unattended until a limit is hit (state is in the store,
+    /// so running again resumes).
+    Run {
+        /// Stop after this many tasks.
+        #[arg(long, default_value_t = 10)]
+        tasks: usize,
+        /// Stop after spending this much.
+        #[arg(long)]
+        budget_dollars: Option<f64>,
+        /// Stop after this many minutes.
+        #[arg(long)]
+        minutes: Option<u64>,
+        /// Generators to keep fed (comma separated; default all).
+        #[arg(long, value_delimiter = ',')]
+        generators: Vec<String>,
+        /// Pending tasks to keep per generator.
+        #[arg(long, default_value_t = 3)]
+        queue: usize,
+        /// Tasks of a kind replayed to gate a playbook candidate (0 adopts outright).
+        #[arg(long, default_value_t = 3)]
+        replay: usize,
+    },
+    /// Add a user task. `--expect` gives an exact expected answer (rows as
+    /// `a|b;c|d`); without it the task waits for human review.
+    Add {
+        /// Task text, or `@path`.
+        task: String,
+        /// Task kind, for the playbook.
+        #[arg(long, default_value = "user")]
+        kind: String,
+        /// Context file loaded as `ctx`.
+        #[arg(long)]
+        context: Option<PathBuf>,
+        /// Expected rows, `cell|cell;cell|cell`.
+        #[arg(long)]
+        expect: Option<String>,
+        /// A shell oracle: exit 0 on the answer rows (JSON on stdin) means pass.
+        #[arg(long)]
+        check: Option<String>,
+    },
+    /// Generate tasks from a generator at its current dial.
+    Generate {
+        /// sat3, graph, puzzle, corpus or repo.
+        generator: String,
+        /// How many.
+        #[arg(long, default_value_t = 3)]
+        count: usize,
+    },
+    /// Ask the model to propose a task with a rubric (judged by a separate judge call).
+    Propose {
+        /// Topic.
+        topic: String,
+    },
+    /// Attempt one task now (by id, or the curriculum's pick).
+    Step {
+        /// Task id.
+        id: Option<String>,
+    },
+    /// The board: counts per generator and status, and each dial.
+    Board,
+    /// The morning report: solve rate, calls and depth by generator and difficulty.
+    Report,
+    /// The playbook ledger.
+    Playbook,
+    /// Withdraw a playbook version.
+    Revert {
+        /// Version number.
+        version: i64,
+    },
+}
+
+fn parse_expect(spec: &str) -> Vec<Vec<String>> {
+    spec.split(';')
+        .filter(|r| !r.trim().is_empty())
+        .map(|r| r.split('|').map(|c| c.trim().to_string()).collect())
+        .collect()
+}
+
+async fn run_learn(cli: &Cli, action: &LearnAction) -> anyhow::Result<()> {
+    use callgebra_harness::learn::verify::Verify;
+    use callgebra_harness::learn::{Learn, LearnConfig, RunLimits};
+    let store = open_store(cli)?;
+    let cfg = daemon_config(cli).await?;
+    let replay = match action {
+        LearnAction::Run { replay, .. } => *replay,
+        _ => 3,
+    };
+    let learn = Learn::new(
+        store,
+        cfg,
+        LearnConfig {
+            replay_sample: replay,
+            ..LearnConfig::default()
+        },
+    )
+    .await?;
+    match action {
+        LearnAction::Run {
+            tasks,
+            budget_dollars,
+            minutes,
+            generators,
+            queue,
+            ..
+        } => {
+            let limits = RunLimits {
+                max_tasks: *tasks,
+                max_dollars: *budget_dollars,
+                max_wall: minutes.map(|m| std::time::Duration::from_secs(m * 60)),
+                generators: generators.clone(),
+                queue_depth: *queue,
+            };
+            let reports = learn.run(&limits).await?;
+            for r in &reports {
+                println!(
+                    "{} {} [{}] {} calls ${:.4} {}{}",
+                    if r.solved { "✓" } else { "✗" },
+                    r.kind,
+                    r.generator,
+                    r.calls,
+                    r.dollars,
+                    r.detail,
+                    match (r.playbook_candidate, r.adopted) {
+                        (Some(v), Some(true)) => format!(" · playbook v{v} adopted"),
+                        (Some(v), Some(false)) => format!(" · playbook v{v} rejected"),
+                        _ => String::new(),
+                    }
+                );
+            }
+            let solved = reports.iter().filter(|r| r.solved).count();
+            println!(
+                "{} task(s), {} solved, ${:.4}",
+                reports.len(),
+                solved,
+                reports.iter().map(|r| r.dollars).sum::<f64>()
+            );
+            print!("{}", learn.board().await?.render_table(50));
+        }
+        LearnAction::Add {
+            task,
+            kind,
+            context,
+            expect,
+            check,
+        } => {
+            let context = match context {
+                Some(p) => Some(std::fs::read_to_string(p)?),
+                None => None,
+            };
+            let verify = match (expect, check) {
+                (Some(e), _) => Some(Verify::Exact {
+                    rows: parse_expect(e),
+                }),
+                (None, Some(c)) => Some(Verify::Shell { command: c.clone() }),
+                (None, None) => None,
+            };
+            let id = learn
+                .add_task(kind, &read_task(task)?, context, verify)
+                .await?;
+            println!("{id}");
+        }
+        LearnAction::Generate { generator, count } => {
+            for id in learn.generate(generator, *count).await? {
+                println!("{id}");
+            }
+        }
+        LearnAction::Propose { topic } => println!("{}", learn.propose(topic).await?),
+        LearnAction::Step { id } => match learn.step(id.as_deref(), &[]).await? {
+            Some(r) => println!("{}", serde_json::to_string_pretty(&r)?),
+            None => println!("nothing pending"),
+        },
+        LearnAction::Board => print!("{}", learn.board().await?.render_table(100)),
+        LearnAction::Report => print!("{}", learn.report().await?.render_table(100)),
+        LearnAction::Playbook => print!("{}", learn.playbook().await?.render_table(100)),
+        LearnAction::Revert { version } => {
+            learn.revert(*version).await?;
+            println!("reverted playbook v{version}");
+        }
+    }
+    Ok(())
 }
 
 fn socket_path(cli: &Cli, socket: &Option<PathBuf>) -> PathBuf {
@@ -589,6 +779,7 @@ async fn main() -> anyhow::Result<()> {
             callgebra_tui::headless(&socket, start).await?;
             Ok(())
         }
+        Some(Command::Learn { action }) => run_learn(&cli, action).await,
         Some(Command::Bench) => {
             eprintln!("callgebra: not implemented yet; arrives in M7, see docs/PLAN.md");
             std::process::exit(2)

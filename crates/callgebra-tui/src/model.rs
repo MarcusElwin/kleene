@@ -133,8 +133,14 @@ pub struct Model {
     pub total_tokens: u64,
     /// Total dollars.
     pub total_dollars: f64,
-    /// Last table returned by a `Query`.
+    /// Last table returned by an untagged `Query` (the trace explorer).
     pub table: Option<(Vec<String>, Vec<Vec<String>>)>,
+    /// The task board (`tag = board`): generator, dial, pending, running, solved, failed, review.
+    pub board: Option<(Vec<String>, Vec<Vec<String>>)>,
+    /// Recent task outcomes (`tag = outcomes`), oldest first: 1 solved, 0 failed.
+    pub outcomes: Vec<u64>,
+    /// Recent tasks (`tag = tasks`): kind, generator, status, detail.
+    pub tasks: Option<(Vec<String>, Vec<Vec<String>>)>,
     /// Last error or notice from the daemon.
     pub notice: Option<String>,
 }
@@ -183,7 +189,18 @@ impl Model {
                     self.run_order.push(run);
                 }
             }
-            ServerMessage::Table { columns, rows } => self.table = Some((columns, rows)),
+            ServerMessage::Table { columns, rows, tag } => match tag.as_deref() {
+                Some("board") => self.board = Some((columns, rows)),
+                Some("outcomes") => {
+                    self.outcomes = rows
+                        .iter()
+                        .filter_map(|r| r.first())
+                        .map(|v| if v == "solved" { 1 } else { 0 })
+                        .collect();
+                }
+                Some("tasks") => self.tasks = Some((columns, rows)),
+                _ => self.table = Some((columns, rows)),
+            },
             ServerMessage::Submitted { results, .. } => {
                 self.notice = results.last().map(|r| r.text.clone());
             }

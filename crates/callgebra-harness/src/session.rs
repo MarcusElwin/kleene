@@ -49,6 +49,9 @@ pub enum HarnessError {
     /// A persisted record could not be decoded.
     #[error("corrupt session record: {0}")]
     Corrupt(String),
+    /// A configuration or request problem (unknown generator, no provider).
+    #[error("{0}")]
+    Config(String),
 }
 
 /// How a harness runs sessions.
@@ -76,6 +79,10 @@ pub struct HarnessConfig {
     pub max_tokens: u32,
     /// Who watches turns as they happen (the CLI, later the daemon).
     pub observer: Option<Arc<dyn Observer>>,
+    /// Learned playbook entries rendered into the prompt as examples.
+    pub playbook: Vec<crate::PlaybookExample>,
+    /// Skip the memo so every call is real (replay evals compare true cost).
+    pub no_memo: bool,
 }
 
 impl Default for HarnessConfig {
@@ -92,6 +99,8 @@ impl Default for HarnessConfig {
             render: RenderOptions::default(),
             max_tokens: 4096,
             observer: None,
+            playbook: vec![],
+            no_memo: false,
         }
     }
 }
@@ -304,7 +313,10 @@ impl Harness {
             usage: BudgetUsage::default(),
             agents: HashMap::new(),
             functions: HashMap::new(),
-            settings: ModelSettings::default(),
+            settings: ModelSettings {
+                no_memo: self.cfg.no_memo,
+                ..ModelSettings::default()
+            },
             messages: vec![],
             turns: 0,
             max_turns: self.cfg.max_turns,
@@ -446,6 +458,7 @@ impl Harness {
             depth: meta.depth,
             max_depth: self.cfg.max_depth,
             max_turns: record.max_turns,
+            playbook: &self.cfg.playbook,
         });
         if fresh {
             record.messages.push(Message::user(prompt::task_message(
@@ -849,6 +862,8 @@ async fn load_context(sink: &LiveSink, ctx: &str) -> Result<(), ExecError> {
         Field::not_null("ordinal", DataType::Int),
         Field::new("text", DataType::Text),
     ]));
+    // A fresh run replaces whatever an earlier run in this store left behind.
+    sink.drop_table("ctx", true).await?;
     sink.create_table("ctx", schema.clone(), false).await?;
     let rows: Vec<Vec<Value>> = paragraphs(ctx)
         .into_iter()
