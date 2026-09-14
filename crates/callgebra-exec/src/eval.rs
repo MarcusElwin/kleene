@@ -97,8 +97,11 @@ fn compare(op: BinaryOp, l: &Value, r: &Value) -> Result<Value, ExecError> {
 
 /// `x IN (values)` with SQL NULL semantics over already-evaluated candidates.
 pub(crate) fn in_values(x: &Value, candidates: &[Value], negated: bool) -> Value {
-    // An empty set decides regardless of the operand: `NULL IN ()` is false
-    // and `NULL NOT IN ()` is true (matters for `NOT IN (SELECT ...)`).
+    // `x IN (S)` is a disjunction of `x = s` over S and `x NOT IN (S)` a
+    // conjunction of `x <> s`. Over an empty S those are FALSE and TRUE
+    // respectively, for every x — including NULL, which is why this has to be
+    // decided before the NULL short-circuit below. An empty subquery is the
+    // only way to reach it: `IN ()` is a syntax error.
     if candidates.is_empty() {
         return Value::Bool(negated);
     }
@@ -338,6 +341,21 @@ mod tests {
             in_values(&Value::Null, &[Value::Int(1)], false),
             Value::Null
         );
+    }
+
+    /// An empty subquery decides `IN` / `NOT IN` outright, NULL operand or not:
+    /// `NULL NOT IN (SELECT ... WHERE false)` is TRUE, not NULL. Found by the
+    /// DuckDB differential test.
+    #[test]
+    fn in_over_an_empty_subquery() {
+        for x in [Value::Null, Value::Int(1), Value::from("a")] {
+            assert_eq!(in_values(&x, &[], false), Value::Bool(false), "{x:?} IN ()");
+            assert_eq!(
+                in_values(&x, &[], true),
+                Value::Bool(true),
+                "{x:?} NOT IN ()"
+            );
+        }
     }
 
     #[test]
