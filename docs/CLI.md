@@ -104,6 +104,18 @@ on the first build. `rustup` picks the toolchain pinned in
 `rust-toolchain.toml` automatically inside a checkout; `cargo install --git`
 uses your default toolchain.
 
+While the repository is private, `cargo install --git` over HTTPS fails with
+`failed to authenticate when downloading repository`: cargo fetches with its
+own git library, which does not consult your credential helper. Any of these
+works instead:
+
+```bash
+cargo install --path crates/callgebra                    # from a checkout you already have
+CARGO_NET_GIT_FETCH_WITH_CLI=true \
+  cargo install --git https://github.com/MarcusElwin/callgebra callgebra   # let the git CLI authenticate
+cargo install --git ssh://git@github.com/MarcusElwin/callgebra callgebra   # over SSH
+```
+
 ### Check
 
 ```bash
