@@ -46,9 +46,16 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 cargo run -- --help
 ```
 
-The GitHub Actions workflow is staged in `ci/github-ci.yml` because the
-agent's token cannot write `.github/workflows/`; a human moves it into place
-(see `ci/README.md`).
+The GitHub Actions workflow lives in `.github/workflows/ci.yml`. The copy
+under `ci/` is a leftover from when it was staged there and is scheduled for
+deletion; do not edit it and do not treat it as the source of truth.
+
+A coding agent's GitHub App token cannot push `.github/workflows/`, so an
+agent that changes the workflow must hand the push to a human. **Never
+resolve a conflict on that path by deleting the file.** That happened once
+(`1dbdeed`, merging m1 into m2) and the deletion rode up the whole stack, so
+four milestone PRs silently ran no checks at all. If the push is rejected,
+stop and say so.
 
 DuckDB (`callgebra-store`, feature `duckdb`) builds from source the first time:
 about ten minutes on four cores and four gigabytes per variant. Three
@@ -59,8 +66,12 @@ change feature unification. Always use the `--workspace --all-features`
 shape above; `-p`, `--exclude` or a different feature set makes a fourth.
 Keep `target/` between runs; when disk runs low, delete `target/doc`,
 `target/debug/incremental` and stale test binaries in `target/debug/deps`
-before touching DuckDB artifacts. Set `DUCKDB_LIB_DIR` to a prebuilt library
-to skip the compile; CI caches it.
+before touching DuckDB artifacts.
+`DUCKDB_LIB_DIR` does **not** help while the dependency is declared
+`features = ["bundled"]` — bundled compiles the amalgamation and ignores it.
+Dropping `bundled` to link a prebuilt library is incompatible with the
+`--all-features` shape above, which re-enables it; changing that is a
+deliberate decision, not a CI tweak.
 
 ## Branches and PRs
 
