@@ -10,10 +10,13 @@
 
 #![forbid(unsafe_code)]
 
+pub mod live;
 pub mod repl;
 pub mod sink;
+pub mod testing;
 
-pub use repl::{Rendered, Repl};
+pub use live::{LiveSink, ModelSettings};
+pub use repl::{Rendered, Repl, ReplConfig};
 pub use sink::StoreSink;
 
 use callgebra_core::{Budget, Catalog, ModelAlias, SessionId};

@@ -79,6 +79,8 @@ pub enum StatementKind {
         body: FunctionBody,
         /// Declared volatility; defaults by body kind.
         volatility: Volatility,
+        /// `CREATE OR REPLACE`.
+        replace: bool,
     },
     /// `CREATE AGENT name MODEL '...' EFFORT '...' TOOLS (...) BUDGET (...) PROMPT '...'`.
     CreateAgent {

@@ -237,8 +237,33 @@ pub async fn execute_statement(
         StatementKind::Explain { .. } => Err(ExecError::Eval(
             "EXPLAIN is handled by the planner (arrives in M2)".into(),
         )),
-        StatementKind::CreateFunction { .. } | StatementKind::Call { .. } => Err(ExecError::Eval(
-            "CREATE FUNCTION and CALL arrive in M2".into(),
+        StatementKind::Call { tool, args, input } => {
+            // A side effect: once per input row, in input order, never
+            // deduplicated, never concurrent.
+            let env = ops::Env::default();
+            let rows: Vec<Row> = match input {
+                Some(p) => ops::eval_plan(p, &env, &ctx).await?,
+                None => vec![vec![]],
+            };
+            let mut out: Vec<Row> = vec![];
+            let mut schema: Option<Arc<Schema>> = None;
+            for r in &rows {
+                let mut vals = Vec::with_capacity(args.len());
+                for a in args {
+                    vals.push(eval::eval_expr(a, r, &env, &ctx).await?);
+                }
+                let batch = ctx.sink.table_call(tool, &vals).await?;
+                if schema.is_none() {
+                    schema = Some(batch.schema.clone());
+                }
+                out.extend(batch.rows);
+            }
+            let schema = schema.unwrap_or_else(|| Arc::new(Schema::empty()));
+            let batch = Batch::try_new(schema, out)?;
+            Ok(StatementResult::Rows(batch))
+        }
+        StatementKind::CreateFunction { .. } => Err(ExecError::Eval(
+            "CREATE FUNCTION is handled by the harness".into(),
         )),
         StatementKind::CreateAgent { .. } => {
             Err(ExecError::Eval("CREATE AGENT arrives in M3".into()))

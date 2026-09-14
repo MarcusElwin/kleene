@@ -589,6 +589,9 @@ impl Store for DuckDbStore {
 }
 
 /// Writes trace events into the store's trace tables from a background task.
+/// Clones share the writer; [`DuckDbTraceSink::flush`] on any clone waits for
+/// everything recorded so far.
+#[derive(Clone)]
 pub struct DuckDbTraceSink {
     tx: tokio::sync::mpsc::UnboundedSender<Msg>,
 }

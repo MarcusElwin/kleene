@@ -20,6 +20,22 @@ fn table(name: &str, cols: &[(&str, DataType)]) -> TableDef {
 
 fn catalog() -> Catalog {
     let mut c = standard_catalog();
+    c.add_function(callgebra_core::FunctionDef {
+        name: "shell".into(),
+        args: vec![DataType::Text],
+        variadic: true,
+        returns: callgebra_core::FunctionReturn::Table {
+            schema: Schema::new(vec![
+                Field::new("stdout", DataType::Text),
+                Field::new("exit_code", DataType::Int),
+            ]),
+        },
+        call_kind: callgebra_core::CallKind::Tool {
+            tool: "shell".into(),
+        },
+        volatility: Volatility::Volatile,
+        description: "run a command".into(),
+    });
     c.add_table(table(
         "edges",
         &[
@@ -448,11 +464,6 @@ fn unsupported_constructs_have_hints() {
         ),
         ("SELECT row_number() OVER () FROM nodes", "window"),
         ("CREATE AGENT reviewer MODEL 'worker' PROMPT 'x'", "M3"),
-        (
-            "CREATE FUNCTION f(x TEXT) RETURNS TEXT AS PROMPT 'hi'",
-            "M2",
-        ),
-        ("CALL shell('ls')", "M2"),
         ("SELECT * FROM edges NATURAL JOIN nodes", "ON"),
         ("UPDATE nodes SET name = 'x'", "append-only"),
     ] {
@@ -530,4 +541,46 @@ fn multiple_statements_keep_their_text() {
     assert_eq!(v[0].sql, "SELECT 1");
     let v = plan_sql("  SELECT 1 ; ", &catalog()).unwrap();
     assert_eq!(v[0].sql, "SELECT 1 ;");
+}
+
+#[test]
+fn create_function_and_call_statements() {
+    let s = one("CREATE FUNCTION verify(c TEXT) RETURNS BOOLEAN AS PROMPT 'Is {c} right?'");
+    assert!(matches!(s.kind, StatementKind::CreateFunction { .. }));
+    let s = one("CALL shell('ls -la')");
+    let StatementKind::Call { tool, args, input } = s.kind else {
+        panic!()
+    };
+    assert_eq!(tool, "shell");
+    assert_eq!(args.len(), 1);
+    assert!(input.is_none());
+    let s =
+        one("CALL shell('cat ' || name, 'tmp') FROM (SELECT name FROM nodes WHERE id < 3) AS q");
+    let StatementKind::Call {
+        args,
+        input: Some(input),
+        ..
+    } = s.kind
+    else {
+        panic!()
+    };
+    assert_eq!(args.len(), 2);
+    assert!(matches!(
+        args[0],
+        Expr::Binary {
+            op: BinaryOp::Concat,
+            ..
+        }
+    ));
+    assert_eq!(names(&input), ["name"]);
+    let e = err("CALL upper('x')");
+    assert!(matches!(e, SqlError::Unsupported { .. }), "{e:?}");
+    let e = err("CALL nope('x')");
+    assert!(matches!(e, SqlError::Unresolved { .. }));
+    // Model-call functions type-check like any other function.
+    let p = query("SELECT llm('summarise ' || name) AS s, llm_bool('ok?') AS b FROM nodes");
+    assert_eq!(p.schema().fields[0].data_type, DataType::Text);
+    assert_eq!(p.schema().fields[1].data_type, DataType::Bool);
+    let p = query("SELECT e.item FROM nodes n CROSS JOIN LATERAL expand(n.name, 3) AS e");
+    assert_eq!(names(&p), ["item"]);
 }

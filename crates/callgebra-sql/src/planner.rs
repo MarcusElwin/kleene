@@ -10,7 +10,7 @@ use crate::scope::{CteEnv, Scope, ScopeItem};
 use crate::similar::suggest;
 use crate::statement::{Statement, StatementKind};
 use crate::types::{is_bool_or_any, is_numeric_or_any, type_of};
-use callgebra_core::{Catalog, DataType, Field, FunctionReturn, Schema, Value};
+use callgebra_core::{Catalog, DataType, Field, FunctionReturn, Schema, Value, Volatility};
 use sqlparser::ast as sp;
 use std::sync::Arc;
 
@@ -301,14 +301,14 @@ impl<'c> Planner<'c> {
             }
             sp::Statement::CreateFunction(_) => {
                 return Err(unsupported(
-                    "CREATE FUNCTION",
-                    "arrives in M2 (prompt-, SQL- and shell-defined functions)",
+                    "this CREATE FUNCTION form",
+                    "CREATE FUNCTION name(x TEXT) RETURNS TYPE AS PROMPT '...' | AS SQL (...) | AS SHELL '...'",
                 ))
             }
             sp::Statement::Call(_) => {
                 return Err(unsupported(
-                    "CALL",
-                    "arrives in M2 (side-effecting tools such as shell and write_file)",
+                    "CALL inside a multi-statement text",
+                    "submit CALL tool(args) [FROM query] on its own",
                 ))
             }
             sp::Statement::Update(_) | sp::Statement::Delete(_) => {
@@ -1497,6 +1497,12 @@ impl<'c> Planner<'c> {
                 "{fname} is a scalar function; use it in SELECT or WHERE, not FROM"
             )));
         };
+        if def.volatility == Volatility::Volatile {
+            return Err(unsupported(
+                format!("{fname} in FROM"),
+                format!("{fname} has side effects; run it with CALL {fname}(...) [FROM query]"),
+            ));
+        }
         let arg_scope: Scope<'_> = match lateral_left {
             Some(l) => Scope {
                 items: l.scope.items.clone(),
@@ -2058,6 +2064,15 @@ impl<'c> Planner<'c> {
                 def.name
             )));
         };
+        if def.volatility == Volatility::Volatile {
+            return Err(unsupported(
+                format!("{} in an expression", def.name),
+                format!(
+                    "{} has side effects; run it with CALL {}(...)",
+                    def.name, def.name
+                ),
+            ));
+        }
         self.check_arity(&def.name, def.args.len(), def.variadic, args.len())?;
         for (i, (a, want)) in args.iter().zip(&def.args).enumerate() {
             let got = type_of(a, schema);

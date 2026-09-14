@@ -12,6 +12,7 @@
 
 pub mod error;
 pub mod expr;
+mod extensions;
 pub mod plan;
 mod planner;
 mod scope;
@@ -22,6 +23,7 @@ pub mod types;
 pub use callgebra_core::Catalog;
 pub use error::SqlError;
 pub use expr::{AggregateFn, BinaryOp, Expr, Literal, UnaryOp};
+pub use extensions::{plan_call, plan_create_function};
 pub use plan::{JoinKind, LogicalPlan, SortKey};
 pub use statement::{FunctionBody, Statement, StatementKind};
 pub use types::type_of;
@@ -48,8 +50,9 @@ pub fn plan(stmt: &sqlparser::ast::Statement, catalog: &Catalog) -> Result<State
 
 /// Parse, validate and resolve every statement in `sql`.
 ///
-/// `FINAL(expr)` and `FINAL FROM (query)` are recognised here before parsing,
-/// because they are CallSQL additions the parser does not know. A `FINAL`
+/// `FINAL(expr)`, `FINAL FROM (query)`, `CREATE FUNCTION ... AS PROMPT/SQL/SHELL`
+/// and `CALL tool(args) [FROM query]` are recognised here before parsing,
+/// because they are CallSQL additions the parser does not know. Such a
 /// statement must be the only statement in the text.
 pub fn plan_sql(sql: &str, catalog: &Catalog) -> Result<Vec<Statement>, SqlError> {
     let trimmed = sql.trim().trim_end_matches(';').trim();
@@ -75,6 +78,9 @@ pub fn plan_sql(sql: &str, catalog: &Catalog) -> Result<Vec<Statement>, SqlError
             sql: sql.trim().to_string(),
             kind: StatementKind::Final { plan },
         }]);
+    }
+    if let Some(stmt) = extensions::plan_extension(trimmed, catalog)? {
+        return Ok(vec![stmt]);
     }
     if let Some(hint) = m2_construct(trimmed) {
         return Err(SqlError::Unsupported {
@@ -128,18 +134,7 @@ fn m2_construct(text: &str) -> Option<(&'static str, &'static str)> {
     if upper.starts_with("CREATE AGENT") {
         return Some(("CREATE AGENT", "arrives in M3 (agent roles for SPAWN)"));
     }
-    if upper.starts_with("CREATE FUNCTION") {
-        return Some((
-            "CREATE FUNCTION",
-            "arrives in M2 (prompt-, SQL- and shell-defined functions)",
-        ));
-    }
-    if upper.starts_with("CALL ") || upper == "CALL" {
-        return Some((
-            "CALL",
-            "arrives in M2 (side-effecting tools such as shell and write_file)",
-        ));
-    }
+    let _ = upper;
     None
 }
 
