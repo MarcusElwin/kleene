@@ -1,7 +1,7 @@
 # Structured output: JSON-schema constrained responses
 
 ## Why
-Callgebra's `LLM_JSON(prompt, schema)` and `LLM_BOOL(prompt)` need the
+Kleene's `LLM_JSON(prompt, schema)` and `LLM_BOOL(prompt)` need the
 model's output to validate against a schema. Anthropic exposes
 `output_config.format`, OpenAI exposes `text.format` with `json_schema`.
 Open Responses through Aura has no equivalent, so the client falls back to a

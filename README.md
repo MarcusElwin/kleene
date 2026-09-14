@@ -1,6 +1,6 @@
-# callgebra
+# kleene
 
-**Callgebra — relational algebra for recursive model calls.**
+**Kleene — relational algebra for recursive model calls.**
 
 Write declarative SQL. Compile joins, recursion, predicates and aggregation
 into an execution graph of language-model calls, recursive sub-sessions and
@@ -28,21 +28,21 @@ tells you how many calls that is before you spend them.
 curl -fsSL https://raw.githubusercontent.com/MarcusElwin/callgebra/main/install.sh | sh
 
 # Homebrew
-brew install MarcusElwin/callgebra/callgebra
+brew install MarcusElwin/callgebra/kleene
 
 # From source (compiles DuckDB the first time, about ten minutes)
-cargo install --git https://github.com/MarcusElwin/callgebra callgebra
+cargo install --git https://github.com/MarcusElwin/callgebra kleene
 ```
 
 Prebuilt binaries cover macOS (Apple silicon, Intel) and Linux (x86_64,
-aarch64). `CALLGEBRA_VERSION=v0.1.0` pins the installer to a tag and
-`CALLGEBRA_INSTALL=/usr/local/bin` changes the destination. While the
+aarch64). `KLEENE_VERSION=v0.1.0` pins the installer to a tag and
+`KLEENE_INSTALL=/usr/local/bin` changes the destination. While the
 repository is private, the raw URL is not served; set `GITHUB_TOKEN` and fetch
 the script through the API instead (see [`docs/CLI.md`](docs/CLI.md#curl)).
 Then:
 
 ```bash
-callgebra repl -c "SELECT 1 + 1 AS two"    # the engine, no model needed
+kleene repl -c "SELECT 1 + 1 AS two"    # the engine, no model needed
 ```
 
 Full install, provider and command reference: [`docs/CLI.md`](docs/CLI.md).
@@ -54,14 +54,14 @@ Point it at a model (one of these is enough):
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...        # Anthropic, routed root/worker/proxy/judge by default
 export OPENAI_API_KEY=sk-...               # or any OpenAI-compatible endpoint (OPENAI_BASE_URL, OPENAI_MODEL)
-export CALLGEBRA_ROUTER_TOML=router.toml   # or your own aliases, failover and pricing
+export KLEENE_ROUTER_TOML=router.toml   # or your own aliases, failover and pricing
 ```
 
 Run a task over a context, then read the trace:
 
 ```bash
-callgebra run @demos/oolong/task.txt --context demos/oolong/corpus.txt --budget-calls 60
-callgebra trace "SELECT depth, role, outcome, turns, calls, dollars FROM trace_sessions ORDER BY started_at"
+kleene run @demos/oolong/task.txt --context demos/oolong/corpus.txt --budget-calls 60
+kleene trace "SELECT depth, role, outcome, turns, calls, dollars FROM trace_sessions ORDER BY started_at"
 ```
 
 The model receives the context as a table `ctx(ordinal, text)` and writes
@@ -73,51 +73,51 @@ running the same task again is free.
 Watch it live, or explore the plan space without spending anything:
 
 ```bash
-callgebra tui --run @demos/oolong/task.txt --context demos/oolong/corpus.txt
-callgebra explain "SELECT c FROM candidates WHERE llm_bool('Is ' || c || ' a real place?')"
-callgebra repl < demos/planner/three_way.sql     # join ordering over call predicates
+kleene tui --run @demos/oolong/task.txt --context demos/oolong/corpus.txt
+kleene explain "SELECT c FROM candidates WHERE llm_bool('Is ' || c || ' a real place?')"
+kleene repl < demos/planner/three_way.sql     # join ordering over call predicates
 ```
 
 Keep it learning overnight, and measure it:
 
 ```bash
-callgebra learn run --tasks 20 --generators puzzle,corpus   # resumable; state is tables in the store
-callgebra learn report                                       # the morning query
-callgebra bench run tasks/terminal --mode frozen             # a task pack, one mode
-callgebra bench report                                       # accuracy and cost per pack and mode
+kleene learn run --tasks 20 --generators puzzle,corpus   # resumable; state is tables in the store
+kleene learn report                                       # the morning query
+kleene bench run tasks/terminal --mode frozen             # a task pack, one mode
+kleene bench report                                       # accuracy and cost per pack and mode
 ```
 
-Everything lands in `.callgebra/run.duckdb` under the current directory.
+Everything lands in `.kleene/run.duckdb` under the current directory.
 
 ## Commands
 
 | Command | Does |
 |---|---|
-| `callgebra run <task>` | drive a model through the SQL turn loop to `FINAL` |
-| `callgebra resume <run-id>` | continue a run that hit its turn cap |
-| `callgebra repl [-c SQL]` | CallSQL against the store, interactive or scripted |
-| `callgebra explain <sql>` | the call plan and its cost, without executing |
-| `callgebra trace <sql>` | DuckDB SQL over the trace, memo and session tables |
-| `callgebra tui` | the terminal UI over the engine daemon: call tree, transcript, plan, trace explorer, task board |
-| `callgebra attach` | the same, headless: every event as a JSON line |
-| `callgebra daemon` | the engine as a server on a Unix socket |
-| `callgebra learn …` | the continual loop: tasks, oracles, ratings, curriculum, playbook |
-| `callgebra bench …` | task packs under learning, frozen and plain-agent modes |
+| `kleene run <task>` | drive a model through the SQL turn loop to `FINAL` |
+| `kleene resume <run-id>` | continue a run that hit its turn cap |
+| `kleene repl [-c SQL]` | CallSQL against the store, interactive or scripted |
+| `kleene explain <sql>` | the call plan and its cost, without executing |
+| `kleene trace <sql>` | DuckDB SQL over the trace, memo and session tables |
+| `kleene tui` | the terminal UI over the engine daemon: call tree, transcript, plan, trace explorer, task board |
+| `kleene attach` | the same, headless: every event as a JSON line |
+| `kleene daemon` | the engine as a server on a Unix socket |
+| `kleene learn …` | the continual loop: tasks, oracles, ratings, curriculum, playbook |
+| `kleene bench …` | task packs under learning, frozen and plain-agent modes |
 
 Details and every flag: [`docs/CLI.md`](docs/CLI.md).
 
 ## How it works
 
 ```
-model reply ─▶ callgebra-sql ─▶ callgebra-algebra ─▶ budget check ─▶ callgebra-exec ─▶ rendered rows
+model reply ─▶ kleene-sql ─▶ kleene-algebra ─▶ budget check ─▶ kleene-exec ─▶ rendered rows
    CallSQL     parse, resolve     call kinds, cost,   refuse if over    operators, recursion,   back to the model
                to a LogicalPlan   rules, EXPLAIN                        calls via LiveSink
                                                                             │
-                                    callgebra-llm  (Anthropic, OpenAI-compatible, router, replay)
-                                    callgebra-tools (files, grep, read, shell, write_file, patch, git_*, web_*)
+                                    kleene-llm  (Anthropic, OpenAI-compatible, router, replay)
+                                    kleene-tools (files, grep, read, shell, write_file, patch, git_*, web_*)
                                     child sessions  (rlm, spawn: same loop at depth + 1 with a role and a budget slice)
                                                                             │
-                                    callgebra-store (DuckDB): tables · memo · trace_* · sessions · learning · evals
+                                    kleene-store (DuckDB): tables · memo · trace_* · sessions · learning · evals
 ```
 
 - **A planner for calls.** Predicates that call a model have a cost the
@@ -153,7 +153,7 @@ replayable.
 ## Developing
 
 ```bash
-git clone https://github.com/MarcusElwin/callgebra && cd callgebra
+git clone https://github.com/MarcusElwin/callgebra && cd kleene
 cargo build                                                          # DuckDB compiles once, ~10 min
 cargo test --workspace --all-features
 cargo clippy --workspace --all-targets --all-features -- -D warnings
@@ -165,4 +165,4 @@ workflow. Written in Rust, model-agnostic with no SDK and no gateway
 required, MIT licensed.
 
 The name is also used by an unrelated small JavaScript library
-(`fluture-js/callgebra`).
+(`fluture-js/kleene`).

@@ -4,8 +4,8 @@ A pack is a directory with a `pack.json`: a name, a description, a license
 note, a default task kind and a list of tasks, each with its text, optional
 context (inline or a file), optional setup commands and source directory for
 a fresh workspace, an oracle (`exact`, `number`, `sat`, `shell`, `judge`,
-`human`) and a difficulty prior. `callgebra bench run <dir> --mode
-learning|frozen|plain` runs one; `callgebra bench report` summarises every run.
+`human`) and a difficulty prior. `kleene bench run <dir> --mode
+learning|frozen|plain` runs one; `kleene bench report` summarises every run.
 
 | Pack | What it is | Oracle |
 |---|---|---|
@@ -14,8 +14,8 @@ learning|frozen|plain` runs one; `callgebra bench report` summarises every run.
 | `finance-synthetic/` | 20 synthetic statements with growth, ratio and sum questions, frozen from `statements` | number within tolerance |
 | `legal-synthetic/` | 20 synthetic contracts with planted clause categories, frozen from `contracts` | exact set of categories |
 
-Rebuild a frozen pack with `callgebra bench build <dir> --from <generator>
+Rebuild a frozen pack with `kleene bench build <dir> --from <generator>
 --count N --dial D --seed S`; the same seeds give the same tasks. Import a
-Harvey LAB checkout with `callgebra bench import-lab <root> tasks/harvey-lab`
+Harvey LAB checkout with `kleene bench import-lab <root> tasks/harvey-lab`
 (matter folders are copied into the pack; LAB's own evaluator remains the
 scorer of record). The external datasets themselves are not redistributed.

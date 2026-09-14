@@ -1,16 +1,16 @@
-# Callgebra — conventions for contributors and coding agents
+# Kleene — conventions for contributors and coding agents
 
 Read `docs/PLAN.md` first. It is the design; this file is the working rules.
 
 ## What this is
 
-Rust workspace. The model writes CallSQL; we parse it (`callgebra-sql`),
-annotate it with call kinds (`callgebra-algebra`), execute it asynchronously
-(`callgebra-exec`), route model calls (`callgebra-llm`), run tools
-(`callgebra-tools`), persist tables, memo and trace in DuckDB
-(`callgebra-store`, `callgebra-trace`), drive sessions (`callgebra-harness`),
-and show it all in a TUI over a daemon (`callgebra-daemon`, `callgebra-tui`).
-Shared interface types live in `callgebra-core`; change them deliberately,
+Rust workspace. The model writes CallSQL; we parse it (`kleene-sql`),
+annotate it with call kinds (`kleene-algebra`), execute it asynchronously
+(`kleene-exec`), route model calls (`kleene-llm`), run tools
+(`kleene-tools`), persist tables, memo and trace in DuckDB
+(`kleene-store`, `kleene-trace`), drive sessions (`kleene-harness`),
+and show it all in a TUI over a daemon (`kleene-daemon`, `kleene-tui`).
+Shared interface types live in `kleene-core`; change them deliberately,
 every crate depends on them.
 
 ## Rules
@@ -57,7 +57,7 @@ resolve a conflict on that path by deleting the file.** That happened once
 four milestone PRs silently ran no checks at all. If the push is rejected,
 stop and say so.
 
-DuckDB (`callgebra-store`, feature `duckdb`) builds from source the first time:
+DuckDB (`kleene-store`, feature `duckdb`) builds from source the first time:
 about ten minutes on four cores and four gigabytes per variant. Three
 variants are normal and all needed: the `check` profile (clippy) has its own
 `target/debug/build/libduckdb-sys-*` output, and `cargo build` and

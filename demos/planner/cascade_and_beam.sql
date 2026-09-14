@@ -1,5 +1,5 @@
 -- Cascades and beam-limited recursion. Run with:
---   callgebra repl < demos/planner/cascade_and_beam.sql
+--   kleene repl < demos/planner/cascade_and_beam.sql
 
 CREATE TABLE papers AS
   SELECT generate_series AS id,

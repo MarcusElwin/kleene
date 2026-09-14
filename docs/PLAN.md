@@ -1,6 +1,6 @@
-# Callgebra — implementation plan
+# Kleene — implementation plan
 
-> **Callgebra**: relational algebra for recursive model calls.
+> **Kleene**: relational algebra for recursive model calls.
 > The model writes SQL. SQL compiles to a *call algebra*: relational operators
 > annotated with the language-model and tool calls they imply. A planner rewrites
 > and costs that algebra, an async executor runs it as a graph of LLM calls,
@@ -65,24 +65,24 @@ instances whose difficulty is dialled to keep the system at its frontier.
                       └───────┬──────────────────────────▲───────┘
                               │ SQL text                 │ truncated result,
                               ▼                          │ errors, budget
-        ┌──────────────── callgebra-sql ───────────────┐ │
+        ┌──────────────── kleene-sql ───────────────┐ │
         │ sqlparser 0.62 → subset validation →         │ │
         │ name resolution against Catalog → LogicalPlan│ │
         └───────────────────────┬──────────────────────┘ │
                                 ▼                        │
-        ┌──────────────── callgebra-algebra ───────────┐ │
+        ┌──────────────── kleene-algebra ───────────┐ │
         │ LogicalPlan → CallPlan (operators × CallKind) │ │
         │ cost model · rewrite rules · plan search      │ │
         │ EXPLAIN (estimated calls / tokens / $ / depth)│ │
         └───────────────────────┬──────────────────────┘ │
                                 ▼                        │
-        ┌──────────────── callgebra-exec ──────────────┐ │
+        ┌──────────────── kleene-exec ──────────────┐ │
         │ async pull operators (tokio) · semi-naive    │ │
         │ recursion · batching · memo · budgets ·      │─┘
         │ cancellation · concurrency limits            │
         └──────┬───────────────┬───────────────┬───────┘
                ▼               ▼               ▼
-       callgebra-llm    callgebra-tools   SPAWN / RLM sub-agent (depth+1)
+       kleene-llm    kleene-tools   SPAWN / RLM sub-agent (depth+1)
        Provider trait:  (fs, grep, shell, ─▶ back into harness
         Anthropic direct web, sandbox)      with a role, budget slice
         OpenAI-compatible                   and catalog subset
@@ -92,12 +92,12 @@ instances whose difficulty is dialled to keep the system at its frontier.
                │               │               │
                └───────────────┴───────────────┘
                                ▼
-        ┌──────────────── callgebra-store (DuckDB) ────┐
+        ┌──────────────── kleene-store (DuckDB) ────┐
         │ session tables · memo · append-only trace    │
         │ exposed back to queries as trace_* relations │
         └───────────────────────┬──────────────────────┘
                                 ▼
-        ┌──────────────── callgebra-tui ───────────────┐
+        ┌──────────────── kleene-tui ───────────────┐
         │ ratatui 0.30 · call tree · transcript ·      │
         │ plan view · metrics · trace explorer · tasks │
         └──────────────────────────────────────────────┘
@@ -223,7 +223,7 @@ error-as-result-row treatment as a syntax error.
 ### 3.3 The call algebra
 
 Ordinary relational operators: σ (filter), π (project), ⋈ (join), ∪, −, γ
-(aggregate), μ (least fixpoint, for recursive CTEs). Callgebra adds a
+(aggregate), μ (least fixpoint, for recursive CTEs). Kleene adds a
 *call kind* to any operator that evaluates a call expression:
 
 | Operator | Meaning | Cost signature |
@@ -271,7 +271,7 @@ remaining budget, returning the estimate to the model instead.
   shared across sessions and runs. Replaying a run against a warm memo is free,
   which is how the test-suite runs real prompts without real calls.
 - **Session state**: every `CREATE TABLE` lands in the run's DuckDB file.
-  Kill the process, restart, `callgebra resume <session>`, the tables and the
+  Kill the process, restart, `kleene resume <session>`, the tables and the
   transcript are still there. Checkpointing is a property of the storage, not a
   feature bolted on.
 
@@ -357,13 +357,13 @@ Guardrails: the base system prompt is immutable; learned content is appended
 in clearly marked sections; every learned object has a version and a
 `learned_from` trace pointer; adoption requires beating the current version
 on the replay eval for the affected task kinds at equal or lower cost; a
-`callgebra learn revert <version>` command exists and is tested.
+`kleene learn revert <version>` command exists and is tested.
 
 #### Weight-level learning (stretch)
 
 Traces already have the shape of rollouts: a tree of sessions, statements,
 calls and rewards. An exporter writes them in the `verifiers` trace format
-so a Callgebra task pack can be a `prime-rl` environment, with `VERIFY`
+so a Kleene task pack can be a `prime-rl` environment, with `VERIFY`
 functions as the reward. Out of scope until the harness-level learning above
 has data to show it is worth it.
 
@@ -426,7 +426,7 @@ unit.
 
 ### 3.8 Model-agnostic LLM layer
 
-Callgebra never talks to one vendor, and it does not need a gateway to be
+Kleene never talks to one vendor, and it does not need a gateway to be
 model-agnostic. The surface it needs from a model is narrow: one request
 shape (system prefix, messages, optional tools, optional JSON schema for the
 output), streaming, usage. So the layer is small and owned here:
@@ -456,7 +456,7 @@ fallback chain (ordered candidates, circuit breaker per endpoint), its model
 catalog and cost calculator (a pricing table keyed by model, actuals computed
 from usage), and the idea that the internal message model is vendor-neutral
 and each adapter maps to and from the wire format. Those are small modules
-and they belong in `callgebra-llm`; pulling `aura-core` would bring
+and they belong in `kleene-llm`; pulling `aura-core` would bring
 SQLx/Postgres, Redis and the AWS SDK with it.
 
 **Aura as an option, not a requirement.** With the `gateway` feature the
@@ -485,7 +485,7 @@ swapping the implementation must not touch the planner or the harness.
 `rig-core` is a whole agent framework and is more than we want.
 
 **Model aliases, not model names.** CallSQL and the planner refer to tiers:
-`root`, `worker`, `proxy`, `judge`. `callgebra.toml` maps each alias to an
+`root`, `worker`, `proxy`, `judge`. `kleene.toml` maps each alias to an
 ordered list of `(backend, model)` candidates; the router tries them in
 order and records which one served. Switching vendors is a config change and
 a memo namespace change, nothing else.
@@ -531,7 +531,7 @@ ratatui 0.30 + crossterm, tokio event loop (`EventStream` + `mpsc` in
 `select!`), event-driven redraw, thin client over the daemon socket.
 
 ```
-┌ callgebra ── session 3f2a · task: "find the bug in parser" · depth 0/2 ── $0.41 · cache 78% ┐
+┌ kleene ── session 3f2a · task: "find the bug in parser" · depth 0/2 ── $0.41 · cache 78% ┐
 │ CALL TREE                  │ TRANSCRIPT                                   │ PLAN            │
 │ ▾ session 3f2a  12 calls   │ ▸ turn 3                                     │ π answer        │
 │   ▾ stmt 1  CREATE TABLE   │ ```sql                                       │ └ σ VERIFY(c)   │
@@ -577,21 +577,21 @@ cancels the selected statement; `d` detaches (engine keeps running).
 ## 5. Workspace layout
 
 ```
-callgebra/
+kleene/
 ├── Cargo.toml                 workspace, shared lints, release profile
 ├── crates/
-│   ├── callgebra-core/        shared interface types: Value, Batch, Schema, Budget, Catalog, ids
-│   ├── callgebra-sql/         parse, validate subset, LogicalPlan
-│   ├── callgebra-algebra/     CallPlan, CallKind, cost model, rules, EXPLAIN
-│   ├── callgebra-exec/        async operators, recursion, budgets, memo
-│   ├── callgebra-llm/         Provider trait, Anthropic, OpenAI-compat, Open Responses (feature), router, pricing, replay
-│   ├── callgebra-tools/       virtual tables, table functions, sandbox
-│   ├── callgebra-store/       DuckDB: session tables, memo, trace schema, appender
-│   ├── callgebra-trace/       event model, tracing Layer → store
-│   ├── callgebra-harness/     RLM REPL loop, sessions, agents and roles, continual loop, generators
-│   ├── callgebra-daemon/      socket server, JSONL protocol, cursors
-│   ├── callgebra-tui/         ratatui client
-│   └── callgebra/             CLI binary: run, repl, explain, trace, bench, tui, daemon
+│   ├── kleene-core/        shared interface types: Value, Batch, Schema, Budget, Catalog, ids
+│   ├── kleene-sql/         parse, validate subset, LogicalPlan
+│   ├── kleene-algebra/     CallPlan, CallKind, cost model, rules, EXPLAIN
+│   ├── kleene-exec/        async operators, recursion, budgets, memo
+│   ├── kleene-llm/         Provider trait, Anthropic, OpenAI-compat, Open Responses (feature), router, pricing, replay
+│   ├── kleene-tools/       virtual tables, table functions, sandbox
+│   ├── kleene-store/       DuckDB: session tables, memo, trace schema, appender
+│   ├── kleene-trace/       event model, tracing Layer → store
+│   ├── kleene-harness/     RLM REPL loop, sessions, agents and roles, continual loop, generators
+│   ├── kleene-daemon/      socket server, JSONL protocol, cursors
+│   ├── kleene-tui/         ratatui client
+│   └── kleene/             CLI binary: run, repl, explain, trace, bench, tui, daemon
 ├── tasks/                     task packs (yaml): prompt, context source, oracle
 ├── prompts/                   system prompt, catalog rendering, examples
 ├── tests/                     differential SQL tests, replayed sessions
@@ -614,14 +614,14 @@ Optional later: `ascent`/`datafrog` (not needed, semi-naive is small to write),
 Each milestone ends with something runnable and a demo query.
 
 **M0 — Scaffold (small).** Workspace, CI (fmt, clippy, test), `MockProvider`,
-`tracing` to stderr, `callgebra --version`. README with the pitch.
+`tracing` to stderr, `kleene --version`. README with the pitch.
 
-**M1 — Relational core.** `callgebra-sql` + `callgebra-exec` for the pure
+**M1 — Relational core.** `kleene-sql` + `kleene-exec` for the pure
 subset: SELECT/JOIN/WHERE/GROUP BY/ORDER/LIMIT, subqueries, EXISTS, CTEs and
 recursive CTEs with semi-naive evaluation. DuckDB store. Differential tests
 against DuckDB
 with `proptest`-generated queries and data. Demo: transitive closure and
-shortest path over a generated graph, `callgebra repl` with a local table.
+shortest path over a generated graph, `kleene repl` with a local table.
 
 **M2 — Call algebra.** `LLM*` scalar functions, prompt-defined
 `CREATE FUNCTION`, `EXPAND`, `LATERAL` table functions, the read tool
@@ -668,7 +668,7 @@ finance and remaining legal learning tracks with their
 learning-on versus learning-off runs, then the rest of section 7; the plain-agent baseline on the
 same provider layer; plots (accuracy vs context at cost parity, calls vs
 difficulty, estimate accuracy over time, plan-space size vs query shape);
-the dialect reference; and a write-up: "Callgebra: a relational calculus for
+the dialect reference; and a write-up: "Kleene: a relational calculus for
 language-model computation".
 
 Suggested order of attack after this plan is approved: M0 and M1 in one go,
@@ -695,7 +695,7 @@ Three layers, cheapest first. The first two run in CI without a model.
   statement, tracked over time; the learned cost model (3.6) must move this
   toward zero.
 - Cost parity, the RLM paper's framing: for each task family, accuracy of
-  Callgebra against a plain tool-calling agent loop *built on the same
+  Kleene against a plain tool-calling agent loop *built on the same
   provider layer and budgets*, so the comparison isolates the SQL abstraction
   rather than the model or the client, at equal spend.
 - Plan-space size and planning time per query shape, the "where planning
@@ -728,7 +728,7 @@ tables, and aggregation).
 | **Finance** | FinanceBench (150 open questions over 10-K/10-Q filings; full set on request from Patronus) | numeric and factual answers with evidence pages; numeric tolerance plus evidence-page match | the same filing structure recurs across companies, so a learned `find_line_item(kind)` function and playbook entries ("income statement chunk, then grep the label") should transfer |
 | **Finance** | FinQA (numerical reasoning over report pages, MIT) and TAT-QA (16,552 questions over hybrid table plus text contexts) | program or number exact match | thousands of instances, so learning curves have statistical power; questions cluster by reasoning type (ratio, growth, sum) |
 | **Legal** | CUAD (510 commercial contracts, 41 clause categories, CC BY 4.0) | clause spans per category; token F1 against gold spans | one `CREATE FUNCTION has_clause(kind, text)` per category is refined contract after contract; measure per-category precision and recall over the stream |
-| **Legal, headline** | **Harvey LAB** (Legal Agent Benchmark, MIT, `harveyai/harvey-labs`): 1,671 tasks across 24 practice areas plus contracting, each a `task.json` (instructions, `work_type` analyze / draft / review / research, expected deliverable files) with a `documents/` matter folder; graded against 75,000+ expert-written pass/fail criteria by two LLM judges (defaults Claude Sonnet 4.6 and GPT-5.5) with **all-pass** scoring, so a task counts only if every criterion passes. Frontier models completed under 10% end to end at launch (May 2026); the Artificial Analysis leaderboard sits around 25% as of September 2026 | LAB's own evaluator, unchanged: Callgebra writes deliverables to `output/` and `evaluation.run_eval` scores them, so numbers are comparable with the public leaderboard. All-pass rate is the headline, criterion pass rate the diagnostic | LAB's agent gets exactly `bash, read, write, edit, glob, grep, finish`, which is the CallSQL surface (`shell`, `read`, `write_file`, `patch`, `files`, `grep`, `FINAL`) one to one, so it is the cleanest external test of "everything is SQL". Workflows repeat across scenarios (`extract-psa-key-terms/scenario-01..`), the shape self-learning needs; the harsh all-pass metric makes any learning gain unambiguous |
+| **Legal, headline** | **Harvey LAB** (Legal Agent Benchmark, MIT, `harveyai/harvey-labs`): 1,671 tasks across 24 practice areas plus contracting, each a `task.json` (instructions, `work_type` analyze / draft / review / research, expected deliverable files) with a `documents/` matter folder; graded against 75,000+ expert-written pass/fail criteria by two LLM judges (defaults Claude Sonnet 4.6 and GPT-5.5) with **all-pass** scoring, so a task counts only if every criterion passes. Frontier models completed under 10% end to end at launch (May 2026); the Artificial Analysis leaderboard sits around 25% as of September 2026 | LAB's own evaluator, unchanged: Kleene writes deliverables to `output/` and `evaluation.run_eval` scores them, so numbers are comparable with the public leaderboard. All-pass rate is the headline, criterion pass rate the diagnostic | LAB's agent gets exactly `bash, read, write, edit, glob, grep, finish`, which is the CallSQL surface (`shell`, `read`, `write_file`, `patch`, `files`, `grep`, `FINAL`) one to one, so it is the cleanest external test of "everything is SQL". Workflows repeat across scenarios (`extract-psa-key-terms/scenario-01..`), the shape self-learning needs; the harsh all-pass metric makes any learning gain unambiguous |
 | **Legal** | Harvey's BigLaw Bench (Core: transactional and litigation tasks; Workflows: SPA Deal Points extraction across Share Purchase Agreements; Retrieval: long contracts with cross-references and defined terms, plus discovery emails). Samples and rubrics public, full set on request from Harvey | rubric grading with positive points for requirements met and negative points for errors such as hallucinations, plus source reliability; scored by a `judge` role against the published rubrics, with the answer score read as "% of a lawyer-quality work product" | Workflows repeats one extraction schema across many SPAs, the ideal shape for refined `CREATE FUNCTION` extractors and playbook transfer; Retrieval's cross-references and defined terms exercise `chunks`, `grep` and recursive CTEs (follow a defined term to its definition) |
 | **Legal** | LegalBench (162 tasks; per-task licenses, filter to permissive) | mostly yes/no and short-answer, exact match | many small task families with shared legal reasoning; tests whether playbook entries transfer *across* tasks, not just within |
 | **Synthetic, both** | generated contracts with planted clauses; generated statements with planted figures and inconsistencies | code oracle, unlimited instances | feeds the continual generators; hardness dialled by document length, distractors and paraphrase |
@@ -748,15 +748,15 @@ Measurement design, the same for every track:
    replay eval that admitted it; the report lists reverts, so the learning
    rate and the regret are both visible.
 
-Running LAB from Callgebra: import each task directory as a task row with
+Running LAB from Kleene: import each task directory as a task row with
 the matter folder mounted read-only as the workspace; `read(path)` must
 parse `.docx`, `.pdf`, `.xlsx` and `.pptx` (LAB uses Pandoc, MarkItDown and
-pdfplumber; Callgebra shells out to `pandoc` in the sandbox and falls back
+pdfplumber; Kleene shells out to `pandoc` in the sandbox and falls back
 to Rust readers); deliverables are written with `CALL write_file`, `.docx`
 outputs via `pandoc` from Markdown; `FINAL` lists the deliverables the way
 LAB's `finish` tool does. Then LAB's `evaluation.run_eval` scores the
 `output/` directory. Runs go in `results/<run-id>/` in LAB's layout, so its
-comparison dashboards work on Callgebra runs too. Harvey also publishes
+comparison dashboards work on Kleene runs too. Harvey also publishes
 BigLaw Bench: Research for agentic legal research; it joins the track once
 LAB runs.
 
@@ -765,7 +765,7 @@ LegalBench is mixed and must be filtered per task; FinQA is MIT; TAT-QA's
 terms should be checked before redistribution of derived fixtures.
 
 Reporting: one `evals` table per run with accuracy, calls, tokens, dollars,
-depth, branching and wall clock per task; a `callgebra bench` command that
+depth, branching and wall clock per task; a `kleene bench` command that
 renders it; the TUI tasks board reads the same table. Baselines are recorded
 as replay fixtures too, so a comparison is reproducible without re-spending.
 
@@ -780,7 +780,7 @@ as replay fixtures too, so a comparison is reproducible without re-spending.
 | Non-determinism makes tests flaky | `ReplayProvider` fixtures; all relational tests are differential against DuckDB and need no model at all. |
 | DuckDB bundled build slows clean compiles | Cached in CI, `DUCKDB_LIB_DIR` for a prebuilt library locally, and the store sits behind one crate so nothing else recompiles when it does. |
 | Sandbox escape via `shell` | `hakoniwa` on Linux, read-only workspace by default, explicit allow-list for network, every call traced. Unsafe fallback must be opted into. |
-| Name collision | `callgebra` exists as a small JavaScript library (`fluture-js/callgebra`) and npm package; crates.io and PyPI are free. Keep the name, note the prior art in the README. |
+| Name collision | `kleene` exists as a small JavaScript library (`fluture-js/kleene`) and npm package; crates.io and PyPI are free. Keep the name, note the prior art in the README. |
 | Scope creep | The milestones are cumulative and each ends with a demo; the planner (M5) and continual harness (M6) come after a working RLM loop, not before. |
 
 ---
@@ -822,17 +822,17 @@ interfaces fixed first.
    protocol as `.rs` files with doc comments and `todo!()` bodies, committed
    before any implementation. This is the contract every other agent codes
    against.
-2. **M0 + M1 in parallel.** Agents for `callgebra-sql` (parser subset and
-   planner), `callgebra-exec` (operators and semi-naive recursion),
-   `callgebra-trace` (schema and layer) and the differential test harness
+2. **M0 + M1 in parallel.** Agents for `kleene-sql` (parser subset and
+   planner), `kleene-exec` (operators and semi-naive recursion),
+   `kleene-trace` (schema and layer) and the differential test harness
    against DuckDB. Integration and review by the coordinating session.
-3. **M2 in parallel.** `callgebra-llm` (Aura, Anthropic, replay),
-   `callgebra-algebra` (call kinds, rules, EXPLAIN), `callgebra-tools`.
+3. **M2 in parallel.** `kleene-llm` (Aura, Anthropic, replay),
+   `kleene-algebra` (call kinds, rules, EXPLAIN), `kleene-tools`.
 4. **M3 onward** alternates: harness and agents, then TUI and daemon, then
    planner, then generators. Each milestone ends with a code review pass and
    the demo query recorded as a replay fixture so it runs in CI for free.
 
-Every agent works on its own branch off `claude/callgebra-sql-rlm-9opg46`,
+Every agent works on its own branch off `claude/kleene-sql-rlm-9opg46`,
 with `cargo fmt`, `cargo clippy -D warnings` and `cargo test` green before
 merge. The coordinating session owns the workspace `Cargo.toml`, the
 interface crate and the merge order.

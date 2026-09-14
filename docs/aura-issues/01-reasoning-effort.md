@@ -1,7 +1,7 @@
 # Add a `reasoning` option to `CreateResponseRequest`
 
 ## Why
-Callgebra sets a per-call effort level (`low` for mapper and verifier
+Kleene sets a per-call effort level (`low` for mapper and verifier
 sub-calls, `high` or `xhigh` for the root session) and relies on it for cost
 control. Through the Open Responses endpoint there is no field to carry it,
 so `EFFORT` becomes a no-op when a gateway is in the path.

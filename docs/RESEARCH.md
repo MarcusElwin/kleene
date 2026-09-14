@@ -71,7 +71,7 @@ the item is marked (snippet).
   snapshot and rehydrate, tracing spans.
 - Curated index: https://github.com/ai-boost/awesome-harness-engineering
 - Common pattern across all: append-only event log plus externalised state
-  plus checkpoints, re-read on resume. Callgebra makes the state a database.
+  plus checkpoints, re-read on resume. Kleene makes the state a database.
 
 ## Prime Intellect
 
@@ -88,7 +88,7 @@ the item is marked (snippet).
   as the universal trace recorder.
 - prime-rl: https://github.com/PrimeIntellect-ai/prime-rl — orchestrator,
   inference and trainer as separate processes; rollouts persisted to the
-  filesystem. Relevant only if Callgebra traces are later used for training.
+  filesystem. Relevant only if Kleene traces are later used for training.
 
 ## Headlong
 
@@ -264,7 +264,7 @@ was archived in July 2026, so it is not used.
 
 ## Naming
 
-`callgebra` is taken on npm and GitHub by a small JavaScript library
-(https://github.com/fluture-js/callgebra); crates.io and PyPI are free.
+`kleene` is taken on npm and GitHub by a small JavaScript library
+(https://github.com/fluture-js/kleene); crates.io and PyPI are free.
 `HardQL`, `RLMQL`, `RelationalLM` are free everywhere, but `rllm`
 (relationLLM) is a real PyTorch library near the last one.

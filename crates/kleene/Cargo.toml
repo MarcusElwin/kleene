@@ -1,0 +1,36 @@
+[package]
+name = "kleene"
+description = "Kleene: relational algebra for recursive model calls"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+default-run = "kleene"
+
+[[bin]]
+name = "kleene"
+path = "src/main.rs"
+
+[dependencies]
+kleene-core = { workspace = true }
+kleene-sql = { workspace = true }
+kleene-algebra = { workspace = true }
+kleene-exec = { workspace = true }
+kleene-llm = { workspace = true }
+kleene-tools = { workspace = true }
+kleene-store = { workspace = true }
+kleene-trace = { workspace = true }
+kleene-harness = { workspace = true }
+kleene-daemon = { workspace = true }
+kleene-tui = { workspace = true }
+anyhow = { workspace = true }
+serde_json = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { workspace = true }
+
+[lints]
+workspace = true

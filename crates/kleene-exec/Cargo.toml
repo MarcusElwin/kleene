@@ -1,0 +1,23 @@
+[package]
+name = "kleene-exec"
+description = "Async pull-based executor for call plans: operators, semi-naive recursion, budgets"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+kleene-core = { workspace = true }
+kleene-sql = { workspace = true }
+kleene-algebra = { workspace = true }
+async-trait = { workspace = true }
+async-recursion = "1"
+serde_json = { workspace = true }
+futures = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,19 +1,19 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/callgebra-core",
-    "crates/callgebra-sql",
-    "crates/callgebra-algebra",
-    "crates/callgebra-exec",
-    "crates/callgebra-llm",
-    "crates/callgebra-tools",
-    "crates/callgebra-store",
-    "crates/callgebra-trace",
-    "crates/callgebra-harness",
-    "crates/callgebra-daemon",
-    "crates/callgebra-tui",
-    "crates/callgebra",
-    "crates/callgebra-difftest",
+    "crates/kleene-core",
+    "crates/kleene-sql",
+    "crates/kleene-algebra",
+    "crates/kleene-exec",
+    "crates/kleene-llm",
+    "crates/kleene-tools",
+    "crates/kleene-store",
+    "crates/kleene-trace",
+    "crates/kleene-harness",
+    "crates/kleene-daemon",
+    "crates/kleene-tui",
+    "crates/kleene",
+    "crates/kleene-difftest",
 ]
 
 [workspace.package]
@@ -25,17 +25,17 @@ repository = "https://github.com/MarcusElwin/callgebra"
 authors = ["Marcus Elwin"]
 
 [workspace.dependencies]
-callgebra-core = { path = "crates/callgebra-core" }
-callgebra-sql = { path = "crates/callgebra-sql" }
-callgebra-algebra = { path = "crates/callgebra-algebra" }
-callgebra-exec = { path = "crates/callgebra-exec" }
-callgebra-llm = { path = "crates/callgebra-llm" }
-callgebra-tools = { path = "crates/callgebra-tools" }
-callgebra-store = { path = "crates/callgebra-store" }
-callgebra-trace = { path = "crates/callgebra-trace" }
-callgebra-harness = { path = "crates/callgebra-harness" }
-callgebra-daemon = { path = "crates/callgebra-daemon" }
-callgebra-tui = { path = "crates/callgebra-tui" }
+kleene-core = { path = "crates/kleene-core" }
+kleene-sql = { path = "crates/kleene-sql" }
+kleene-algebra = { path = "crates/kleene-algebra" }
+kleene-exec = { path = "crates/kleene-exec" }
+kleene-llm = { path = "crates/kleene-llm" }
+kleene-tools = { path = "crates/kleene-tools" }
+kleene-store = { path = "crates/kleene-store" }
+kleene-trace = { path = "crates/kleene-trace" }
+kleene-harness = { path = "crates/kleene-harness" }
+kleene-daemon = { path = "crates/kleene-daemon" }
+kleene-tui = { path = "crates/kleene-tui" }
 
 anyhow = "1"
 async-trait = "0.1"

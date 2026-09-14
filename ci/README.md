@@ -1,9 +1,9 @@
 # CI
 
 `github-ci.yml` is the GitHub Actions workflow (fmt, clippy with warnings
-denied, tests, docs). `release.yml` builds the `callgebra` binary for four
+denied, tests, docs). `release.yml` builds the `kleene` binary for four
 targets on `v*` tags, attaches tarballs and SHA-256 checksums to a GitHub
-release, and prints the values `Formula/callgebra.rb` needs. Both live here
+release, and prints the values `Formula/kleene.rb` needs. Both live here
 because the coding agent's GitHub App token cannot create files under
 `.github/workflows/`. To enable them:
 

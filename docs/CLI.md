@@ -1,7 +1,7 @@
-# The `callgebra` CLI
+# The `kleene` CLI
 
 Install, point it at a model, and run. Every command below is one binary,
-`callgebra`; run `callgebra --help` or `callgebra <command> --help` for the
+`kleene`; run `kleene --help` or `kleene <command> --help` for the
 flags as compiled.
 
 - [Install](#install)
@@ -31,9 +31,9 @@ destination is not on your `PATH`. Environment variables it honours:
 
 | Variable | Effect | Default |
 |---|---|---|
-| `CALLGEBRA_VERSION` | Install a specific tag, e.g. `v0.1.0` | latest release |
-| `CALLGEBRA_INSTALL` | Destination directory | `~/.local/bin` |
-| `CALLGEBRA_REPO` | `owner/repo` to fetch from | `MarcusElwin/callgebra` |
+| `KLEENE_VERSION` | Install a specific tag, e.g. `v0.1.0` | latest release |
+| `KLEENE_INSTALL` | Destination directory | `~/.local/bin` |
+| `KLEENE_REPO` | `owner/repo` to fetch from | `MarcusElwin/callgebra` |
 | `GITHUB_TOKEN` (or `GH_TOKEN`) | Token with read access to the repository; required while it is private, and raises the API rate limit otherwise | unset |
 
 Read it before piping it into a shell if that is your habit:
@@ -67,23 +67,23 @@ download and it says so. Publishing one is: move `ci/release.yml` to
 `.github/workflows/release.yml`, then `git tag v0.1.0 && git push origin
 v0.1.0`. The workflow builds the four targets, attaches the tarballs and
 checksums, and prints the values the Homebrew formula needs. Meanwhile,
-build from a checkout: `cargo install --path crates/callgebra`.
+build from a checkout: `cargo install --path crates/kleene`.
 
 ### Homebrew
 
 ```bash
-brew install MarcusElwin/callgebra/callgebra
+brew install MarcusElwin/callgebra/kleene
 ```
 
-This installs from the tap `MarcusElwin/homebrew-callgebra`, whose formula is
-the template in [`Formula/callgebra.rb`](../Formula/callgebra.rb). Homebrew
+This installs from the tap `MarcusElwin/homebrew-kleene`, whose formula is
+the template in [`Formula/kleene.rb`](../Formula/kleene.rb). Homebrew
 refuses a formula given by path (`Homebrew requires formulae to be in a tap`),
 so until that tap exists, make a local one from a checkout:
 
 ```bash
-brew tap-new marcuselwin/callgebra
-cp Formula/callgebra.rb "$(brew --repository marcuselwin/callgebra)/Formula/"
-brew install --HEAD marcuselwin/callgebra/callgebra
+brew tap-new marcuselwin/kleene
+cp Formula/kleene.rb "$(brew --repository marcuselwin/kleene)/Formula/"
+brew install --HEAD marcuselwin/kleene/kleene
 ```
 
 `--HEAD` clones `main` and builds with cargo (about ten minutes, DuckDB
@@ -96,7 +96,7 @@ public repository.
 ### cargo
 
 ```bash
-cargo install --git https://github.com/MarcusElwin/callgebra callgebra
+cargo install --git https://github.com/MarcusElwin/callgebra kleene
 ```
 
 Needs Rust 1.88 or newer and about ten minutes: DuckDB is compiled from source
@@ -110,17 +110,17 @@ own git library, which does not consult your credential helper. Any of these
 works instead:
 
 ```bash
-cargo install --path crates/callgebra                    # from a checkout you already have
+cargo install --path crates/kleene                    # from a checkout you already have
 CARGO_NET_GIT_FETCH_WITH_CLI=true \
-  cargo install --git https://github.com/MarcusElwin/callgebra callgebra   # let the git CLI authenticate
-cargo install --git ssh://git@github.com/MarcusElwin/callgebra callgebra   # over SSH
+  cargo install --git https://github.com/MarcusElwin/callgebra kleene   # let the git CLI authenticate
+cargo install --git ssh://git@github.com/MarcusElwin/callgebra kleene   # over SSH
 ```
 
 ### Check
 
 ```bash
-callgebra --version
-callgebra repl -c "SELECT 1 + 1 AS two"
+kleene --version
+kleene repl -c "SELECT 1 + 1 AS two"
 ```
 
 The second line runs the relational core without a model and prints a
@@ -128,7 +128,7 @@ one-row table. If it prints `two` and `2`, the engine works.
 
 ## Configuring a model provider
 
-Nothing that touches a model runs until one credential is set. Callgebra
+Nothing that touches a model runs until one credential is set. Kleene
 speaks two wire formats directly, with no SDK and no gateway required.
 
 **Anthropic**
@@ -160,7 +160,7 @@ budgets and estimates read zero.
 Write a router file and point at it:
 
 ```bash
-export CALLGEBRA_ROUTER_TOML=~/.config/callgebra/router.toml
+export KLEENE_ROUTER_TOML=~/.config/kleene/router.toml
 ```
 
 ```toml
@@ -206,48 +206,48 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 # A task over a context file. The model gets ctx(ordinal, text), one row per
 # paragraph, and writes CallSQL until FINAL.
-callgebra run "Which project consumed the most hours in total?" \
-  --context /path/to/callgebra/demos/oolong/corpus.txt --budget-calls 60
+kleene run "Which project consumed the most hours in total?" \
+  --context /path/to/kleene/demos/oolong/corpus.txt --budget-calls 60
 
 # See what it cost and what it did.
-callgebra trace "SELECT depth, role, outcome, turns, calls, dollars FROM trace_sessions"
-callgebra trace "SELECT sql, rows, calls FROM trace_statements ORDER BY started_at"
+kleene trace "SELECT depth, role, outcome, turns, calls, dollars FROM trace_sessions"
+kleene trace "SELECT sql, rows, calls FROM trace_statements ORDER BY started_at"
 
 # Watch the next one live.
-callgebra tui --run @task.txt --context corpus.txt
+kleene tui --run @task.txt --context corpus.txt
 ```
 
-Everything lands in `.callgebra/run.duckdb` in the current directory. Delete
+Everything lands in `.kleene/run.duckdb` in the current directory. Delete
 the directory to start clean, or pass `--db` to use another file.
 
 ## Global flags and files
 
 | Flag | Meaning | Default |
 |---|---|---|
-| `--db <path>` | DuckDB file holding session tables, memo, trace and learning state | `.callgebra/run.duckdb` |
+| `--db <path>` | DuckDB file holding session tables, memo, trace and learning state | `.kleene/run.duckdb` |
 | `--workspace <dir>` | Root the tools (`files`, `grep`, `read`, `shell`, `write_file`, …) are confined to | current directory |
-| `--log <filter>` | Log filter, e.g. `info` or `callgebra=debug` | `warn` |
+| `--log <filter>` | Log filter, e.g. `info` or `kleene=debug` | `warn` |
 
 Files under the working directory:
 
 | Path | What |
 |---|---|
-| `.callgebra/run.duckdb` | the store: your tables, `memo`, `trace_*`, `callgebra_sessions`, learning and bench tables |
-| `.callgebra/daemon.sock` | the daemon's Unix socket (`--socket` on `daemon`, `tui`, `attach`) |
+| `.kleene/run.duckdb` | the store: your tables, `memo`, `trace_*`, `kleene_sessions`, learning and bench tables |
+| `.kleene/daemon.sock` | the daemon's Unix socket (`--socket` on `daemon`, `tui`, `attach`) |
 
-`.callgebra/` is git-ignored in this repository; add it to yours.
+`.kleene/` is git-ignored in this repository; add it to yours.
 
 Task arguments accept either literal text or `@path` to read a file.
 
 ## Commands
 
-### `callgebra run <task>`
+### `kleene run <task>`
 
 Run a task to completion: the model writes CallSQL turn by turn until
 `FINAL`. Prints each turn's SQL and rendered result, then the final relation.
 
 ```
-callgebra run <task|@file> [--context <file>] [--max-turns 30] [--max-depth 2]
+kleene run <task|@file> [--context <file>] [--max-turns 30] [--max-depth 2]
               [--budget-calls N] [--budget-dollars X] [-q|--quiet]
 ```
 
@@ -261,18 +261,18 @@ callgebra run <task|@file> [--context <file>] [--max-turns 30] [--max-depth 2]
 
 The run id is printed with the result and stored in `trace_runs`.
 
-### `callgebra resume <run-id>`
+### `kleene resume <run-id>`
 
 Continue a root session that stopped at its turn cap or was interrupted.
 Transcript, defined functions, agents, settings and spend are restored from
-`callgebra_sessions`; turn numbering continues.
+`kleene_sessions`; turn numbering continues.
 
 ```
-callgebra resume <run-id> [--max-turns 30] [-q]
-callgebra trace "SELECT run, outcome, turns FROM trace_sessions WHERE depth = 0"
+kleene resume <run-id> [--max-turns 30] [-q]
+kleene trace "SELECT run, outcome, turns FROM trace_sessions WHERE depth = 0"
 ```
 
-### `callgebra repl`
+### `kleene repl`
 
 An interactive CallSQL REPL against the store. Reads statements from stdin,
 one per line or terminated by `;`, plans each just before running it, and
@@ -280,9 +280,9 @@ prints the rendered rows with a footer of calls, tokens and dollars when a
 statement made calls.
 
 ```bash
-callgebra repl                                   # interactive
-callgebra repl -c "SELECT 1 + 1 AS two"          # one statement
-callgebra repl < demos/planner/three_way.sql     # a script
+kleene repl                                   # interactive
+kleene repl -c "SELECT 1 + 1 AS two"          # one statement
+kleene repl < demos/planner/three_way.sql     # a script
 ```
 
 Everything in [`DIALECT.md`](DIALECT.md) works here: `CREATE FUNCTION … AS
@@ -290,7 +290,7 @@ PROMPT`, `CALL shell(...)`, `SET budget.calls = 20`, `EXPLAIN`, `WITH
 RECURSIVE`. Tables you create persist in the store, so the next `repl` or
 `run` sees them.
 
-### `callgebra explain <sql>`
+### `kleene explain <sql>`
 
 Print the call plan for one statement without executing it: per operator the
 estimated rows, calls, tokens and dollars, call kinds, fences, the complexity
@@ -298,37 +298,37 @@ fragment, the rules that fired, the join-order plan space and the priced
 alternatives. Needs no provider.
 
 ```bash
-callgebra explain "SELECT c FROM candidates WHERE llm_bool('Is ' || c || ' a real place?')"
+kleene explain "SELECT c FROM candidates WHERE llm_bool('Is ' || c || ' a real place?')"
 ```
 
 `EXPLAIN ANALYZE <statement>` inside `repl` also runs it and prints actuals.
 
-### `callgebra trace <sql>`
+### `kleene trace <sql>`
 
 Run DuckDB SQL directly over the store: the trace tables, the memo, the
 learning and bench tables, and your own session tables.
 
 ```bash
-callgebra trace "SELECT depth, role, outcome, turns, calls, dollars FROM trace_sessions ORDER BY started_at"
-callgebra trace "SELECT alias, model, memo_hit, cost_usd FROM trace_calls ORDER BY started_at DESC LIMIT 20"
-callgebra trace "SELECT tool, args, elapsed_ms FROM trace_tool_calls"
-callgebra trace "SELECT cte, round, delta_rows FROM trace_rounds"
+kleene trace "SELECT depth, role, outcome, turns, calls, dollars FROM trace_sessions ORDER BY started_at"
+kleene trace "SELECT alias, model, memo_hit, cost_usd FROM trace_calls ORDER BY started_at DESC LIMIT 20"
+kleene trace "SELECT tool, args, elapsed_ms FROM trace_tool_calls"
+kleene trace "SELECT cte, round, delta_rows FROM trace_rounds"
 ```
 
 Tables: `trace_runs`, `trace_sessions`, `trace_statements`, `trace_calls`,
 `trace_tool_calls`, `trace_rounds`, `trace_final`, `memo`,
-`callgebra_sessions`, plus the learning tables (`tasks`, `attempts`,
+`kleene_sessions`, plus the learning tables (`tasks`, `attempts`,
 `playbook`, `playbook_evals`, `task_ratings`, `solver_ratings`,
 `generator_state`, view `trace_tasks`) and the bench tables (`evals`,
 `bench_runs`). Your own session tables are here too.
 
-### `callgebra tui`
+### `kleene tui`
 
 Open the terminal UI over the engine daemon, starting one in the background
 if nothing is listening on the socket.
 
 ```
-callgebra tui [--run <task|@file>] [--context <file>] [--socket <path>]
+kleene tui [--run <task|@file>] [--context <file>] [--socket <path>]
 ```
 
 Views and keys:
@@ -347,27 +347,27 @@ Views and keys:
 
 Under 120×30 the layout switches to two columns.
 
-### `callgebra attach`
+### `kleene attach`
 
 Headless twin of `tui`: attaches to the daemon and prints every server
 message as a JSON line. With `--run`, starts that task on connect and exits
 when it finishes, so it can drive scripts and evaluations.
 
 ```bash
-callgebra attach --run "Sum 1..4" | jq -c 'select(.msg == "run_finished")'
+kleene attach --run "Sum 1..4" | jq -c 'select(.msg == "run_finished")'
 ```
 
-### `callgebra daemon`
+### `kleene daemon`
 
 Run the engine in the foreground on a Unix socket (`--socket`, default
-`.callgebra/daemon.sock`). Clients speak newline-delimited JSON: `Subscribe`
+`.kleene/daemon.sock`). Clients speak newline-delimited JSON: `Subscribe`
 with a cursor for replay, `StartRun`, `Submit` (REPL statements in a
 client-owned session), `Query` (SQL over the store), `Cancel`, `CancelRun`,
 `ListRuns`, `Detach`. Two clients see the same event stream; a client that
 reconnects resumes from its last cursor. See
 [`ARCHITECTURE.md`](ARCHITECTURE.md#processes).
 
-### `callgebra learn`
+### `kleene learn`
 
 The continual loop: generated and user tasks with code oracles, ratings, a
 curriculum, and a playbook of winning SQL adopted only after a replay eval.
@@ -386,11 +386,11 @@ State lives in the store, so every command resumes where the last stopped.
 | `learn revert <version>` | Withdraw a playbook version |
 
 ```bash
-callgebra learn run --tasks 50 --budget-dollars 5 --generators puzzle,corpus,graph   # overnight
-callgebra learn report                                                                 # the morning query
+kleene learn run --tasks 50 --budget-dollars 5 --generators puzzle,corpus,graph   # overnight
+kleene learn report                                                                 # the morning query
 ```
 
-### `callgebra bench`
+### `kleene bench`
 
 Benchmarks over task packs (`tasks/<pack>/pack.json`) in one of three modes,
 every task in a fresh workspace, every result a row in `evals`.
@@ -406,10 +406,10 @@ every task in a fresh workspace, every result a row in `evals`.
 | `bench csv` | Every eval row as CSV on stdout |
 
 ```bash
-callgebra bench run tasks/oolong-like --mode frozen --record fixtures/oolong
-callgebra bench run tasks/oolong-like --mode learning --replay fixtures/oolong
-callgebra bench run tasks/terminal --mode plain
-callgebra bench report && callgebra bench csv > evals.csv
+kleene bench run tasks/oolong-like --mode frozen --record fixtures/oolong
+kleene bench run tasks/oolong-like --mode learning --replay fixtures/oolong
+kleene bench run tasks/terminal --mode plain
+kleene bench report && kleene bench csv > evals.csv
 ```
 
 Shipped packs are described in [`tasks/README.md`](../tasks/README.md).
@@ -417,9 +417,9 @@ Shipped packs are described in [`tasks/README.md`](../tasks/README.md).
 ## Working from source
 
 ```bash
-git clone https://github.com/MarcusElwin/callgebra && cd callgebra
+git clone https://github.com/MarcusElwin/callgebra && cd kleene
 cargo build --release                       # first build compiles DuckDB: ~10 min, ~4 GB
-./target/release/callgebra --help
+./target/release/kleene --help
 cargo run -- repl -c "SELECT 42 AS answer"   # debug build, same engine
 ```
 
@@ -453,10 +453,10 @@ remaining call or dollar budget. Raise `--budget-*`, or narrow the query;
 `EXPLAIN` shows where the calls go.
 
 **The TUI shows nothing** — a stale socket from a killed daemon. Remove
-`.callgebra/daemon.sock` or pass a fresh `--socket`.
+`.kleene/daemon.sock` or pass a fresh `--socket`.
 
 **A `ctx` table already exists** — an older run left one in this database.
-Current versions replace it per run; on an old file, `callgebra trace "DROP
+Current versions replace it per run; on an old file, `kleene trace "DROP
 TABLE ctx"`.
 
 **Building takes forever or fills the disk** — that is DuckDB compiling from
