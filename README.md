@@ -21,7 +21,7 @@ WHERE VERIFY(candidate)
 anti-semi-join that stops on the first refuting counterexample. `EXPLAIN`
 tells you how many calls that is before you spend them.
 
-Status: **M6 continual harness**. The CallSQL frontend, the executor, the
+Status: **M7 benchmarks**. The CallSQL frontend, the executor, the
 DuckDB store and the call algebra work; model functions, prompt-defined
 functions, `CALL` tools, memo, budgets and `EXPLAIN` are in; `callgebra run`
 drives a model through the SQL turn loop to `FINAL`, spawning child sessions
@@ -32,7 +32,30 @@ oracles through declared proxies, costs beam-limited recursion and refuses
 statements the remaining budget cannot pay for; and `callgebra learn` runs
 the continual loop: generated and user tasks with code oracles, ratings and
 a curriculum, and a playbook of winning SQL adopted only after it wins a
-replay eval. Try it without a model:
+replay eval; and `callgebra bench` runs task packs under learning, frozen and
+plain-agent modes and records every task in `evals`.
+
+## Install
+
+Prebuilt binaries for macOS (Apple silicon, Intel) and Linux (x86_64,
+aarch64) are attached to every tagged release.
+
+```bash
+# curl: detects OS and architecture, verifies the SHA-256, installs to ~/.local/bin
+curl -fsSL https://raw.githubusercontent.com/MarcusElwin/callgebra/main/install.sh | sh
+
+# Homebrew (from the tap; see Formula/callgebra.rb)
+brew install MarcusElwin/callgebra/callgebra
+
+# From source (compiles DuckDB, about ten minutes)
+cargo install --git https://github.com/MarcusElwin/callgebra callgebra
+```
+
+`CALLGEBRA_VERSION=v0.1.0` pins the installer to a tag and
+`CALLGEBRA_INSTALL=/usr/local/bin` changes the destination. Releases are
+built by `ci/release.yml` on `v*` tags.
+
+Try it without a model:
 
 ```bash
 cargo run -- repl -c "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 5) SELECT SUM(n) FROM r"
@@ -48,11 +71,15 @@ cargo run -- tui --run @demos/oolong/task.txt --context demos/oolong/corpus.txt
 cargo run -- trace "SELECT depth, role, outcome, turns, calls FROM trace_sessions"
 cargo run -- learn run --tasks 20 --generators puzzle,corpus   # overnight, resumable
 cargo run -- learn report                                       # the morning query
+cargo run -- bench run tasks/terminal --mode frozen             # a pack, one mode
+cargo run -- bench report                                       # accuracy and cost per pack and mode
 ```
 
-See [`demos/`](demos/README.md), [`demos/planner/`](demos/planner/README.md)
-and the continual loop in [`demos/README.md`](demos/README.md#continual-loop).
-The benchmarks (M7) come next. Read [`docs/PLAN.md`](docs/PLAN.md) for the
+See [`demos/`](demos/README.md), [`demos/planner/`](demos/planner/README.md),
+the continual loop in [`demos/README.md`](demos/README.md#continual-loop),
+the task packs in [`tasks/`](tasks/README.md), the dialect reference in
+[`docs/DIALECT.md`](docs/DIALECT.md) and the write-up in
+[`docs/WRITEUP.md`](docs/WRITEUP.md). Read [`docs/PLAN.md`](docs/PLAN.md) for the
 architecture, dialect, planner rules, harness design, TUI layout and
 milestones, and [`docs/RESEARCH.md`](docs/RESEARCH.md) for the sources.
 

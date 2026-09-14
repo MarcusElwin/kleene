@@ -79,6 +79,23 @@ callgebra learn revert 3       # withdraw a playbook version
 callgebra tui                  # view 4 is the live board
 ```
 
+## Benchmarks
+
+`callgebra bench` runs a task pack (`tasks/<pack>/pack.json`) in one of three
+modes and records every task in `evals`: `learning` (playbook shown and
+adopted), `frozen` (the control: no playbook), `plain` (a tool-calling agent
+on the same provider, tools and budgets, the cost-parity baseline).
+
+```bash
+callgebra bench run tasks/oolong-like --mode frozen --record fixtures/oolong   # record model replies
+callgebra bench run tasks/oolong-like --mode learning --replay fixtures/oolong # replay offline
+callgebra bench run tasks/terminal --mode plain
+callgebra bench report          # accuracy, calls and dollars per pack and mode
+callgebra bench curve <run-id>  # the learning curve as a sparkline and rolling mean
+callgebra bench csv > evals.csv # every eval row, for plotting
+callgebra bench import-lab ~/harvey-labs tasks/harvey-lab
+```
+
 ## Resuming
 
 A run that hits its turn cap (or is interrupted) can be continued:

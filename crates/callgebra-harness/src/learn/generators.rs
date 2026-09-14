@@ -27,7 +27,15 @@ pub struct GeneratedTask {
 }
 
 /// Generators the harness knows.
-pub const GENERATORS: &[&str] = &["sat3", "graph", "puzzle", "corpus", "repo"];
+pub const GENERATORS: &[&str] = &[
+    "sat3",
+    "graph",
+    "puzzle",
+    "corpus",
+    "repo",
+    "statements",
+    "contracts",
+];
 
 /// A small deterministic PRNG (xorshift64*), so tasks are reproducible.
 #[derive(Debug, Clone)]
@@ -77,8 +85,229 @@ pub fn generate(
         "puzzle" => puzzle(dial, &mut rng),
         "corpus" => corpus(dial, &mut rng),
         "repo" => repo(dial, &mut rng, workspace)?,
+        "statements" => statements(dial, &mut rng),
+        "contracts" => contracts(dial, &mut rng),
         _ => return None,
     })
+}
+
+/// Finance: a synthetic income statement with planted figures across years
+/// and a numerical question (growth, ratio or sum). The dial adds years,
+/// line items and distractor notes.
+fn statements(dial: f64, rng: &mut Rng) -> GeneratedTask {
+    let years = 2 + (dial * 3.0).round() as usize;
+    let items = [
+        "Revenue",
+        "Cost of revenue",
+        "Operating expenses",
+        "Interest expense",
+        "Income tax",
+        "Depreciation",
+    ];
+    let n_items = 3 + (dial * 3.0).round() as usize;
+    let mut table: Vec<(String, Vec<i64>)> = vec![];
+    for item in items.iter().take(n_items) {
+        let base = 500 + rng.below(9000) as i64;
+        let vals: Vec<i64> = (0..years)
+            .map(|y| base + (y as i64) * (rng.below(400) as i64 - 100))
+            .collect();
+        table.push((item.to_string(), vals));
+    }
+    let mut lines = vec![format!(
+        "Consolidated statement of operations (in thousands). Fiscal years: {}.",
+        (0..years)
+            .map(|y| (2020 + y).to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    )];
+    for (item, vals) in &table {
+        lines.push(format!(
+            "{item}: {}",
+            vals.iter()
+                .enumerate()
+                .map(|(y, v)| format!("FY{}: {}", 2020 + y, v))
+                .collect::<Vec<_>>()
+                .join("; ")
+        ));
+    }
+    let distractors = (dial * 6.0).round() as usize;
+    for i in 0..distractors {
+        lines.push(format!(
+            "Note {}: figures are unaudited; segment {} reclassified in FY{}.",
+            i + 1,
+            i % 3 + 1,
+            2020 + rng.below(years as u64) as usize
+        ));
+    }
+    let (question, value, tolerance) = match rng.below(3) {
+        0 => {
+            let (item, vals) = &table[0];
+            let a = vals[years - 2] as f64;
+            let b = vals[years - 1] as f64;
+            let growth = (b - a) / a * 100.0;
+            (
+                format!(
+                    "By what percentage did {item} change from FY{} to FY{}? Answer with FINAL over one row with column pct (a number, one decimal is fine).",
+                    2020 + years - 2,
+                    2020 + years - 1
+                ),
+                growth,
+                0.15,
+            )
+        }
+        1 => {
+            let (a_item, a_vals) = &table[0];
+            let (b_item, b_vals) = &table[1];
+            let ratio = a_vals[years - 1] as f64 / b_vals[years - 1] as f64;
+            (
+                format!(
+                    "What is the ratio of {a_item} to {b_item} in FY{}? Answer with FINAL over one row with column ratio (two decimals).",
+                    2020 + years - 1
+                ),
+                ratio,
+                0.015,
+            )
+        }
+        _ => {
+            let total: i64 = table.iter().map(|(_, v)| v[years - 1]).sum();
+            (
+                format!(
+                    "What is the sum of every line item in FY{}? Answer with FINAL over one row with column total (in thousands).",
+                    2020 + years - 1
+                ),
+                total as f64,
+                0.5,
+            )
+        }
+    };
+    GeneratedTask {
+        generator: "statements".into(),
+        kind: "finance_statement".into(),
+        task: format!("ctx holds a financial statement, one line per row. {question}"),
+        context: Some(lines.join("\n\n")),
+        verify: Verify::Number { value, tolerance },
+        dial,
+        difficulty: difficulty_prior(dial),
+    }
+}
+
+/// Legal: a synthetic contract with planted clause categories among
+/// boilerplate; the task is to list which categories are present. The dial
+/// adds length, paraphrase and near-miss distractors.
+fn contracts(dial: f64, rng: &mut Rng) -> GeneratedTask {
+    let categories: [(&str, [&str; 2]); 6] = [
+        (
+            "non-compete",
+            [
+                "The Supplier shall not engage in any business competing with the Customer for a period of two years.",
+                "During the Restricted Period the Supplier agrees not to compete, directly or indirectly, with the Customer.",
+            ],
+        ),
+        (
+            "termination for convenience",
+            [
+                "Either party may terminate this Agreement for any reason upon ninety days' written notice.",
+                "This Agreement may be terminated by either party without cause on ninety days' notice.",
+            ],
+        ),
+        (
+            "cap on liability",
+            [
+                "In no event shall either party's aggregate liability exceed the fees paid in the preceding twelve months.",
+                "Each party's total liability under this Agreement is limited to the amounts paid in the prior year.",
+            ],
+        ),
+        (
+            "governing law",
+            [
+                "This Agreement shall be governed by the laws of the State of Delaware.",
+                "The laws of Delaware govern this Agreement and any dispute arising from it.",
+            ],
+        ),
+        (
+            "audit rights",
+            [
+                "The Customer may audit the Supplier's relevant records once per year on reasonable notice.",
+                "Upon reasonable notice the Customer shall have the right to inspect the Supplier's records annually.",
+            ],
+        ),
+        (
+            "exclusivity",
+            [
+                "The Customer shall purchase the Products exclusively from the Supplier during the Term.",
+                "During the Term the Supplier is the Customer's sole source for the Products.",
+            ],
+        ),
+    ];
+    let boilerplate = [
+        "The parties agree that headings are for convenience only.",
+        "Notices shall be delivered in writing to the addresses set out in Schedule 1.",
+        "This Agreement constitutes the entire agreement between the parties.",
+        "If any provision is held invalid, the remainder shall continue in effect.",
+        "Each party shall bear its own costs in connection with this Agreement.",
+        "The Supplier shall deliver the Products in accordance with Schedule 2.",
+        "Nothing in this Agreement creates a partnership or agency between the parties.",
+    ];
+    let near_misses = [
+        "The Supplier may compete freely with the Customer after the Term ends.",
+        "This Agreement may not be terminated except for material breach.",
+        "Liability for gross negligence is unlimited.",
+    ];
+    let n_present = 1 + rng.below(4) as usize;
+    let mut present: Vec<usize> = vec![];
+    while present.len() < n_present {
+        let c = rng.below(categories.len() as u64) as usize;
+        if !present.contains(&c) {
+            present.push(c);
+        }
+    }
+    let mut clauses: Vec<String> = vec![];
+    let length = 6 + (dial * 18.0).round() as usize;
+    for i in 0..length {
+        clauses.push(format!(
+            "{}. {}",
+            i + 1,
+            boilerplate[rng.below(boilerplate.len() as u64) as usize]
+        ));
+    }
+    for &c in &present {
+        let variant = if rng.unit() < dial { 1 } else { 0 };
+        let pos = rng.below(clauses.len() as u64) as usize;
+        clauses.insert(pos, format!("{}a. {}", pos + 1, categories[c].1[variant]));
+    }
+    if dial > 0.4 {
+        let pos = rng.below(clauses.len() as u64) as usize;
+        clauses.insert(
+            pos,
+            format!(
+                "{}b. {}",
+                pos + 1,
+                near_misses[rng.below(near_misses.len() as u64) as usize]
+            ),
+        );
+    }
+    let mut rows: Vec<Vec<String>> = present
+        .iter()
+        .map(|&c| vec![categories[c].0.to_string()])
+        .collect();
+    rows.sort();
+    GeneratedTask {
+        generator: "contracts".into(),
+        kind: "legal_clause_categories".into(),
+        task: format!(
+            "ctx holds a contract, one clause per row. Which of these clause categories does it contain: {}? \
+Answer with FINAL over one row per present category with column category (exactly the category name as written here).",
+            categories
+                .iter()
+                .map(|(n, _)| n.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        context: Some(clauses.join("\n\n")),
+        verify: Verify::Exact { rows },
+        dial,
+        difficulty: difficulty_prior(dial),
+    }
 }
 
 fn difficulty_prior(dial: f64) -> f64 {

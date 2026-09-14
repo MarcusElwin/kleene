@@ -41,6 +41,14 @@ pub enum Verify {
         /// A reference answer, if the proposer supplied one.
         reference: Option<String>,
     },
+    /// A single number within a tolerance (finance-style answers): the first
+    /// cell of the first row, commas and currency signs stripped.
+    Number {
+        /// Expected value.
+        value: f64,
+        /// Absolute tolerance.
+        tolerance: f64,
+    },
     /// A person decides; the task waits in `needs_review`.
     Human,
 }
@@ -62,6 +70,7 @@ impl Verify {
             Verify::Sat { .. } => "sat",
             Verify::Shell { .. } => "shell",
             Verify::Judge { .. } => "judge",
+            Verify::Number { .. } => "number",
             Verify::Human => "human",
         }
     }
@@ -91,11 +100,40 @@ impl Verify {
                     detail: "no judge provider configured".into(),
                 },
             },
+            Verify::Number { value, tolerance } => number(*value, *tolerance, answer),
             Verify::Human => Verdict {
                 pass: false,
                 detail: "awaiting human review".into(),
             },
         }
+    }
+}
+
+fn number(value: f64, tolerance: f64, answer: &Batch) -> Verdict {
+    let Some(cell) = answer.rows.first().and_then(|r| r.first()) else {
+        return Verdict {
+            pass: false,
+            detail: "empty answer".into(),
+        };
+    };
+    let text: String = cell
+        .render()
+        .chars()
+        .filter(|c| c.is_ascii_digit() || *c == '.' || *c == '-')
+        .collect();
+    match text.parse::<f64>() {
+        Ok(got) if (got - value).abs() <= tolerance => Verdict {
+            pass: true,
+            detail: format!("{got} within {tolerance} of {value}"),
+        },
+        Ok(got) => Verdict {
+            pass: false,
+            detail: format!("expected {value} ± {tolerance}, got {got}"),
+        },
+        Err(_) => Verdict {
+            pass: false,
+            detail: format!("expected a number, got {}", cell.render()),
+        },
     }
 }
 
