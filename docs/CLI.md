@@ -5,7 +5,7 @@ Install, point it at a model, and run. Every command below is one binary,
 flags as compiled.
 
 - [Install](#install)
-- [Set up a model provider](#configuring-a-model-provider)
+- [Set up a model provider](#configuring-a-model-provider) (`kleene setup`)
 - [First run](#first-run)
 - [Global flags and files](#global-flags-and-files)
 - [Commands](#commands): `run`, `resume`, `repl`, `explain`, `trace`, `tui`,
@@ -131,6 +131,57 @@ one-row table. If it prints `two` and `2`, the engine works.
 Nothing that touches a model runs until one credential is set. Kleene
 speaks two wire formats directly, with no SDK and no gateway required.
 
+### `kleene setup`
+
+The guided way. It asks which providers to use, takes the keys with the
+input masked, and writes them to the config file:
+
+```bash
+kleene setup
+```
+
+```
+╭ ◆ kleene · setup · Welcome ─────────────────────── step 1 of 3 ╮
+│ Which providers should Kleene use? Space ticks, Enter continues. │
+│                                                                  │
+│ ▸ ◉ Anthropic                    ANTHROPIC_API_KEY               │
+│       Claude models. Routes root/worker/proxy/judge by default.  │
+│   ○ OpenAI                       OPENAI_API_KEY                  │
+│   ○ OpenAI-compatible endpoint   OPENAI_BASE_URL                 │
+│       Ollama, vLLM, LM Studio, a gateway.                        │
+╰──────────────────────────────────────────────────────────────────╯
+```
+
+`kleene tui` runs the same wizard on its own the first time it starts
+without a configured provider. Non-interactive forms for scripts:
+
+```bash
+kleene setup --anthropic-key sk-ant-...
+kleene setup --openai-base-url http://localhost:11434/v1 --openai-model llama3
+kleene setup --router ~/.config/kleene/router.toml
+kleene setup --show          # what is configured, keys masked, and from where
+```
+
+The file is `config.toml` in `$KLEENE_CONFIG_DIR`, else
+`$XDG_CONFIG_HOME/kleene`, else `~/.config/kleene`, written owner-readable
+only:
+
+```toml
+[anthropic]
+api_key = "sk-ant-..."
+
+[openai_compat]
+base_url = "http://localhost:11434/v1"
+model = "llama3"
+```
+
+Environment variables always win over the file, field by field, so a
+one-off `ANTHROPIC_API_KEY=... kleene run` keeps working and CI never needs
+the file. A daemon that was already running before `setup` keeps its old
+provider until restarted.
+
+### Environment variables
+
 **Anthropic**
 
 ```bash
@@ -157,7 +208,8 @@ budgets and estimates read zero.
 
 **Both, or your own routing**
 
-Write a router file and point at it:
+Write a router file and point at it (`kleene setup --router <path>`, or the
+environment):
 
 ```bash
 export KLEENE_ROUTER_TOML=~/.config/kleene/router.toml
@@ -202,7 +254,7 @@ nothing for prompts it has already seen.
 
 ```bash
 mkdir demo && cd demo
-export ANTHROPIC_API_KEY=sk-ant-...
+kleene setup                                # or: export ANTHROPIC_API_KEY=sk-ant-...
 
 # A task over a context file. The model gets ctx(ordinal, text), one row per
 # paragraph, and writes CallSQL until FINAL.
@@ -234,12 +286,30 @@ Files under the working directory:
 |---|---|
 | `.kleene/run.duckdb` | the store: your tables, `memo`, `trace_*`, `kleene_sessions`, learning and bench tables |
 | `.kleene/daemon.sock` | the daemon's Unix socket (`--socket` on `daemon`, `tui`, `attach`) |
+| `~/.config/kleene/config.toml` | provider keys written by `kleene setup` (`KLEENE_CONFIG_DIR` moves it) |
 
 `.kleene/` is git-ignored in this repository; add it to yours.
 
 Task arguments accept either literal text or `@path` to read a file.
 
 ## Commands
+
+### `kleene setup`
+
+Configure providers; see [above](#kleene-setup). Interactive in a terminal,
+flag-driven otherwise.
+
+| Flag | Meaning |
+|---|---|
+| `--anthropic-key <key>` | Anthropic API key (an OAuth token works too) |
+| `--anthropic-base-url <url>` | Anthropic endpoint override |
+| `--openai-key <key>` | OpenAI or compatible API key |
+| `--openai-base-url <url>` | OpenAI-compatible endpoint; a local server needs only this |
+| `--openai-model <model>` | The model every alias resolves to without a router |
+| `--router <path>` | Router TOML with aliases, failover and pricing |
+| `--show` | Print the effective settings with keys masked and stop |
+
+Flags merge into the existing file; providers not mentioned are kept.
 
 ### `kleene run <task>`
 
@@ -325,7 +395,8 @@ Tables: `trace_runs`, `trace_sessions`, `trace_statements`, `trace_calls`,
 ### `kleene tui`
 
 Open the terminal UI over the engine daemon, starting one in the background
-if nothing is listening on the socket.
+if nothing is listening on the socket. The first time, with no provider
+configured, it runs the setup wizard before connecting.
 
 ```
 kleene tui [--run <task|@file>] [--context <file>] [--socket <path>]
@@ -340,6 +411,7 @@ Views and keys:
 | `3` | trace explorer: SQL over the store; `e` or `/` edits, `Enter` runs, `r` re-runs |
 | `4` | task board for the continual loop (`r` refreshes; auto every two seconds) |
 | `?` | help |
+| `t` | switch between the dark and light palettes |
 | `j` / `k`, arrows | move; `J` / `K`, PageUp/Down scroll the transcript |
 | `f`, `Enter`, space | fold or unfold the selected node |
 | `x`, `Esc` | cancel the selected statement, or the run from its root row |
@@ -439,10 +511,11 @@ formula values printed in the job log).
 
 ## Troubleshooting
 
-**`no model provider configured`** — set `ANTHROPIC_API_KEY`,
-`ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY` or `OPENAI_BASE_URL`. `repl`,
-`explain` and `trace` work without one as long as the statement makes no
-calls.
+**`no model provider configured`** — run `kleene setup`, or set
+`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY` or
+`OPENAI_BASE_URL`. `repl`, `explain` and `trace` work without one as long as
+the statement makes no calls. `kleene setup --show` says what is configured
+and whether it came from the file or the environment.
 
 **Estimates and dollars are all zero** — the model is not in the pricing
 table. Only the Anthropic defaults come priced; add a `[pricing."model"]`

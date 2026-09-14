@@ -49,12 +49,14 @@ Full install, provider and command reference: [`docs/CLI.md`](docs/CLI.md).
 
 ## Quickstart
 
-Point it at a model (one of these is enough):
+Point it at a model. The wizard asks which providers to use and stores the
+keys owner-readable under `~/.config/kleene/`; environment variables win
+over the file when both are set:
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...        # Anthropic, routed root/worker/proxy/judge by default
+kleene setup                               # pick Anthropic, OpenAI, or a compatible endpoint (Ollama, vLLM, a gateway)
+export ANTHROPIC_API_KEY=sk-ant-...        # or just the environment: Anthropic, routed root/worker/proxy/judge by default
 export OPENAI_API_KEY=sk-...               # or any OpenAI-compatible endpoint (OPENAI_BASE_URL, OPENAI_MODEL)
-export KLEENE_ROUTER_TOML=router.toml   # or your own aliases, failover and pricing
 ```
 
 Run a task over a context, then read the trace:
@@ -164,5 +166,21 @@ flag shapes that keep DuckDB from rebuilding) and `ci/README.md` the release
 workflow. Written in Rust, model-agnostic with no SDK and no gateway
 required, MIT licensed.
 
-The name is also used by an unrelated small JavaScript library
-(`fluture-js/kleene`).
+## Why "Kleene"
+
+Stephen Cole Kleene gave computation two of its load-bearing ideas. The
+**Kleene star** turns "one step" into "any number of steps": `a*` is the
+closure of `a` under repetition, and it is exactly what a recursive CTE
+computes when it runs a term to its fixpoint. The **Kleene fixed-point
+theorem** says how to reach that closure: start from nothing and apply the
+step until nothing changes, which is the semi-naive evaluation the executor
+runs. His **recursion theorem** shows a program can refer to itself without
+paradox, which is what a session does when it opens a child session with
+`rlm(...)`.
+
+That is this project in three theorems. A model call is a step; SQL gives
+it joins, predicates and aggregation; recursion with a beam gives it search;
+the planner prices the closure before it is computed. The engine is named
+for the mathematician who showed that closure is a thing you can compute,
+and the dialect keeps its own name, CallSQL, because the SQL is where the
+calls are.

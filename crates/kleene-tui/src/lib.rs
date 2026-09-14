@@ -2,13 +2,16 @@
 //!
 //! Views: session (call tree, transcript, plan sidebar), plan (the selected
 //! statement's `EXPLAIN` full width), trace explorer (SQL over the store),
-//! and help. State is a [`model::Model`] folded from the daemon's messages,
-//! so the UI is a pure function of received events and can be rendered into
-//! a test buffer.
+//! tasks and help. State is a [`model::Model`] folded from the daemon's
+//! messages, so the UI is a pure function of received events and can be
+//! rendered into a test buffer. [`setup`] is the first-run onboarding wizard
+//! and [`theme`] the palette every view draws with.
 
 #![forbid(unsafe_code)]
 
 pub mod model;
+pub mod setup;
+pub mod theme;
 pub mod ui;
 
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -18,6 +21,7 @@ use kleene_daemon::{ClientRequest, ServerMessage};
 use model::{flatten, Folds, Model, TreeRow};
 use std::path::Path;
 use std::time::Duration;
+pub use theme::Theme;
 
 /// Views the TUI can show.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,6 +70,8 @@ pub struct App {
     pub compact: bool,
     /// Whether we are still connected.
     pub connected: bool,
+    /// Colours.
+    pub theme: Theme,
 }
 
 impl Default for App {
@@ -80,6 +86,7 @@ impl Default for App {
             editing: false,
             compact: false,
             connected: true,
+            theme: Theme::default(),
         }
     }
 }
@@ -189,6 +196,10 @@ impl App {
             KeyCode::Char('r') if self.view == View::Tasks => Action::SendAll(board_queries()),
             KeyCode::Char('?') => {
                 self.view = View::Help;
+                Action::None
+            }
+            KeyCode::Char('t') => {
+                self.theme = self.theme.toggled();
                 Action::None
             }
             KeyCode::Char('j') | KeyCode::Down => {

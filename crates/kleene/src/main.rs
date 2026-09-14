@@ -119,6 +119,31 @@ enum Command {
         #[command(subcommand)]
         action: LearnAction,
     },
+    /// Configure model providers: a guided wizard in a terminal, or flags.
+    /// Writes the config file (`kleene setup --show` prints where).
+    Setup {
+        /// Anthropic API key (an OAuth token works too).
+        #[arg(long)]
+        anthropic_key: Option<String>,
+        /// Anthropic endpoint override.
+        #[arg(long)]
+        anthropic_base_url: Option<String>,
+        /// OpenAI or compatible API key.
+        #[arg(long)]
+        openai_key: Option<String>,
+        /// OpenAI-compatible endpoint; a local server needs only this.
+        #[arg(long)]
+        openai_base_url: Option<String>,
+        /// The model every alias resolves to without a router.
+        #[arg(long)]
+        openai_model: Option<String>,
+        /// Router TOML with aliases, failover and pricing.
+        #[arg(long)]
+        router: Option<PathBuf>,
+        /// Print the effective settings with keys masked and stop.
+        #[arg(long)]
+        show: bool,
+    },
     /// Start the engine daemon in the foreground.
     Daemon {
         /// Socket path. Default: `.kleene/daemon.sock`.
@@ -707,6 +732,8 @@ async fn open_harness(
         .workspace
         .clone()
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    // A first `kleene run` in a terminal gets the wizard instead of a failure.
+    onboard_if_needed().await?;
     let provider = match kleene_llm::provider_from_env() {
         Ok(p) => Some(p),
         Err(e) => {
@@ -814,6 +841,26 @@ async fn main() -> anyhow::Result<()> {
             println!("kleene {}", env!("CARGO_PKG_VERSION"));
             println!("Relational algebra for recursive model calls. Run `kleene --help`.");
             Ok(())
+        }
+        Some(Command::Setup {
+            anthropic_key,
+            anthropic_base_url,
+            openai_key,
+            openai_base_url,
+            openai_model,
+            router,
+            show,
+        }) => {
+            run_setup(SetupArgs {
+                anthropic_key: anthropic_key.clone(),
+                anthropic_base_url: anthropic_base_url.clone(),
+                openai_key: openai_key.clone(),
+                openai_base_url: openai_base_url.clone(),
+                openai_model: openai_model.clone(),
+                router: router.clone(),
+                show: *show,
+            })
+            .await
         }
         Some(Command::Run {
             task,
@@ -961,6 +1008,13 @@ async fn main() -> anyhow::Result<()> {
             context,
             socket,
         }) => {
+            // First start with nothing configured: run the wizard before the
+            // daemon comes up, so the daemon reads the keys it writes.
+            if !onboard_if_needed().await? {
+                eprintln!(
+                    "kleene: no model provider configured; runs will fail until `kleene setup`"
+                );
+            }
             let socket = socket_path(&cli, socket);
             ensure_daemon(&cli, &socket).await?;
             let start = start_request(run, context, &cli.workspace)?;
@@ -986,4 +1040,190 @@ async fn main() -> anyhow::Result<()> {
 fn atty_stdin() -> bool {
     use std::io::IsTerminal;
     std::io::stdin().is_terminal()
+}
+
+/// Flags of `kleene setup`.
+struct SetupArgs {
+    anthropic_key: Option<String>,
+    anthropic_base_url: Option<String>,
+    openai_key: Option<String>,
+    openai_base_url: Option<String>,
+    openai_model: Option<String>,
+    router: Option<PathBuf>,
+    show: bool,
+}
+
+impl SetupArgs {
+    fn any_flag(&self) -> bool {
+        self.anthropic_key.is_some()
+            || self.anthropic_base_url.is_some()
+            || self.openai_key.is_some()
+            || self.openai_base_url.is_some()
+            || self.openai_model.is_some()
+            || self.router.is_some()
+    }
+}
+
+/// What is configured, keys masked, and where each part came from.
+fn describe_settings() -> anyhow::Result<String> {
+    use kleene_llm::ProviderSettings;
+    use kleene_tui::setup::mask;
+    let path = ProviderSettings::path();
+    let file = ProviderSettings::load()?;
+    let env = ProviderSettings::from_env();
+    let effective = file.clone().unwrap_or_default().overlaid(env.clone());
+    let mut out = String::new();
+    out.push_str(&format!(
+        "config file  {}{}\n",
+        path.display(),
+        if file.is_some() { "" } else { " (absent)" }
+    ));
+    let source = |from_env: bool| if from_env { "environment" } else { "file" };
+    match &effective.anthropic {
+        Some(a) if a.is_configured() => {
+            let cred = a
+                .api_key
+                .as_deref()
+                .or(a.auth_token.as_deref())
+                .unwrap_or("");
+            let from_env = env
+                .anthropic
+                .as_ref()
+                .is_some_and(|e| e.api_key.is_some() || e.auth_token.is_some());
+            out.push_str(&format!(
+                "anthropic    {} ({}){}\n",
+                mask(cred),
+                source(from_env),
+                a.base_url
+                    .as_deref()
+                    .map(|u| format!("  {u}"))
+                    .unwrap_or_default()
+            ));
+        }
+        _ => out.push_str("anthropic    not configured\n"),
+    }
+    match &effective.openai_compat {
+        Some(o) if o.is_configured() => {
+            let from_env = env
+                .openai_compat
+                .as_ref()
+                .is_some_and(|e| e.api_key.is_some() || e.base_url.is_some());
+            out.push_str(&format!(
+                "openai       {}  key {}  model {} ({})\n",
+                o.base_url.as_deref().unwrap_or("https://api.openai.com/v1"),
+                o.api_key
+                    .as_deref()
+                    .map(mask)
+                    .unwrap_or_else(|| "none".into()),
+                o.model
+                    .as_deref()
+                    .unwrap_or(kleene_llm::env::DEFAULT_OPENAI_MODEL),
+                source(from_env)
+            ));
+        }
+        _ => out.push_str("openai       not configured\n"),
+    }
+    match &effective.router {
+        Some(r) => out.push_str(&format!(
+            "router       {} ({})\n",
+            r.display(),
+            source(env.router.is_some())
+        )),
+        None => out.push_str("router       defaults for the configured provider\n"),
+    }
+    if !effective.is_configured() {
+        out.push_str("\nNothing usable yet: run `kleene setup`.\n");
+    }
+    Ok(out)
+}
+
+async fn run_setup(args: SetupArgs) -> anyhow::Result<()> {
+    use kleene_llm::ProviderSettings;
+    if args.show {
+        print!("{}", describe_settings()?);
+        return Ok(());
+    }
+    let existing = ProviderSettings::load()?.unwrap_or_default();
+    if args.any_flag() {
+        let mut s = existing;
+        if args.anthropic_key.is_some() || args.anthropic_base_url.is_some() {
+            let mut a = s.anthropic.take().unwrap_or_default();
+            if let Some(k) = args.anthropic_key {
+                if k.starts_with("sk-") {
+                    a.api_key = Some(k);
+                    a.auth_token = None;
+                } else {
+                    a.auth_token = Some(k);
+                    a.api_key = None;
+                }
+            }
+            if let Some(u) = args.anthropic_base_url {
+                a.base_url = Some(u);
+            }
+            s.anthropic = Some(a);
+        }
+        if args.openai_key.is_some()
+            || args.openai_base_url.is_some()
+            || args.openai_model.is_some()
+        {
+            let mut o = s.openai_compat.take().unwrap_or_default();
+            if let Some(k) = args.openai_key {
+                o.api_key = Some(k);
+            }
+            if let Some(u) = args.openai_base_url {
+                o.base_url = Some(u);
+            }
+            if let Some(m) = args.openai_model {
+                o.model = Some(m);
+            }
+            s.openai_compat = Some(o);
+        }
+        if let Some(r) = args.router {
+            s.router = Some(r);
+        }
+        let path = s.save()?;
+        eprintln!("kleene: wrote {}", path.display());
+        print!("{}", describe_settings()?);
+        return Ok(());
+    }
+    if !atty_stdin() {
+        anyhow::bail!(
+            "kleene setup needs a terminal for the wizard; pass flags instead (see `kleene setup --help`)"
+        );
+    }
+    let path = ProviderSettings::path();
+    match kleene_tui::setup::run(existing, path).await? {
+        Some(s) => {
+            let path = s.save()?;
+            eprintln!("kleene: wrote {}", path.display());
+            print!("{}", describe_settings()?);
+            Ok(())
+        }
+        None => {
+            eprintln!("kleene: setup cancelled, nothing written");
+            Ok(())
+        }
+    }
+}
+
+/// Offer the wizard when nothing is configured and we are in a terminal.
+/// Returns whether a provider is configured afterwards.
+async fn onboard_if_needed() -> anyhow::Result<bool> {
+    use kleene_llm::ProviderSettings;
+    let effective = ProviderSettings::effective()?;
+    if effective.is_configured() {
+        return Ok(true);
+    }
+    if !atty_stdin() {
+        return Ok(false);
+    }
+    let existing = ProviderSettings::load()?.unwrap_or_default();
+    match kleene_tui::setup::run(existing, ProviderSettings::path()).await? {
+        Some(s) => {
+            let path = s.save()?;
+            eprintln!("kleene: wrote {}", path.display());
+            Ok(true)
+        }
+        None => Ok(false),
+    }
 }

@@ -1,16 +1,23 @@
 //! Rendering: a pure function of the [`App`] state.
+//!
+//! Layout: a one-line header (brand, run, status, spend), the view, and a
+//! footer of key chips. Panels are rounded and titled; the selected row is a
+//! highlighted band; states are colour-coded through the [`Theme`].
 
 use crate::model::{Model, TreeRow};
+use crate::theme::{Theme, BRAND, TAGLINE};
 use crate::{App, View};
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Cell, Gauge, List, ListItem, Paragraph, Row, Table, Wrap};
+use ratatui::text::{Line, Span, Text};
+use ratatui::widgets::{Cell, Gauge, List, ListItem, Paragraph, Row, Sparkline, Table, Wrap};
 use ratatui::Frame;
 
 /// Draw the whole screen.
 pub fn draw(f: &mut Frame<'_>, app: &App) {
+    let t = app.theme;
     let area = f.area();
+    f.render_widget(Paragraph::new("").style(Style::default().bg(t.bg)), area);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -19,15 +26,15 @@ pub fn draw(f: &mut Frame<'_>, app: &App) {
             Constraint::Length(1),
         ])
         .split(area);
-    draw_title(f, chunks[0], app);
+    draw_header(f, chunks[0], app);
     match app.view {
         View::Session => draw_session(f, chunks[1], app),
         View::Plan => draw_plan(f, chunks[1], app),
         View::Trace => draw_trace(f, chunks[1], app),
         View::Tasks => draw_tasks(f, chunks[1], app),
-        View::Help => draw_help(f, chunks[1]),
+        View::Help => draw_help(f, chunks[1], app),
     }
-    draw_keybar(f, chunks[2], app);
+    draw_footer(f, chunks[2], app);
 }
 
 fn short(id: impl ToString) -> String {
@@ -35,65 +42,144 @@ fn short(id: impl ToString) -> String {
     s[..s.len().min(8)].to_string()
 }
 
-fn draw_title(f: &mut Frame<'_>, area: Rect, app: &App) {
+fn human(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1e6)
+    } else if n >= 10_000 {
+        format!("{:.1}k", n as f64 / 1e3)
+    } else {
+        n.to_string()
+    }
+}
+
+fn draw_header(f: &mut Frame<'_>, area: Rect, app: &App) {
+    let t = app.theme;
     let m = &app.model;
     let run = m
         .run_order
         .last()
         .and_then(|r| m.runs.get(r))
-        .map(|r| format!("run {} · {}", short(r.id), first_line(&r.task, 40)))
-        .unwrap_or_else(|| "no runs yet".into());
-    let status = if !app.connected {
-        "disconnected"
+        .map(|r| format!("{} · {}", short(r.id), first_line(&r.task, 48)))
+        .unwrap_or_else(|| "no run yet".into());
+    let (dot, status, color) = if !app.connected {
+        ("✕", "disconnected", t.err)
     } else if m.busy() {
-        "running"
+        ("●", "running", t.ok)
     } else {
-        "idle"
+        ("○", "idle", t.muted)
     };
     let memo_pct = if m.total_calls + m.total_memo > 0 {
         (m.total_memo as f64 / (m.total_calls + m.total_memo) as f64 * 100.0).round()
     } else {
         0.0
     };
-    let line = Line::from(vec![
+    let left = Line::from(vec![
         Span::styled(
-            " kleene ",
+            format!(" {BRAND} "),
             Style::default()
-                .fg(Color::Black)
-                .bg(Color::Cyan)
+                .fg(t.on_accent)
+                .bg(t.accent)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw(format!(" {run} · {status} · ")),
+        Span::styled(format!("  {run}  "), t.text()),
         Span::styled(
-            format!(
-                "{} calls · {} memo ({memo_pct:.0}%) · {} tok · ${:.4}",
-                m.total_calls, m.total_memo, m.total_tokens, m.total_dollars
-            ),
-            Style::default().fg(Color::Yellow),
+            format!("{dot} {status}"),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
         ),
     ]);
-    f.render_widget(Paragraph::new(line), area);
+    let right = Line::from(vec![
+        Span::styled("λ ", Style::default().fg(t.accent)),
+        Span::styled(format!("{} calls", m.total_calls), t.text()),
+        Span::styled("  ⟳ ", Style::default().fg(t.accent)),
+        Span::styled(format!("{memo_pct:.0}% memo"), t.text()),
+        Span::styled("  ▤ ", Style::default().fg(t.accent)),
+        Span::styled(format!("{} tok", human(m.total_tokens)), t.text()),
+        Span::styled("  $ ", Style::default().fg(t.warn)),
+        Span::styled(
+            format!("{:.4}", m.total_dollars),
+            Style::default().fg(t.warn).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(format!("  {} ", t.name), t.dim()),
+    ])
+    .alignment(Alignment::Right);
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Min(20),
+            Constraint::Length(right.width() as u16),
+        ])
+        .split(area);
+    f.render_widget(
+        Paragraph::new(left).style(Style::default().bg(t.bg)),
+        cols[0],
+    );
+    f.render_widget(
+        Paragraph::new(right).style(Style::default().bg(t.bg)),
+        cols[1],
+    );
 }
 
-fn draw_keybar(f: &mut Frame<'_>, area: Rect, app: &App) {
-    let keys = match app.view {
-        View::Trace if app.editing => "type SQL  ⏎ run  Esc done",
-        View::Trace => "1 session  2 plan  3 trace  4 tasks  ? help │ e edit  r rerun  q detach",
-        View::Tasks => "1 session  2 plan  3 trace  4 tasks  ? help │ r refresh (auto every 2s)  q detach",
-        _ => "1 session  2 plan  3 trace  4 tasks  ? help │ j/k move  f fold  J/K scroll  x cancel  d detach  q quit",
+fn draw_footer(f: &mut Frame<'_>, area: Rect, app: &App) {
+    let t = app.theme;
+    let chips: Vec<Span> = match app.view {
+        View::Trace if app.editing => [
+            t.chip("type", "SQL"),
+            t.chip("⏎", "run"),
+            t.chip("esc", "done"),
+        ]
+        .concat(),
+        View::Trace => [
+            t.chip("1-4", "views"),
+            t.chip("e", "edit"),
+            t.chip("r", "rerun"),
+            t.chip("t", "theme"),
+            t.chip("q", "detach"),
+        ]
+        .concat(),
+        View::Tasks => [
+            t.chip("1-4", "views"),
+            t.chip("r", "refresh"),
+            t.chip("t", "theme"),
+            t.chip("q", "detach"),
+        ]
+        .concat(),
+        _ => [
+            t.chip("1-4", "views"),
+            t.chip("j/k", "move"),
+            t.chip("f", "fold"),
+            t.chip("J/K", "scroll"),
+            t.chip("x", "cancel"),
+            t.chip("t", "theme"),
+            t.chip("?", "help"),
+            t.chip("q", "detach"),
+        ]
+        .concat(),
     };
     let notice = app
         .model
         .notice
         .as_deref()
-        .map(|n| format!(" │ {}", first_line(n, 60)))
+        .map(|n| first_line(n, 60))
         .unwrap_or_default();
+    let notice_line = Line::from(Span::styled(
+        format!("{notice} "),
+        Style::default().fg(t.warn),
+    ))
+    .alignment(Alignment::Right);
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Min(10),
+            Constraint::Length(notice_line.width() as u16),
+        ])
+        .split(area);
     f.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(keys, Style::default().fg(Color::DarkGray)),
-            Span::styled(notice, Style::default().fg(Color::Magenta)),
-        ])),
-        area,
+        Paragraph::new(Line::from(chips)).style(Style::default().bg(t.bg)),
+        cols[0],
+    );
+    f.render_widget(
+        Paragraph::new(notice_line).style(Style::default().bg(t.bg)),
+        cols[1],
     );
 }
 
@@ -114,38 +200,48 @@ fn draw_session(f: &mut Frame<'_>, area: Rect, app: &App) {
             .split(area)
     };
     draw_tree(f, cols[0], app);
-    draw_transcript(f, cols[1], app);
+    if app.model.runs.is_empty() {
+        draw_welcome(f, cols[1], app);
+    } else {
+        draw_transcript(f, cols[1], app);
+    }
     if !app.compact {
         draw_sidebar(f, cols[2], app);
     }
 }
 
-/// Text of one tree row.
+/// Text and colour of one tree row.
 pub fn tree_label(m: &Model, row: &TreeRow) -> (String, Color) {
+    tree_label_themed(m, row, &Theme::default())
+}
+
+fn tree_label_themed(m: &Model, row: &TreeRow, t: &Theme) -> (String, Color) {
     match row {
         TreeRow::Session(id) => match m.sessions.get(id) {
             Some(s) => {
-                let dot = if s.outcome.is_none() { "●" } else { "■" };
+                let running = s.outcome.is_none();
+                let dot = if running { "◐" } else { "■" };
                 let tail = match &s.outcome {
                     Some(o) => format!("{o} · {} calls · ${:.3}", s.calls, s.dollars),
                     None => "running".into(),
                 };
+                let color = if running {
+                    t.ok
+                } else if s.outcome.as_deref() == Some("final") {
+                    t.accent
+                } else {
+                    t.err
+                };
                 (
                     format!("{dot} {} {} d{} · {tail}", s.role, short(id), s.depth),
-                    if s.outcome.is_none() {
-                        Color::Green
-                    } else if s.outcome.as_deref() == Some("final") {
-                        Color::Cyan
-                    } else {
-                        Color::Red
-                    },
+                    color,
                 )
             }
-            None => (format!("session {}", short(id)), Color::Gray),
+            None => (format!("session {}", short(id)), t.muted),
         },
         TreeRow::Statement(id) => match m.statements.get(id) {
             Some(s) => {
-                let dot = if s.finished { "▸" } else { "●" };
+                let dot = if s.finished { "▸" } else { "◐" };
                 let tail = if s.finished {
                     match &s.error {
                         Some(e) => format!("✗ {}", first_line(e, 40)),
@@ -161,56 +257,115 @@ pub fn tree_label(m: &Model, row: &TreeRow) -> (String, Color) {
                 };
                 (
                     format!("{dot} {} · {tail}", first_line(&s.sql, 40)),
-                    if s.error.is_some() {
-                        Color::Red
-                    } else if s.finished {
-                        Color::White
-                    } else {
-                        Color::Green
-                    },
+                    t.state(!s.finished, s.error.is_some()),
                 )
             }
-            None => (format!("stmt {}", short(id)), Color::Gray),
+            None => (format!("stmt {}", short(id)), t.muted),
         },
         TreeRow::Call(id) => match m.calls.get(id) {
             Some(c) => {
                 let tail = if !c.finished {
-                    "● running".to_string()
+                    "◐ running".to_string()
                 } else if let Some(e) = &c.error {
                     format!("✗ {}", first_line(e, 30))
                 } else if c.memo_hit {
-                    "memo".to_string()
+                    "◇ memo".to_string()
                 } else {
                     format!("{} tok · ${:.4}", c.tokens, c.dollars)
                 };
-                (format!("λ {} · {tail}", c.alias), Color::Magenta)
+                let color = if c.error.is_some() {
+                    t.err
+                } else if c.memo_hit {
+                    t.muted
+                } else {
+                    t.warn
+                };
+                (format!("λ {} · {tail}", c.alias), color)
             }
-            None => (format!("call {}", short(id)), Color::Gray),
+            None => (format!("call {}", short(id)), t.muted),
         },
     }
 }
 
 fn draw_tree(f: &mut Frame<'_>, area: Rect, app: &App) {
+    let t = app.theme;
     let rows = app.rows();
     let items: Vec<ListItem> = rows
         .iter()
         .enumerate()
         .map(|(i, (depth, row))| {
-            let (text, color) = tree_label(&app.model, row);
+            let (text, color) = tree_label_themed(&app.model, row, &t);
             let fold = if app.folds.is_folded(row) { "▸ " } else { "" };
+            let guide = "│ ".repeat(*depth);
             let mut style = Style::default().fg(color);
             if i == app.selected {
-                style = style.add_modifier(Modifier::REVERSED);
+                style = style.bg(t.sel_bg).add_modifier(Modifier::BOLD);
             }
-            ListItem::new(Line::from(Span::styled(
-                format!("{}{fold}{text}", "  ".repeat(*depth)),
-                style,
-            )))
+            ListItem::new(Line::from(vec![
+                Span::styled(guide, t.dim()),
+                Span::styled(format!("{fold}{text}"), style),
+            ]))
         })
         .collect();
-    let title = format!(" CALL TREE ({} rows) ", rows.len());
-    let list = List::new(items).block(Block::default().borders(Borders::ALL).title(title));
+    let live = app
+        .model
+        .sessions
+        .values()
+        .filter(|s| s.outcome.is_none())
+        .count();
+    let list = List::new(items).block(t.panel_with_meta(
+        "Call tree",
+        format!("{} rows · {live} live", rows.len()),
+        app.view == View::Session,
+    ));
     f.render_widget(list, area);
+}
+
+fn draw_welcome(f: &mut Frame<'_>, area: Rect, app: &App) {
+    let t = app.theme;
+    let block = t.panel("Welcome", false);
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    let lines = vec![
+        Line::from(""),
+        Line::from(Span::styled("╭──────────╮", Style::default().fg(t.accent))),
+        Line::from(vec![
+            Span::styled("│ ", Style::default().fg(t.accent)),
+            Span::styled(BRAND, t.accent_text()),
+            Span::styled(" │", Style::default().fg(t.accent)),
+        ]),
+        Line::from(Span::styled("╰──────────╯", Style::default().fg(t.accent))),
+        Line::from(Span::styled(TAGLINE, t.dim())),
+        Line::from(""),
+        Line::from(Span::styled(
+            "No run yet. Start one from a shell:",
+            t.text(),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "  kleene tui --run \"Which project consumed the most hours?\" --context notes.txt",
+            Style::default().fg(t.fg),
+        )),
+        Line::from(Span::styled(
+            "  kleene run @task.txt --budget-calls 60",
+            Style::default().fg(t.fg),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Runs started anywhere against this daemon appear here as they happen.",
+            t.dim(),
+        )),
+        Line::from(Span::styled(
+            "3 opens the trace explorer over the store; 4 the task board; ? the keymap.",
+            t.dim(),
+        )),
+    ];
+    f.render_widget(
+        Paragraph::new(Text::from(lines))
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: false }),
+        inner,
+    );
 }
 
 /// The transcript text for the selected row.
@@ -278,7 +433,7 @@ pub fn transcript_text(app: &App) -> String {
                     st.elapsed.as_secs_f64()
                 ));
             } else {
-                out.push_str("● running\n");
+                out.push_str("◐ running\n");
             }
             if !st.tool_calls.is_empty() {
                 out.push_str("\ntools:\n");
@@ -311,7 +466,7 @@ pub fn transcript_text(app: &App) -> String {
                     None => format!("{} tokens · ${:.4}\n", c.tokens, c.dollars),
                 });
             } else {
-                out.push_str("● running\n");
+                out.push_str("◐ running\n");
             }
             if !c.streaming.is_empty() {
                 out.push('\n');
@@ -322,10 +477,53 @@ pub fn transcript_text(app: &App) -> String {
     }
 }
 
+/// Colour transcript lines by what they say: results, errors, fences, SQL.
+fn styled_transcript(text: &str, t: &Theme) -> Text<'static> {
+    let mut in_sql = false;
+    let lines = text
+        .lines()
+        .map(|l| {
+            let trimmed = l.trim_start();
+            if trimmed.starts_with("```") {
+                in_sql = !in_sql;
+                return Line::from(Span::styled(l.to_string(), t.dim()));
+            }
+            let style = if trimmed.starts_with('→') {
+                Style::default().fg(t.ok)
+            } else if trimmed.starts_with('✗') {
+                Style::default().fg(t.err)
+            } else if trimmed.starts_with('◐') {
+                Style::default().fg(t.ok).add_modifier(Modifier::ITALIC)
+            } else if trimmed == "ANSWER" || trimmed.starts_with("ended:") {
+                t.accent_text()
+            } else if trimmed.starts_with("session ")
+                || trimmed.starts_with("task:")
+                || trimmed.starts_with("call ")
+                || trimmed.ends_with(':')
+            {
+                t.dim()
+            } else if in_sql {
+                Style::default().fg(t.fg).add_modifier(Modifier::BOLD)
+            } else {
+                t.text()
+            };
+            Line::from(Span::styled(l.to_string(), style))
+        })
+        .collect::<Vec<_>>();
+    Text::from(lines)
+}
+
 fn draw_transcript(f: &mut Frame<'_>, area: Rect, app: &App) {
+    let t = app.theme;
     let text = transcript_text(app);
-    let p = Paragraph::new(text)
-        .block(Block::default().borders(Borders::ALL).title(" TRANSCRIPT "))
+    let meta = match app.selected_row() {
+        Some(TreeRow::Session(_)) => "session",
+        Some(TreeRow::Statement(_)) => "statement",
+        Some(TreeRow::Call(_)) => "model call",
+        None => "",
+    };
+    let p = Paragraph::new(styled_transcript(&text, &t))
+        .block(t.panel_with_meta("Transcript", meta, false))
         .wrap(Wrap { trim: false })
         .scroll((app.scroll, 0));
     f.render_widget(p, area);
@@ -362,12 +560,14 @@ pub fn plan_text(app: &App) -> String {
 }
 
 fn draw_sidebar(f: &mut Frame<'_>, area: Rect, app: &App) {
+    let t = app.theme;
     let parts = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(5), Constraint::Length(6)])
+        .constraints([Constraint::Min(5), Constraint::Length(9)])
         .split(area);
     let p = Paragraph::new(plan_text(app))
-        .block(Block::default().borders(Borders::ALL).title(" PLAN "))
+        .style(t.text())
+        .block(t.panel("Plan", false))
         .wrap(Wrap { trim: false });
     f.render_widget(p, parts[0]);
     let m = &app.model;
@@ -379,66 +579,109 @@ fn draw_sidebar(f: &mut Frame<'_>, area: Rect, app: &App) {
     };
     let running = m.sessions.values().filter(|s| s.outcome.is_none()).count();
     let depth = m.sessions.values().map(|s| s.depth).max().unwrap_or(0);
+    let block = t.panel("Metrics", false);
+    let inner = block.inner(parts[1]);
+    f.render_widget(block, parts[1]);
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(1),
+        ])
+        .split(inner);
     let gauge = Gauge::default()
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(format!(" memo hit rate · {running} live · depth {depth} ")),
-        )
-        .gauge_style(Style::default().fg(Color::Cyan))
+        .gauge_style(Style::default().fg(t.accent).bg(t.sel_bg))
         .ratio(ratio.clamp(0.0, 1.0))
-        .label(format!("{:.0}%", ratio * 100.0));
-    f.render_widget(gauge, parts[1]);
+        .label(format!("memo {:.0}%", ratio * 100.0));
+    f.render_widget(gauge, rows[0]);
+    let stats = vec![
+        stat_line(
+            &t,
+            "sessions",
+            format!("{} ({running} live)", m.sessions.len()),
+        ),
+        stat_line(&t, "depth", depth.to_string()),
+        stat_line(
+            &t,
+            "calls",
+            format!("{} + {} memo", m.total_calls, m.total_memo),
+        ),
+        stat_line(&t, "tokens", human(m.total_tokens)),
+        stat_line(&t, "spend", format!("${:.4}", m.total_dollars)),
+    ];
+    f.render_widget(Paragraph::new(Text::from(stats)), rows[2]);
+}
+
+fn stat_line(t: &Theme, label: &str, value: String) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(format!("{label:<9}"), t.dim()),
+        Span::styled(value, t.text()),
+    ])
 }
 
 fn draw_plan(f: &mut Frame<'_>, area: Rect, app: &App) {
+    let t = app.theme;
     let p = Paragraph::new(plan_text(app))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" PLAN (selected statement) "),
-        )
+        .style(t.text())
+        .block(t.panel_with_meta("Plan", "selected statement", true))
         .wrap(Wrap { trim: false });
     f.render_widget(p, area);
 }
 
 fn draw_trace(f: &mut Frame<'_>, area: Rect, app: &App) {
+    let t = app.theme;
     let parts = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(3), Constraint::Min(3)])
         .split(area);
-    let style = if app.editing {
-        Style::default().fg(Color::Yellow)
+    let input_style = if app.editing {
+        Style::default().fg(t.sel_fg).bg(t.sel_bg)
     } else {
-        Style::default()
+        t.text()
     };
-    let input = Paragraph::new(app.query.as_str()).style(style).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(if app.editing {
-                " SQL (editing) "
-            } else {
-                " SQL (e to edit, r to run) "
-            }),
-    );
+    let caret = if app.editing { "▏" } else { "" };
+    let input = Paragraph::new(Line::from(vec![
+        Span::styled("❯ ", Style::default().fg(t.accent)),
+        Span::styled(format!("{}{caret}", app.query), input_style),
+    ]))
+    .block(t.panel_with_meta(
+        "SQL over the store",
+        if app.editing {
+            "editing · ⏎ runs · esc done"
+        } else {
+            "e edit · r run"
+        },
+        app.editing,
+    ));
     f.render_widget(input, parts[0]);
     match &app.model.table {
         Some((columns, rows)) => f.render_widget(
-            table_widget(columns, rows, format!(" {} rows ", rows.len()), 40),
+            table_widget(&t, columns, rows, "Result", format!("{} rows", rows.len()), 40),
             parts[1],
         ),
         None => f.render_widget(
-            Paragraph::new("Press r to run the query. Saved queries: trace_sessions, trace_statements, trace_calls, memo.")
-                .block(Block::default().borders(Borders::ALL).title(" RESULT ")),
+            Paragraph::new(Text::from(vec![
+                Line::from(Span::styled("Press r to run the query.", t.text())),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "Tables: trace_runs, trace_sessions, trace_statements, trace_calls, trace_tool_calls, trace_rounds, memo, tasks, playbook, evals.",
+                    t.dim(),
+                )),
+            ]))
+            .wrap(Wrap { trim: false })
+            .block(t.panel("Result", false)),
             parts[1],
         ),
     }
 }
 
 fn table_widget<'a>(
+    t: &Theme,
     columns: &'a [String],
     rows: &'a [Vec<String>],
-    title: String,
+    title: &'a str,
+    meta: String,
     max_cell: usize,
 ) -> Table<'a> {
     let widths: Vec<Constraint> = columns
@@ -456,17 +699,26 @@ fn table_widget<'a>(
         })
         .collect();
     let header = Row::new(columns.iter().map(|c| Cell::from(c.as_str())))
-        .style(Style::default().add_modifier(Modifier::BOLD));
+        .style(t.accent_text().add_modifier(Modifier::UNDERLINED));
     let body: Vec<Row> = rows
         .iter()
-        .map(|r| Row::new(r.iter().map(|v| Cell::from(first_line(v, max_cell)))))
+        .enumerate()
+        .map(|(i, r)| {
+            let style = if i % 2 == 1 {
+                Style::default().fg(t.fg).bg(t.sel_bg)
+            } else {
+                t.text()
+            };
+            Row::new(r.iter().map(|v| Cell::from(first_line(v, max_cell)))).style(style)
+        })
         .collect();
     Table::new(body, widths)
         .header(header)
-        .block(Block::default().borders(Borders::ALL).title(title))
+        .block(t.panel_with_meta(title, meta, false))
 }
 
 fn draw_tasks(f: &mut Frame<'_>, area: Rect, app: &App) {
+    let t = app.theme;
     let m = &app.model;
     let parts = Layout::default()
         .direction(Direction::Vertical)
@@ -476,7 +728,6 @@ fn draw_tasks(f: &mut Frame<'_>, area: Rect, app: &App) {
             Constraint::Min(4),
         ])
         .split(area);
-    // Solve-rate strip: recent outcomes as a sparkline, newest on the right.
     let mut recent: Vec<u64> = m.outcomes.iter().rev().copied().collect();
     if recent.is_empty() {
         recent.push(0);
@@ -487,58 +738,107 @@ fn draw_tasks(f: &mut Frame<'_>, area: Rect, app: &App) {
     } else {
         solved as f64 / m.outcomes.len() as f64 * 100.0
     };
-    let spark = ratatui::widgets::Sparkline::default()
-        .block(Block::default().borders(Borders::ALL).title(format!(
-            " recent outcomes · {} of {} solved ({rate:.0}%) ",
-            solved,
-            m.outcomes.len()
-        )))
+    let spark = Sparkline::default()
+        .block(t.panel_with_meta(
+            "Recent outcomes",
+            format!("{solved} of {} solved · {rate:.0}%", m.outcomes.len()),
+            false,
+        ))
         .data(&recent)
         .max(1)
-        .style(Style::default().fg(Color::Cyan));
+        .style(Style::default().fg(t.ok));
     f.render_widget(spark, parts[0]);
     match &m.board {
         Some((cols, rows)) => f.render_widget(
-            table_widget(cols, rows, " BOARD · pending / running / solved / failed / review, with each generator's dial ".into(), 20),
+            table_widget(
+                &t,
+                cols,
+                rows,
+                "Board",
+                "pending / running / solved / failed / review · dial per generator".into(),
+                20,
+            ),
             parts[1],
         ),
         None => f.render_widget(
-            Paragraph::new("No tasks yet. `kleene learn generate puzzle` or `kleene learn run` fills the board; r refreshes.")
-                .block(Block::default().borders(Borders::ALL).title(" BOARD ")),
+            Paragraph::new(Text::from(vec![
+                Line::from(Span::styled("No tasks yet.", t.text())),
+                Line::from(Span::styled(
+                    "`kleene learn generate puzzle` or `kleene learn run` fills the board; r refreshes.",
+                    t.dim(),
+                )),
+            ]))
+            .wrap(Wrap { trim: false })
+            .block(t.panel("Board", false)),
             parts[1],
         ),
     }
     match &m.tasks {
         Some((cols, rows)) => f.render_widget(
-            table_widget(cols, rows, format!(" RECENT TASKS ({}) ", rows.len()), 48),
+            table_widget(
+                &t,
+                cols,
+                rows,
+                "Recent tasks",
+                format!("{}", rows.len()),
+                48,
+            ),
             parts[2],
         ),
         None => f.render_widget(
-            Paragraph::new("").block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(" RECENT TASKS "),
-            ),
+            Paragraph::new("").block(t.panel("Recent tasks", false)),
             parts[2],
         ),
     }
 }
 
-fn draw_help(f: &mut Frame<'_>, area: Rect) {
-    let text = "\
-Views      1 session   2 plan   3 trace   4 tasks   ? help
-Move       j/k or arrows select a row in the call tree
-Fold       f, Enter or Space folds the selected session or statement
-Scroll     J/K scroll the transcript
-Cancel     x or Esc cancels the selected statement (a session row cancels its run)
-Trace      e edit the SQL, Enter runs it, r reruns it
-Tasks      the continual loop's board (kleene learn); r refreshes, auto every 2s
-Leave      d or q detaches; the daemon and its runs keep going
-
-The tree shows sessions (■/● role id depth), their statements (▸/●) and
-model calls (λ). Dollars, tokens and memo hits accumulate in the title bar.";
+fn draw_help(f: &mut Frame<'_>, area: Rect, app: &App) {
+    let t = app.theme;
+    let rows: [(&str, &str); 10] = [
+        ("Views", "1 session · 2 plan · 3 trace · 4 tasks · ? help"),
+        ("Move", "j/k or arrows select a row in the call tree"),
+        (
+            "Fold",
+            "f, Enter or Space folds the selected session or statement",
+        ),
+        ("Scroll", "J/K or PageUp/PageDown scroll the transcript"),
+        (
+            "Cancel",
+            "x or Esc cancels the selected statement; a root session row cancels its run",
+        ),
+        ("Trace", "e or / edits the SQL, Enter runs it, r reruns it"),
+        (
+            "Tasks",
+            "the continual loop's board (kleene learn); r refreshes, auto every 2s",
+        ),
+        ("Theme", "t switches between the dark and light palettes"),
+        (
+            "Leave",
+            "d, q or Ctrl-C detaches; the daemon and its runs keep going",
+        ),
+        (
+            "Setup",
+            "kleene setup (in a shell) adds or changes provider keys",
+        ),
+    ];
+    let mut lines: Vec<Line> = rows
+        .iter()
+        .map(|(k, v)| {
+            Line::from(vec![
+                Span::styled(format!("{k:<8}"), t.accent_text()),
+                Span::styled((*v).to_string(), t.text()),
+            ])
+        })
+        .collect();
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "The tree shows sessions (■/◐ role id depth), their statements (▸/◐) and model calls (λ, ◇ when served from the memo). Spend, tokens and the memo hit rate accumulate in the header.",
+        t.dim(),
+    )));
     f.render_widget(
-        Paragraph::new(text).block(Block::default().borders(Borders::ALL).title(" HELP ")),
+        Paragraph::new(Text::from(lines))
+            .wrap(Wrap { trim: false })
+            .block(t.panel("Keymap", true)),
         area,
     );
 }
@@ -626,15 +926,26 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|f| draw(f, &app)).unwrap();
         let text = buffer_text(terminal.backend());
-        assert!(text.contains("CALL TREE"), "{text}");
+        assert!(text.contains("Call tree"), "{text}");
         assert!(text.contains("root"), "{text}");
         assert!(text.contains("Find the bug"), "{text}");
-        assert!(text.contains("PLAN"), "{text}");
+        assert!(text.contains("Plan"), "{text}");
         assert!(text.contains("running"), "{text}");
+        assert!(text.contains("kleene"), "brand in the header: {text}");
     }
 
     #[test]
-    fn keys_move_fold_and_cancel() {
+    fn empty_state_shows_the_welcome_card() {
+        let app = App::default();
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+        let text = buffer_text(terminal.backend());
+        assert!(text.contains("Welcome"), "{text}");
+        assert!(text.contains("kleene tui --run"), "{text}");
+    }
+
+    #[test]
+    fn keys_move_fold_cancel_and_theme() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         let mut app = app_with_run();
         assert_eq!(app.rows().len(), 2);
@@ -651,9 +962,11 @@ mod tests {
         let fold = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE);
         app.key(fold);
         assert_eq!(app.rows().len(), 1, "folded session hides its statement");
+        let theme = KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE);
+        assert_eq!(app.key(theme), crate::Action::None);
+        assert_eq!(app.theme.name, "light");
         let quit = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
         assert_eq!(app.key(quit), crate::Action::Detach);
-        // Plan view shows the explain text; the trace view takes SQL input.
         app.view = View::Plan;
         assert!(plan_text(&app).contains("scan ctx"));
         app.view = View::Trace;
@@ -669,20 +982,24 @@ mod tests {
     }
 
     #[test]
-    fn compact_layout_renders_without_panicking() {
+    fn every_view_renders_in_both_layouts_and_themes() {
         let mut app = app_with_run();
-        app.compact = true;
-        let backend = TestBackend::new(80, 24);
-        let mut terminal = Terminal::new(backend).unwrap();
-        for view in [
-            View::Session,
-            View::Plan,
-            View::Trace,
-            View::Tasks,
-            View::Help,
-        ] {
-            app.view = view;
-            terminal.draw(|f| draw(f, &app)).unwrap();
+        for (compact, size) in [(true, (80, 24)), (false, (140, 40))] {
+            app.compact = compact;
+            let mut terminal = Terminal::new(TestBackend::new(size.0, size.1)).unwrap();
+            for theme in [Theme::dark(), Theme::light()] {
+                app.theme = theme;
+                for view in [
+                    View::Session,
+                    View::Plan,
+                    View::Trace,
+                    View::Tasks,
+                    View::Help,
+                ] {
+                    app.view = view;
+                    terminal.draw(|f| draw(f, &app)).unwrap();
+                }
+            }
         }
     }
 

@@ -1500,6 +1500,7 @@ dependencies = [
  "futures",
  "kleene-core",
  "kleene-daemon",
+ "kleene-llm",
  "kleene-trace",
  "ratatui",
  "serde_json",

@@ -11,6 +11,7 @@ repository.workspace = true
 kleene-daemon = { workspace = true }
 kleene-core = { workspace = true }
 kleene-trace = { workspace = true }
+kleene-llm = { workspace = true }
 crossterm = { workspace = true }
 futures = { workspace = true }
 ratatui = { workspace = true }

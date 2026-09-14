@@ -599,7 +599,7 @@ impl LiveSink {
         self.check_cancelled()?;
         let provider = self.provider.as_ref().ok_or_else(|| {
             ExecError::Call(
-                "no model provider configured (set ANTHROPIC_API_KEY or OPENAI_API_KEY, or a KLEENE_ROUTER_TOML)".into(),
+                "no model provider configured (run `kleene setup`, or set ANTHROPIC_API_KEY or OPENAI_API_KEY)".into(),
             )
         })?;
         let settings = self.settings().await;

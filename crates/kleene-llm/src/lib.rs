@@ -14,6 +14,7 @@
 #![forbid(unsafe_code)]
 
 pub mod adapters;
+pub mod config;
 pub mod env;
 mod http;
 pub mod replay;
@@ -22,7 +23,8 @@ pub mod sse;
 pub mod types;
 
 pub use adapters::{AnthropicProvider, OpenAiCompatProvider};
-pub use env::provider_from_env;
+pub use config::{AnthropicSettings, OpenAiCompatSettings, ProviderSettings};
+pub use env::{provider_from_env, provider_from_settings, NOT_CONFIGURED};
 pub use replay::{RecordingProvider, ReplayProvider};
 pub use router::{
     AliasConfig, Candidate, CircuitState, ModelPricing, Pricing, RoutedProvider, Router,
