@@ -76,9 +76,22 @@ brew install MarcusElwin/callgebra/callgebra
 ```
 
 This installs from the tap `MarcusElwin/homebrew-callgebra`, whose formula is
-the template in [`Formula/callgebra.rb`](../Formula/callgebra.rb). Until the
-tap exists, `brew install --formula ./Formula/callgebra.rb` from a checkout
-works once the release checksums are filled in.
+the template in [`Formula/callgebra.rb`](../Formula/callgebra.rb). Homebrew
+refuses a formula given by path (`Homebrew requires formulae to be in a tap`),
+so until that tap exists, make a local one from a checkout:
+
+```bash
+brew tap-new marcuselwin/callgebra
+cp Formula/callgebra.rb "$(brew --repository marcuselwin/callgebra)/Formula/"
+brew install --HEAD marcuselwin/callgebra/callgebra
+```
+
+`--HEAD` clones `main` and builds with cargo (about ten minutes, DuckDB
+included), so it works before the first release and while the repository is
+private, as long as git can authenticate to GitHub (`gh auth setup-git`, or
+an SSH remote). Without `--HEAD` the formula downloads release binaries, which
+needs a published release with its checksums pasted into the formula, and a
+public repository.
 
 ### cargo
 
