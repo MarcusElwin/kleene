@@ -59,12 +59,19 @@ export ANTHROPIC_API_KEY=sk-ant-...        # or just the environment: Anthropic,
 export OPENAI_API_KEY=sk-...               # or any OpenAI-compatible endpoint (OPENAI_BASE_URL, OPENAI_MODEL)
 ```
 
-Run a task over a context, then read the trace:
+Then just run it. `kleene` alone opens the terminal UI: type a task, press
+Enter, watch the model's reply stream in and its SQL run. Or drive it from
+the shell:
 
 ```bash
+kleene                                              # the UI, prompt bar focused
 kleene run @demos/oolong/task.txt --context demos/oolong/corpus.txt --budget-calls 60
 kleene trace "SELECT depth, role, outcome, turns, calls, dollars FROM trace_sessions ORDER BY started_at"
 ```
+
+`kleene run` streams the reply as it is written, highlights the SQL, shows a
+spinner while statements execute and prints the results and the final
+relation as tables.
 
 The model receives the context as a table `ctx(ordinal, text)` and writes
 CallSQL turn by turn: it can `SELECT` over the context, define prompt
@@ -95,7 +102,9 @@ Everything lands in `.kleene/run.duckdb` under the current directory.
 
 | Command | Does |
 |---|---|
-| `kleene run <task>` | drive a model through the SQL turn loop to `FINAL` |
+| `kleene` | the terminal UI with the prompt bar focused; type a task to run it |
+| `kleene setup` | pick providers and store their keys |
+| `kleene run <task>` | drive a model through the SQL turn loop to `FINAL`, streamed to the terminal |
 | `kleene resume <run-id>` | continue a run that hit its turn cap |
 | `kleene repl [-c SQL]` | CallSQL against the store, interactive or scripted |
 | `kleene explain <sql>` | the call plan and its cost, without executing |

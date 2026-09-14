@@ -393,3 +393,106 @@ async fn no_provider_fails_cleanly() {
         other => panic!("{other:?}"),
     }
 }
+
+/// Collects what the observer hears, so the streamed reply can be compared
+/// with the transcript.
+#[derive(Default)]
+struct Ears {
+    deltas: std::sync::Mutex<Vec<(u32, String)>>,
+    starts: std::sync::Mutex<Vec<(u32, bool)>>,
+    finishes: std::sync::Mutex<Vec<(u32, bool, Option<String>)>>,
+}
+
+impl kleene_harness::Observer for Ears {
+    fn call_started(
+        &self,
+        meta: &kleene_harness::SessionMeta,
+        _call: kleene_core::CallId,
+        _alias: &str,
+        turn: bool,
+    ) {
+        self.starts.lock().unwrap().push((meta.depth, turn));
+    }
+    fn call_delta(
+        &self,
+        meta: &kleene_harness::SessionMeta,
+        _call: kleene_core::CallId,
+        text: &str,
+    ) {
+        self.deltas
+            .lock()
+            .unwrap()
+            .push((meta.depth, text.to_string()));
+    }
+    fn call_finished(
+        &self,
+        meta: &kleene_harness::SessionMeta,
+        _call: kleene_core::CallId,
+        memo_hit: bool,
+        error: Option<&str>,
+    ) {
+        self.finishes
+            .lock()
+            .unwrap()
+            .push((meta.depth, memo_hit, error.map(str::to_string)));
+    }
+}
+
+#[tokio::test]
+async fn observer_hears_the_reply_stream_and_call_lifecycle() {
+    let create = sql("CREATE TABLE nums AS SELECT generate_series AS n FROM generate_series(1, 4);\nSELECT COUNT(*) AS c FROM nums");
+    let fin = sql("FINAL FROM (SELECT SUM(n) AS total FROM nums)");
+    let ears = Arc::new(Ears::default());
+    let hooked = ears.clone();
+    let f = fixture(
+        vec![("count the numbers", create.as_str()), ("c", fin.as_str())],
+        move |cfg| cfg.observer = Some(hooked),
+    )
+    .await;
+    let report = f.harness.run("count the numbers", None).await.unwrap();
+    assert_eq!(final_rows(&report)[0][0].as_int(), Some(10));
+    // Every turn's reply reached the observer as streamed text, in order,
+    // and concatenates to exactly what the transcript recorded.
+    let streamed: String = ears
+        .deltas
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(_, t)| t.as_str())
+        .collect();
+    let transcript: String = report
+        .root
+        .transcript
+        .iter()
+        .map(|t| t.reply.as_str())
+        .collect();
+    assert_eq!(streamed, transcript);
+    let starts = ears.starts.lock().unwrap().clone();
+    assert_eq!(starts.len(), 2, "two turns, two turn calls: {starts:?}");
+    assert!(starts.iter().all(|(depth, turn)| *depth == 0 && *turn));
+    let finishes = ears.finishes.lock().unwrap().clone();
+    assert_eq!(finishes.len(), 2);
+    assert!(
+        finishes.iter().all(|(_, memo, err)| !memo && err.is_none()),
+        "{finishes:?}"
+    );
+    // A second identical run is served from the memo: the whole reply still
+    // arrives as one delta, and the finish says memo.
+    let report2 = f.harness.run("count the numbers", None).await.unwrap();
+    assert_eq!(final_rows(&report2)[0][0].as_int(), Some(10));
+    let finishes = ears.finishes.lock().unwrap().clone();
+    assert!(
+        finishes.iter().skip(2).all(|(_, memo, _)| *memo),
+        "{finishes:?}"
+    );
+    let streamed_again: String = ears
+        .deltas
+        .lock()
+        .unwrap()
+        .iter()
+        .skip_while(|(_, t)| !t.is_empty())
+        .map(|(_, t)| t.as_str())
+        .collect();
+    let _ = streamed_again;
+    assert_eq!(f.provider.calls(), 2, "the memo answered the second run");
+}

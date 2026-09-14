@@ -23,6 +23,7 @@ pub fn draw(f: &mut Frame<'_>, app: &App) {
         .constraints([
             Constraint::Length(1),
             Constraint::Min(5),
+            Constraint::Length(3),
             Constraint::Length(1),
         ])
         .split(area);
@@ -34,7 +35,44 @@ pub fn draw(f: &mut Frame<'_>, app: &App) {
         View::Tasks => draw_tasks(f, chunks[1], app),
         View::Help => draw_help(f, chunks[1], app),
     }
-    draw_footer(f, chunks[2], app);
+    draw_prompt(f, chunks[2], app);
+    draw_footer(f, chunks[3], app);
+}
+
+/// The prompt bar: type a task and press Enter to start a run on the daemon;
+/// `/sql …` runs one statement in an interactive session.
+fn draw_prompt(f: &mut Frame<'_>, area: Rect, app: &App) {
+    let t = app.theme;
+    let (text, style) = if app.input.is_empty() && !app.composing {
+        (
+            "Press i to type a task and Enter to run it · /sql SELECT … runs a statement"
+                .to_string(),
+            t.dim(),
+        )
+    } else if app.input.is_empty() {
+        ("Describe the task…".to_string(), t.dim())
+    } else {
+        (app.input.clone(), t.text())
+    };
+    let caret = if app.composing { "▏" } else { "" };
+    let line = Line::from(vec![
+        Span::styled(
+            "❯ ",
+            Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(format!("{text}{caret}"), style),
+    ]);
+    let meta = if app.composing {
+        "⏎ run · esc leave · ctrl-u clear"
+    } else if app.follow {
+        "following"
+    } else {
+        "g follow"
+    };
+    f.render_widget(
+        Paragraph::new(line).block(t.panel_with_meta("Task", meta, app.composing)),
+        area,
+    );
 }
 
 fn short(id: impl ToString) -> String {
@@ -143,11 +181,12 @@ fn draw_footer(f: &mut Frame<'_>, area: Rect, app: &App) {
             t.chip("q", "detach"),
         ]
         .concat(),
+        _ if app.composing => [t.chip("⏎", "run"), t.chip("esc", "leave prompt")].concat(),
         _ => [
+            t.chip("i", "task"),
             t.chip("1-4", "views"),
             t.chip("j/k", "move"),
             t.chip("f", "fold"),
-            t.chip("J/K", "scroll"),
             t.chip("x", "cancel"),
             t.chip("t", "theme"),
             t.chip("?", "help"),
@@ -338,9 +377,10 @@ fn draw_welcome(f: &mut Frame<'_>, area: Rect, app: &App) {
         Line::from(Span::styled(TAGLINE, t.dim())),
         Line::from(""),
         Line::from(Span::styled(
-            "No run yet. Start one from a shell:",
+            "No run yet. Type a task in the prompt below and press Enter,",
             t.text(),
         )),
+        Line::from(Span::styled("or start one from a shell:", t.text())),
         Line::from(""),
         Line::from(Span::styled(
             "  kleene tui --run \"Which project consumed the most hours?\" --context notes.txt",
@@ -398,6 +438,28 @@ pub fn transcript_text(app: &App) -> String {
                             st.elapsed.as_secs_f64()
                         ));
                     }
+                    out.push('\n');
+                }
+            }
+            // The reply being written right now, streamed by the daemon.
+            let live = s
+                .statement_ids
+                .iter()
+                .rev()
+                .filter_map(|sid| m.statements.get(sid))
+                .find(|st| !st.finished && st.sql.starts_with("-- turn"))
+                .and_then(|st| {
+                    st.call_ids
+                        .iter()
+                        .filter_map(|c| m.calls.get(c))
+                        .find(|c| !c.finished)
+                });
+            if let Some(c) = live {
+                if c.streaming.is_empty() {
+                    out.push_str("◐ thinking…\n");
+                } else {
+                    out.push_str("◐ writing:\n");
+                    out.push_str(&c.streaming);
                     out.push('\n');
                 }
             }
@@ -794,7 +856,8 @@ fn draw_tasks(f: &mut Frame<'_>, area: Rect, app: &App) {
 
 fn draw_help(f: &mut Frame<'_>, area: Rect, app: &App) {
     let t = app.theme;
-    let rows: [(&str, &str); 10] = [
+    let rows: [(&str, &str); 11] = [
+        ("Task", "i, n or : focus the prompt; Enter starts a run; /sql SELECT … runs a statement; g follows the newest run"),
         ("Views", "1 session · 2 plan · 3 trace · 4 tasks · ? help"),
         ("Move", "j/k or arrows select a row in the call tree"),
         (
@@ -979,6 +1042,50 @@ mod tests {
             app.key(enter),
             crate::Action::Send(kleene_daemon::ClientRequest::Query { sql, .. }) if sql == "S"
         ));
+    }
+
+    #[test]
+    fn prompt_bar_starts_runs_and_submits_sql() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let mut app = App {
+            workspace: "/ws".into(),
+            ..App::default()
+        };
+        let key = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
+        assert_eq!(app.key(key('i')), crate::Action::None);
+        assert!(app.composing);
+        for c in "Sum 1..4".chars() {
+            app.key(key(c));
+        }
+        match app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)) {
+            crate::Action::Send(kleene_daemon::ClientRequest::StartRun {
+                task, workspace, ..
+            }) => {
+                assert_eq!(task, "Sum 1..4");
+                assert_eq!(workspace, "/ws");
+            }
+            other => panic!("expected StartRun, got {other:?}"),
+        }
+        assert!(!app.composing && app.input.is_empty());
+        app.key(key(':'));
+        for c in "/sql SELECT 1".chars() {
+            app.key(key(c));
+        }
+        match app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)) {
+            crate::Action::Send(kleene_daemon::ClientRequest::Submit { sql, session }) => {
+                assert_eq!(sql, "SELECT 1");
+                assert_eq!(session, app.repl_session);
+            }
+            other => panic!("expected Submit, got {other:?}"),
+        }
+        // Typing 'q' while composing is text, not detach.
+        app.key(key('n'));
+        assert_eq!(app.key(key('q')), crate::Action::None);
+        assert_eq!(app.input, "q");
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+        let text = buffer_text(terminal.backend());
+        assert!(text.contains("Task"), "{text}");
     }
 
     #[test]

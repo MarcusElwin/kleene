@@ -14,8 +14,8 @@ use crate::repl::{Rendered, Repl};
 use crate::sink::StoreSink;
 use crate::{AgentRole, Outcome, RenderOptions};
 use kleene_core::{
-    Batch, Budget, BudgetUsage, CallKind, Catalog, DataType, Field, FunctionDef, RunId, Schema,
-    SessionId, StatementId, TableSource, Value,
+    Batch, Budget, BudgetUsage, CallId, CallKind, Catalog, DataType, Field, FunctionDef, RunId,
+    Schema, SessionId, StatementId, TableSource, Value,
 };
 use kleene_exec::ExecError;
 use kleene_llm::{CompletionRequest, Message, Provider, ProviderOptions, StopReason};
@@ -105,10 +105,29 @@ impl Default for HarnessConfig {
     }
 }
 
-/// Watches sessions as they run.
+/// Watches sessions as they run. Every hook has a no-op default; the
+/// call hooks fire from inside [`LiveSink`], so an observer sees the
+/// session's own reply stream in ([`Observer::call_delta`]) before
+/// [`Observer::turn`] reports what its SQL did.
 pub trait Observer: Send + Sync {
     /// A session began.
     fn session_started(&self, _meta: &SessionMeta, _task: &str) {}
+    /// A model call began. `turn` is true for the session's own reply and
+    /// false for a call made by a statement (`llm(...)`, `rlm(...)`, …).
+    fn call_started(&self, _meta: &SessionMeta, _call: CallId, _alias: &str, _turn: bool) {}
+    /// A piece of the call's text as it is generated. Only the session's own
+    /// reply streams; a memo hit delivers the whole text in one piece.
+    fn call_delta(&self, _meta: &SessionMeta, _call: CallId, _text: &str) {}
+    /// A model call ended, served from the memo or not, with an error if it
+    /// failed.
+    fn call_finished(
+        &self,
+        _meta: &SessionMeta,
+        _call: CallId,
+        _memo_hit: bool,
+        _error: Option<&str>,
+    ) {
+    }
     /// A turn completed (the model replied and its SQL ran).
     fn turn(&self, _meta: &SessionMeta, _turn: &Turn) {}
     /// A session ended.
@@ -406,6 +425,7 @@ impl Harness {
             self.cfg.tracer.clone(),
         ));
         sink.set_meta(meta.clone()).await;
+        sink.set_observer(self.cfg.observer.clone()).await;
         sink.set_agents(record.agents.clone()).await;
         sink.set_functions(record.functions.clone()).await;
         sink.set_budget(record.budget.clone()).await;
@@ -505,7 +525,7 @@ impl Harness {
                     extra: Default::default(),
                 },
             };
-            let resp = sink.complete(req).await;
+            let resp = sink.complete_streaming(req).await;
             let after = sink.usage().await;
             sink.set_statement(None).await;
             if let Some(t) = &self.cfg.tracer {

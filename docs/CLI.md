@@ -311,10 +311,23 @@ flag-driven otherwise.
 
 Flags merge into the existing file; providers not mentioned are kept.
 
+### `kleene`
+
+With no arguments, in a terminal, `kleene` opens the terminal UI with the
+prompt bar focused: type a task, press Enter, and watch the run. This is the
+same UI as `kleene tui`; see below. Outside a terminal it prints the version.
+
 ### `kleene run <task>`
 
 Run a task to completion: the model writes CallSQL turn by turn until
-`FINAL`. Prints each turn's SQL and rendered result, then the final relation.
+`FINAL`. The reply streams to the terminal as the model writes it, with the
+SQL highlighted and the prose dimmed; a spinner shows while the model thinks
+and while its statements run, counting the model calls they make; each
+statement's rows print as a table, errors in red with the hint in yellow; and
+the final relation prints as a box-drawn table sized to the terminal. When
+stderr is not a terminal, colour and spinners switch off and the output is
+plain. Child sessions (`rlm`, `spawn`) are summarised one level in, not
+streamed.
 
 ```
 kleene run <task|@file> [--context <file>] [--max-turns 30] [--max-depth 2]
@@ -402,10 +415,19 @@ configured, it runs the setup wizard before connecting.
 kleene tui [--run <task|@file>] [--context <file>] [--socket <path>]
 ```
 
+The prompt bar at the bottom is where work starts: `i` (or `n`, `:`) focuses
+it, a task plus Enter starts a run on the daemon, and `/sql SELECT …` runs
+one statement in an interactive session. The newest run's root session stays
+selected while it works, so the model's reply streams into the transcript as
+it is written (`g` returns to following after you move around). Runs started
+from a shell with `kleene run` against the same daemon show up here too.
+
 Views and keys:
 
 | Key | Action |
 |---|---|
+| `i`, `n`, `:` | focus the prompt bar; Enter runs, Esc leaves it, Ctrl-U clears |
+| `g` | follow the newest run again |
 | `1` | session view: call tree with live status, transcript of the selected row, plan sidebar with memo-hit gauge |
 | `2` | plan view: the selected statement's `EXPLAIN` with actuals |
 | `3` | trace explorer: SQL over the store; `e` or `/` edits, `Enter` runs, `r` re-runs |

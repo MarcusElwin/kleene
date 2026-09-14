@@ -3,7 +3,7 @@
 
 use crate::{ClientRequest, Cursor, DaemonError, ServerMessage, StatementOutput, PROTOCOL_VERSION};
 use kleene_core::{Budget, RunId, SessionId, StatementId};
-use kleene_harness::{Harness, HarnessConfig, Outcome, Repl, ReplConfig};
+use kleene_harness::{Harness, HarnessConfig, Observer, Outcome, Repl, ReplConfig, SessionMeta};
 use kleene_store::DuckDbStore;
 use kleene_trace::{FanoutSink, TraceEvent, TraceSink, Traced, Tracer};
 use std::collections::HashMap;
@@ -157,6 +157,20 @@ pub struct Daemon {
     repls: tokio::sync::Mutex<HashMap<SessionId, Arc<Repl>>>,
 }
 
+/// Forwards streamed model text into the event log as
+/// [`ServerMessage::CallDelta`], so the TUI's live pane fills as the model
+/// writes.
+pub struct LogObserver(pub Arc<EventLog>);
+
+impl Observer for LogObserver {
+    fn call_delta(&self, _meta: &SessionMeta, call: kleene_core::CallId, text: &str) {
+        self.0.push(ServerMessage::CallDelta {
+            call,
+            text: text.to_string(),
+        });
+    }
+}
+
 impl Daemon {
     /// Build a daemon over a store. `cfg.tracer` is replaced by a fan-out to
     /// the store's trace sink and the daemon's event log.
@@ -166,6 +180,9 @@ impl Daemon {
         let sinks: Vec<Arc<dyn TraceSink>> =
             vec![Arc::new(trace.clone()), Arc::new(LogSink(log.clone()))];
         cfg.tracer = Some(Tracer::new(Arc::new(FanoutSink::new(sinks))));
+        if cfg.observer.is_none() {
+            cfg.observer = Some(Arc::new(LogObserver(log.clone())));
+        }
         let harness = Harness::new(store.clone(), cfg.clone()).await?;
         Ok(Arc::new(Self {
             log,

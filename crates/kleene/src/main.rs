@@ -2,6 +2,8 @@
 
 #![forbid(unsafe_code)]
 
+mod pretty;
+
 use clap::{Parser, Subcommand};
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
@@ -639,84 +641,6 @@ struct Opened {
     trace: kleene_store::DuckDbTraceSink,
 }
 
-/// Prints turns as they happen.
-struct Printer {
-    quiet: bool,
-}
-
-impl kleene_harness::Observer for Printer {
-    fn session_started(&self, meta: &kleene_harness::SessionMeta, task: &str) {
-        if self.quiet {
-            return;
-        }
-        let indent = "  ".repeat(meta.depth as usize);
-        eprintln!(
-            "{indent}▶ session {} depth {} role {}: {}",
-            short(&meta.id.to_string()),
-            meta.depth,
-            meta.role.name,
-            first_line(task)
-        );
-    }
-
-    fn turn(&self, meta: &kleene_harness::SessionMeta, turn: &kleene_harness::Turn) {
-        if self.quiet {
-            return;
-        }
-        let indent = "  ".repeat(meta.depth as usize);
-        eprintln!(
-            "{indent}── turn {} ({}) ──",
-            turn.n,
-            short(&meta.id.to_string())
-        );
-        match &turn.sql {
-            Some(sql) => {
-                for l in sql.lines() {
-                    eprintln!("{indent}> {l}");
-                }
-            }
-            None => eprintln!("{indent}> (no SQL) {}", first_line(&turn.reply)),
-        }
-        for l in turn.feedback.lines() {
-            eprintln!("{indent}  {l}");
-        }
-    }
-
-    fn session_finished(
-        &self,
-        meta: &kleene_harness::SessionMeta,
-        outcome: &kleene_harness::Outcome,
-        usage: &kleene_core::BudgetUsage,
-    ) {
-        if self.quiet {
-            return;
-        }
-        let indent = "  ".repeat(meta.depth as usize);
-        eprintln!(
-            "{indent}■ session {} ended: {} after {} calls, {} tokens, ${:.4}, {:.1?}",
-            short(&meta.id.to_string()),
-            outcome.tag(),
-            usage.calls,
-            usage.tokens,
-            usage.dollars,
-            usage.wall
-        );
-    }
-}
-
-fn short(id: &str) -> &str {
-    &id[..id.len().min(8)]
-}
-
-fn first_line(s: &str) -> String {
-    let l = s.lines().next().unwrap_or_default();
-    if l.chars().count() > 80 {
-        format!("{}…", l.chars().take(80).collect::<String>())
-    } else {
-        l.to_string()
-    }
-}
-
 async fn open_harness(
     cli: &Cli,
     max_turns: u32,
@@ -752,51 +676,11 @@ async fn open_harness(
         max_depth,
         max_turns,
         budget,
-        observer: Some(std::sync::Arc::new(Printer { quiet })),
+        observer: Some(std::sync::Arc::new(pretty::Printer::new(quiet))),
         ..kleene_harness::HarnessConfig::default()
     };
     let harness = kleene_harness::Harness::new(store, cfg).await?;
     Ok((harness, trace))
-}
-
-fn print_report(report: &kleene_harness::RunReport) -> i32 {
-    println!("run {}", report.run);
-    match &report.root.outcome {
-        kleene_harness::Outcome::Final { answer } => {
-            print!("{}", answer.render_table(200));
-            println!(
-                "{} row{} after {} turns, {} calls, {} tokens, ${:.4}",
-                answer.len(),
-                if answer.len() == 1 { "" } else { "s" },
-                report.root.turns,
-                report.root.usage.calls,
-                report.root.usage.tokens,
-                report.root.usage.dollars
-            );
-            0
-        }
-        other => {
-            println!(
-                "no FINAL: {} after {} turns, {} calls, {} tokens, ${:.4}",
-                match other {
-                    kleene_harness::Outcome::BudgetExhausted { detail } =>
-                        format!("budget exhausted ({detail})"),
-                    kleene_harness::Outcome::TurnsExhausted => format!(
-                        "turn cap reached; `kleene resume {}` continues it",
-                        report.run
-                    ),
-                    kleene_harness::Outcome::Failed { error } => format!("failed: {error}"),
-                    kleene_harness::Outcome::Cancelled => "cancelled".into(),
-                    kleene_harness::Outcome::Final { .. } => unreachable!(),
-                },
-                report.root.turns,
-                report.root.usage.calls,
-                report.root.usage.tokens,
-                report.root.usage.dollars
-            );
-            3
-        }
-    }
 }
 
 async fn open_repl(cli: &Cli) -> anyhow::Result<Opened> {
@@ -837,6 +721,20 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     match &cli.command {
+        None if atty_stdin() => {
+            // The unified experience: `kleene` alone opens the terminal UI
+            // with the prompt bar focused (and the setup wizard first, when
+            // no provider is configured).
+            if !onboard_if_needed().await? {
+                eprintln!(
+                    "kleene: no model provider configured; runs will fail until `kleene setup`"
+                );
+            }
+            let socket = socket_path(&cli, &None);
+            ensure_daemon(&cli, &socket).await?;
+            kleene_tui::run(&socket, None, workspace_string(&cli)).await?;
+            Ok(())
+        }
         None => {
             println!("kleene {}", env!("CARGO_PKG_VERSION"));
             println!("Relational algebra for recursive model calls. Run `kleene --help`.");
@@ -888,7 +786,7 @@ async fn main() -> anyhow::Result<()> {
                 open_harness(&cli, *max_turns, *max_depth, budget, *quiet).await?;
             let report = harness.run(&task_text, context).await?;
             trace.flush().await;
-            let code = print_report(&report);
+            let code = pretty::report(&report);
             if code != 0 {
                 std::process::exit(code);
             }
@@ -910,7 +808,7 @@ async fn main() -> anyhow::Result<()> {
             .await?;
             let report = harness.resume(kleene_core::RunId(run_id)).await?;
             trace.flush().await;
-            let code = print_report(&report);
+            let code = pretty::report(&report);
             if code != 0 {
                 std::process::exit(code);
             }
@@ -1018,7 +916,7 @@ async fn main() -> anyhow::Result<()> {
             let socket = socket_path(&cli, socket);
             ensure_daemon(&cli, &socket).await?;
             let start = start_request(run, context, &cli.workspace)?;
-            kleene_tui::run(&socket, start).await?;
+            kleene_tui::run(&socket, start, workspace_string(&cli)).await?;
             Ok(())
         }
         Some(Command::Attach {
@@ -1035,6 +933,15 @@ async fn main() -> anyhow::Result<()> {
         Some(Command::Learn { action }) => run_learn(&cli, action).await,
         Some(Command::Bench { action }) => run_bench(&cli, action).await,
     }
+}
+
+/// The workspace as the daemon protocol wants it: a path string, empty for
+/// the daemon's default.
+fn workspace_string(cli: &Cli) -> String {
+    cli.workspace
+        .as_ref()
+        .map(|w| w.display().to_string())
+        .unwrap_or_default()
 }
 
 fn atty_stdin() -> bool {

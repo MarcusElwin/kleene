@@ -144,6 +144,13 @@ Harness::run(task, context)
   continues a root session that hit its turn cap or was interrupted.
 - **Cancellation.** `LiveSink::cancel_statement` is checked before every model
   and tool call; the model sees a cancelled statement as an error and goes on.
+- **Observation.** `HarnessConfig.observer` is an `Observer` with hooks for
+  session start and end, each turn, and each model call's start, streamed
+  text and finish. The session's own reply goes through
+  `LiveSink::complete_streaming`, which uses the provider's streaming path
+  and forwards every text delta to the observer; statement calls use the
+  buffered path. `kleene run`'s printer and the daemon (which turns deltas
+  into `CallDelta` messages for the TUI) are both observers.
 
 ## Store and trace
 
@@ -173,6 +180,10 @@ kleene daemon ──── .kleene/daemon.sock ────┬─ kleene tui    
    Daemon: EventLog with Cursor{generation,seq}   ├─ kleene attach   (JSONL, headless)
    Harness + store + provider                     └─ any JSONL client
 ```
+
+`kleene` with no arguments is the unified experience: it opens the TUI with a
+prompt bar, and a task typed there becomes a `StartRun` on the daemon while
+the reply streams back as `CallDelta` messages.
 
 The protocol (version 2) is newline-delimited JSON over a Unix socket.
 Requests: `Subscribe { after }`, `StartRun`, `Submit` (REPL statements for a

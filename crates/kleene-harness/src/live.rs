@@ -168,6 +168,8 @@ pub struct LiveSink {
     cancelled: std::sync::atomic::AtomicBool,
     /// Pass rates of boolean call predicates: name -> (true, total).
     stats: RwLock<HashMap<String, (u64, u64)>>,
+    /// Who to tell about calls as they happen.
+    observer: RwLock<Option<Arc<dyn crate::Observer>>>,
 }
 
 const SYSTEM_PREFIX: &str = "You are a function inside a SQL engine. Answer only with the value asked for: no preamble, no explanation, no markdown fences.";
@@ -198,7 +200,13 @@ impl LiveSink {
             runner: RwLock::new(None),
             cancelled: std::sync::atomic::AtomicBool::new(false),
             stats: RwLock::new(HashMap::new()),
+            observer: RwLock::new(None),
         }
+    }
+
+    /// Set (or clear) the observer that sees calls start, stream and finish.
+    pub async fn set_observer(&self, observer: Option<Arc<dyn crate::Observer>>) {
+        *self.observer.write().await = observer;
     }
 
     /// Stop the statement that is running (or the next one to start) at its
@@ -596,6 +604,66 @@ impl LiveSink {
     /// single path every model call takes, statement calls and session turns
     /// alike.
     pub async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse, ExecError> {
+        self.complete_inner(req, false).await
+    }
+
+    /// [`Self::complete`] for the session's own reply: the provider streams
+    /// and every text delta reaches the observer as it arrives. Budget, memo
+    /// and trace behave exactly as for `complete`.
+    pub async fn complete_streaming(
+        &self,
+        req: CompletionRequest,
+    ) -> Result<CompletionResponse, ExecError> {
+        self.complete_inner(req, true).await
+    }
+
+    /// Stream `req` from the provider, forwarding text deltas, and return the
+    /// final response.
+    async fn stream_response(
+        &self,
+        provider: &Arc<dyn Provider>,
+        req: CompletionRequest,
+        meta: &SessionMeta,
+        call_id: CallId,
+    ) -> Result<CompletionResponse, kleene_llm::ProviderError> {
+        use futures::StreamExt;
+        let mut stream = provider.stream(req).await?;
+        let observer = self.observer.read().await.clone();
+        let mut streamed = String::new();
+        while let Some(ev) = stream.next().await {
+            match ev? {
+                kleene_llm::StreamEvent::TextDelta { text } => {
+                    if let Some(o) = &observer {
+                        o.call_delta(meta, call_id, &text);
+                    }
+                    streamed.push_str(&text);
+                }
+                kleene_llm::StreamEvent::Done(resp) => {
+                    // A provider whose stream had no text deltas (the replay
+                    // provider, a memoised fixture) still shows its reply.
+                    if streamed.is_empty() {
+                        if let Some(o) = &observer {
+                            let text = resp.text();
+                            if !text.is_empty() {
+                                o.call_delta(meta, call_id, &text);
+                            }
+                        }
+                    }
+                    return Ok(resp);
+                }
+                _ => {}
+            }
+        }
+        Err(kleene_llm::ProviderError::Malformed(
+            "stream ended without a final response".into(),
+        ))
+    }
+
+    async fn complete_inner(
+        &self,
+        req: CompletionRequest,
+        stream: bool,
+    ) -> Result<CompletionResponse, ExecError> {
         self.check_cancelled()?;
         let provider = self.provider.as_ref().ok_or_else(|| {
             ExecError::Call(
@@ -616,6 +684,11 @@ impl LiveSink {
                 model: String::new(),
                 fingerprint: fingerprint.clone(),
             });
+        }
+        let observer = self.observer.read().await.clone();
+        let meta = self.meta.read().await.clone();
+        if let Some(o) = &observer {
+            o.call_started(&meta, call_id, &alias.0, stream);
         }
         // Memo: keyed by alias + fingerprint (the alias stands in for the model
         // until the router reports which one served).
@@ -656,12 +729,40 @@ impl LiveSink {
                         error: None,
                     });
                 }
+                if let Some(o) = &observer {
+                    if stream {
+                        let text = resp.text();
+                        if !text.is_empty() {
+                            o.call_delta(&meta, call_id, &text);
+                        }
+                    }
+                    o.call_finished(&meta, call_id, true, None);
+                }
                 return Ok(resp);
             }
         }
-        self.reserve_call().await?;
-        match provider.complete(req).await {
+        if let Err(e) = self.reserve_call().await {
+            if let Some(o) = &observer {
+                o.call_finished(&meta, call_id, false, Some(&e.to_string()));
+            }
+            return Err(e);
+        }
+        let outcome = if stream {
+            self.stream_response(provider, req, &meta, call_id).await
+        } else {
+            provider.complete(req).await
+        };
+        match outcome {
             Ok(resp) => {
+                if let Some(o) = &observer {
+                    let refused = resp.stop_reason == kleene_llm::StopReason::Refusal;
+                    o.call_finished(
+                        &meta,
+                        call_id,
+                        false,
+                        refused.then_some("the model declined this request"),
+                    );
+                }
                 self.charge(&resp.usage).await?;
                 if let Some(t) = &self.tracer {
                     t.emit(TraceEvent::CallFinished {
@@ -703,6 +804,9 @@ impl LiveSink {
                         memo_hit: false,
                         error: Some(e.to_string()),
                     });
+                }
+                if let Some(o) = &observer {
+                    o.call_finished(&meta, call_id, false, Some(&e.to_string()));
                 }
                 Err(ExecError::Call(e.to_string()))
             }

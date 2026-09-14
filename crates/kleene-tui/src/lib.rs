@@ -72,6 +72,17 @@ pub struct App {
     pub connected: bool,
     /// Colours.
     pub theme: Theme,
+    /// The prompt bar's text: a task to run, or `/sql …` for a statement.
+    pub input: String,
+    /// Whether the prompt bar has focus.
+    pub composing: bool,
+    /// Workspace sent with runs started from the prompt bar.
+    pub workspace: String,
+    /// The interactive session `/sql` statements go to.
+    pub repl_session: kleene_core::SessionId,
+    /// Follow the newest activity: keep the root session selected so its
+    /// reply streams in the transcript. Cleared when the user moves.
+    pub follow: bool,
 }
 
 impl Default for App {
@@ -87,6 +98,11 @@ impl Default for App {
             compact: false,
             connected: true,
             theme: Theme::default(),
+            input: String::new(),
+            composing: false,
+            workspace: String::new(),
+            repl_session: kleene_core::SessionId::new(),
+            follow: true,
         }
     }
 }
@@ -139,16 +155,89 @@ impl App {
     /// Fold a server message in.
     pub fn apply(&mut self, msg: ServerMessage) {
         self.model.apply(msg);
+        if self.follow {
+            // Keep the newest root session selected so its reply streams in
+            // the transcript.
+            if let Some(root) = self.model.roots().last().copied() {
+                if let Some(i) = self
+                    .rows()
+                    .iter()
+                    .position(|(_, r)| matches!(r, TreeRow::Session(s) if *s == root))
+                {
+                    self.selected = i;
+                }
+            }
+        }
         let n = self.rows().len();
         if n > 0 && self.selected >= n {
             self.selected = n - 1;
         }
     }
 
+    /// What the prompt bar's text asks for, or `None` when it is empty.
+    pub fn submit_input(&mut self) -> Option<ClientRequest> {
+        let text = self.input.trim().to_string();
+        if text.is_empty() {
+            return None;
+        }
+        self.input.clear();
+        self.follow = true;
+        if let Some(sql) = text.strip_prefix("/sql") {
+            let sql = sql.trim();
+            if sql.is_empty() {
+                return None;
+            }
+            return Some(ClientRequest::Submit {
+                session: self.repl_session,
+                sql: sql.to_string(),
+            });
+        }
+        Some(ClientRequest::StartRun {
+            task: text,
+            workspace: self.workspace.clone(),
+            context: None,
+            max_turns: None,
+            max_depth: None,
+            budget_calls: None,
+        })
+    }
+
     /// Handle a key; returns what to do about it.
     pub fn key(&mut self, key: KeyEvent) -> Action {
         if key.kind != KeyEventKind::Press {
             return Action::None;
+        }
+        if self.composing {
+            return match key.code {
+                KeyCode::Esc => {
+                    self.composing = false;
+                    Action::None
+                }
+                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    Action::Detach
+                }
+                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.input.clear();
+                    Action::None
+                }
+                KeyCode::Enter => match self.submit_input() {
+                    Some(req) => {
+                        self.composing = false;
+                        self.view = View::Session;
+                        Action::Send(req)
+                    }
+                    None => Action::None,
+                },
+                KeyCode::Backspace => {
+                    self.input.pop();
+                    Action::None
+                }
+                KeyCode::Char(c) => {
+                    self.input.push(c);
+                    Action::None
+                }
+                _ => Action::None,
+            };
         }
         if self.editing {
             return match key.code {
@@ -175,6 +264,10 @@ impl App {
             };
         }
         match key.code {
+            KeyCode::Char('i') | KeyCode::Char('n') | KeyCode::Char(':') => {
+                self.composing = true;
+                Action::None
+            }
             KeyCode::Char('q') | KeyCode::Char('d') => Action::Detach,
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Action::Detach,
             KeyCode::Char('1') => {
@@ -208,11 +301,17 @@ impl App {
                     self.selected = (self.selected + 1).min(n - 1);
                 }
                 self.scroll = 0;
+                self.follow = false;
                 Action::None
             }
             KeyCode::Char('k') | KeyCode::Up => {
                 self.selected = self.selected.saturating_sub(1);
                 self.scroll = 0;
+                self.follow = false;
+                Action::None
+            }
+            KeyCode::Char('g') => {
+                self.follow = true;
                 Action::None
             }
             KeyCode::Char('J') | KeyCode::PageDown => {
@@ -257,18 +356,28 @@ impl App {
 }
 
 /// Run the TUI against a daemon socket until the user detaches or the
-/// daemon goes away. `start` optionally starts a run on connect.
-pub async fn run(socket: &Path, start: Option<ClientRequest>) -> Result<(), TuiError> {
+/// daemon goes away. `start` optionally starts a run on connect; `workspace`
+/// is sent with runs typed into the prompt bar. With nothing to start, the
+/// prompt bar has focus.
+pub async fn run(
+    socket: &Path,
+    start: Option<ClientRequest>,
+    workspace: String,
+) -> Result<(), TuiError> {
     let client = Client::connect(socket).await?;
     let generation = client.generation;
     let (reader, mut writer) = client.into_split();
     writer
         .send(&ClientRequest::Subscribe { after: None })
         .await?;
+    let mut app = App {
+        workspace,
+        composing: start.is_none(),
+        ..App::default()
+    };
     if let Some(req) = start {
         writer.send(&req).await?;
     }
-    let mut app = App::default();
     app.model.generation = Some(generation);
 
     let mut terminal = ratatui::init();
