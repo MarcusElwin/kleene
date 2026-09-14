@@ -209,6 +209,26 @@ impl TraceSink for VecSink {
     }
 }
 
+/// Sends every event to several sinks (the store and a live subscriber, say).
+pub struct FanoutSink {
+    sinks: Vec<Arc<dyn TraceSink>>,
+}
+
+impl FanoutSink {
+    /// Fan out to `sinks`, in order.
+    pub fn new(sinks: Vec<Arc<dyn TraceSink>>) -> Self {
+        Self { sinks }
+    }
+}
+
+impl TraceSink for FanoutSink {
+    fn record(&self, event: Traced) {
+        for s in &self.sinks {
+            s.record(event.clone());
+        }
+    }
+}
+
 /// Convenience handle shared by everything that emits events.
 #[derive(Clone)]
 pub struct Tracer {

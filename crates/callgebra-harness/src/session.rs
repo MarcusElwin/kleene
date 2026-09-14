@@ -193,6 +193,8 @@ pub struct Harness {
     cfg: HarnessConfig,
     tools: Arc<ToolRegistry>,
     tool_entries: Vec<FunctionDef>,
+    /// Live sessions, for cancellation and inspection.
+    live: std::sync::Mutex<HashMap<SessionId, Arc<LiveSink>>>,
 }
 
 const SESSIONS_DDL: &str = "CREATE TABLE IF NOT EXISTS callgebra_sessions (session VARCHAR PRIMARY KEY, run VARCHAR, parent VARCHAR, depth INTEGER, role VARCHAR, task VARCHAR, status VARCHAR, outcome VARCHAR, turns INTEGER, record VARCHAR, updated_at TIMESTAMP)";
@@ -208,7 +210,41 @@ impl Harness {
             cfg,
             tools,
             tool_entries,
+            live: std::sync::Mutex::new(HashMap::new()),
         }))
+    }
+
+    /// Sessions currently running.
+    pub fn live_sessions(&self) -> Vec<SessionId> {
+        self.live
+            .lock()
+            .map(|l| l.keys().copied().collect())
+            .unwrap_or_default()
+    }
+
+    /// Stop the statement a live session is running at its next call; the
+    /// session itself continues with the error rendered back to the model.
+    /// Returns whether the session was live.
+    pub fn cancel_statement(&self, session: SessionId) -> bool {
+        match self.live.lock().ok().and_then(|l| l.get(&session).cloned()) {
+            Some(sink) => {
+                sink.cancel_statement();
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn register(&self, id: SessionId, sink: &Arc<LiveSink>) {
+        if let Ok(mut l) = self.live.lock() {
+            l.insert(id, sink.clone());
+        }
+    }
+
+    fn unregister(&self, id: SessionId) {
+        if let Ok(mut l) = self.live.lock() {
+            l.remove(&id);
+        }
     }
 
     /// The store.
@@ -237,7 +273,17 @@ impl Harness {
         task: &str,
         context: Option<String>,
     ) -> Result<RunReport, HarnessError> {
-        let run = RunId::new();
+        self.run_as(RunId::new(), task, context).await
+    }
+
+    /// [`Harness::run`] under a caller-chosen run id (the daemon announces the
+    /// id before the run starts).
+    pub async fn run_as(
+        self: &Arc<Self>,
+        run: RunId,
+        task: &str,
+        context: Option<String>,
+    ) -> Result<RunReport, HarnessError> {
         if let Some(t) = &self.cfg.tracer {
             t.emit(TraceEvent::RunStarted {
                 run,
@@ -358,6 +404,7 @@ impl Harness {
         sink.set_settings(settings).await;
         sink.set_child_runner(Arc::new(self.clone())).await;
         sink.charge_child(&record.usage).await;
+        self.register(meta.id, &sink);
         let fresh = record.messages.is_empty();
         let mut context_summary = None;
         if let Some(ctx) = &record.context {
@@ -535,6 +582,7 @@ impl Harness {
                 break Outcome::BudgetExhausted { detail };
             }
         };
+        self.unregister(meta.id);
         let mut usage = sink.usage().await;
         usage.wall = started.elapsed();
         record.usage = usage;

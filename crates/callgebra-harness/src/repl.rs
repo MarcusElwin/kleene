@@ -131,6 +131,12 @@ impl Repl {
         self.session
     }
 
+    /// Use a caller-chosen session id (the daemon keys interactive sessions
+    /// by the id the client picked).
+    pub fn set_session(&mut self, id: SessionId) {
+        self.session = id;
+    }
+
     /// Rendering options.
     pub fn render_options_mut(&mut self) -> &mut RenderOptions {
         &mut self.render
@@ -282,6 +288,7 @@ impl Repl {
                 sql: stmt.sql.clone(),
             });
         }
+        self.sink.clear_cancel();
         self.sink.set_statement(Some(id)).await;
         let before = self.sink.usage().await;
         let memo_before = self.sink.memo_hits().await;

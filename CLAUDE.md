@@ -66,7 +66,10 @@ change feature unification. Always use the `--workspace --all-features`
 shape above; `-p`, `--exclude` or a different feature set makes a fourth.
 Keep `target/` between runs; when disk runs low, delete `target/doc`,
 `target/debug/incremental` and stale test binaries in `target/debug/deps`
-before touching DuckDB artifacts.
+before touching DuckDB artifacts. Every test binary that links the store
+carries DuckDB (about 700 MB each), so crates that depend on it keep one
+integration-test binary (`tests/all/main.rs` with `mod` files) and no
+examples.
 `DUCKDB_LIB_DIR` does **not** help while the dependency is declared
 `features = ["bundled"]` — bundled compiles the amalgamation and ignores it.
 Dropping `bundled` to link a prebuilt library is incompatible with the

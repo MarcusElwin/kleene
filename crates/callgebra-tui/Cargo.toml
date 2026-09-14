@@ -9,7 +9,14 @@ repository.workspace = true
 
 [dependencies]
 callgebra-daemon = { workspace = true }
+callgebra-core = { workspace = true }
+callgebra-trace = { workspace = true }
+crossterm = { workspace = true }
+futures = { workspace = true }
+ratatui = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
+tokio = { workspace = true }
 
 [lints]
 workspace = true
