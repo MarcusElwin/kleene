@@ -36,7 +36,9 @@ cargo install --git https://github.com/MarcusElwin/callgebra callgebra
 
 Prebuilt binaries cover macOS (Apple silicon, Intel) and Linux (x86_64,
 aarch64). `CALLGEBRA_VERSION=v0.1.0` pins the installer to a tag and
-`CALLGEBRA_INSTALL=/usr/local/bin` changes the destination. Then:
+`CALLGEBRA_INSTALL=/usr/local/bin` changes the destination. While the
+repository is private, set `GITHUB_TOKEN` and pass it to the `curl` that
+fetches the script as well (see [`docs/CLI.md`](docs/CLI.md#curl)). Then:
 
 ```bash
 callgebra repl -c "SELECT 1 + 1 AS two"    # the engine, no model needed

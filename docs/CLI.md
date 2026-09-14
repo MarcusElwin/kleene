@@ -34,10 +34,31 @@ destination is not on your `PATH`. Environment variables it honours:
 | `CALLGEBRA_VERSION` | Install a specific tag, e.g. `v0.1.0` | latest release |
 | `CALLGEBRA_INSTALL` | Destination directory | `~/.local/bin` |
 | `CALLGEBRA_REPO` | `owner/repo` to fetch from | `MarcusElwin/callgebra` |
+| `GITHUB_TOKEN` (or `GH_TOKEN`) | Token with read access to the repository; required while it is private, and raises the API rate limit otherwise | unset |
 
 Read it before piping it into a shell if that is your habit:
-[`install.sh`](../install.sh) is sixty lines of POSIX `sh` and needs only
+[`install.sh`](../install.sh) is a hundred lines of POSIX `sh` and needs only
 `curl` and `tar`.
+
+**While the repository is private**, the raw URL above returns 404 to an
+anonymous `curl`, so fetch the script with a token too. `gh auth token`
+prints the one the GitHub CLI holds:
+
+```bash
+export GITHUB_TOKEN="$(gh auth token)"
+curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" \
+  https://raw.githubusercontent.com/MarcusElwin/callgebra/main/install.sh | sh
+```
+
+The script downloads release assets through the GitHub API with the same
+token, which works for private and public repositories alike.
+
+**Until the first release exists** there is nothing for the installer to
+download and it says so. Publishing one is: move `ci/release.yml` to
+`.github/workflows/release.yml`, then `git tag v0.1.0 && git push origin
+v0.1.0`. The workflow builds the four targets, attaches the tarballs and
+checksums, and prints the values the Homebrew formula needs. Meanwhile,
+build from a checkout: `cargo install --path crates/callgebra`.
 
 ### Homebrew
 
