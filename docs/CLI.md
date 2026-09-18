@@ -433,7 +433,7 @@ Views and keys:
 | `3` | trace explorer: SQL over the store; `e` or `/` edits, `Enter` runs, `r` re-runs |
 | `4` | task board for the continual loop (`r` refreshes; auto every two seconds) |
 | `?` | help |
-| `t` | switch between the dark and light palettes |
+| `t` | cycle the Catppuccin flavour: Mocha (default), Macchiato, Frappé, Latte; `KLEENE_THEME=latte` picks the starting one |
 | `j` / `k`, arrows | move; `J` / `K`, PageUp/Down scroll the transcript |
 | `f`, `Enter`, space | fold or unfold the selected node |
 | `x`, `Esc` | cancel the selected statement, or the run from its root row |

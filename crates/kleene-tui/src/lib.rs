@@ -23,7 +23,7 @@ use kleene_daemon::{ClientRequest, ServerMessage};
 use model::{flatten, Folds, Model, TreeRow};
 use std::path::Path;
 use std::time::Duration;
-pub use theme::Theme;
+pub use theme::{Flavor, Theme};
 
 /// Views the TUI can show.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,7 +99,11 @@ impl Default for App {
             editing: false,
             compact: false,
             connected: true,
-            theme: Theme::default(),
+            theme: std::env::var("KLEENE_THEME")
+                .ok()
+                .and_then(|v| theme::Flavor::parse(&v))
+                .map(Theme::flavor)
+                .unwrap_or_default(),
             input: String::new(),
             composing: false,
             workspace: String::new(),

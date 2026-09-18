@@ -109,7 +109,7 @@ Everything lands in `.kleene/run.duckdb` under the current directory.
 | `kleene repl [-c SQL]` | CallSQL against the store, interactive or scripted |
 | `kleene explain <sql>` | the call plan and its cost, without executing |
 | `kleene trace <sql>` | DuckDB SQL over the trace, memo and session tables |
-| `kleene tui` | the terminal UI over the engine daemon: call tree, transcript, plan, trace explorer, task board |
+| `kleene tui` | the terminal UI over the engine daemon: call tree, transcript, plan, trace explorer, task board; Catppuccin flavours |
 | `kleene attach` | the same, headless: every event as a JSON line |
 | `kleene daemon` | the engine as a server on a Unix socket |
 | `kleene learn …` | the continual loop: tasks, oracles, ratings, curriculum, playbook |

@@ -3,7 +3,7 @@
 //! `KLEENE_GALLERY_OUT=dir cargo test --workspace --all-features -- gallery --ignored`.
 
 use crate::setup::{SetupApp, Step};
-use crate::theme::Theme;
+use crate::theme::{Flavor, Theme};
 use crate::{ui, App, View};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use kleene_core::{BudgetUsage, CallId, RunId, SessionId, StatementId};
@@ -410,7 +410,7 @@ fn gallery() {
     };
     shots.push(("welcome", render(&empty, w, h)));
     empty.theme = Theme::light();
-    shots.push(("welcome-light", render(&empty, w, h)));
+    shots.push(("welcome-latte", render(&empty, w, h)));
 
     // Mid-run: session view streaming, plan view, trace view, tasks, help.
     let mut app = app_mid_run();
@@ -503,12 +503,14 @@ fn gallery() {
     shots.push(("tasks", render(&app, w, h)));
     app.view = View::Session;
     app.follow = true;
-    app.theme = Theme::light();
     app.apply(ServerMessage::CallDelta {
         call: CallId::new(),
         text: String::new(),
     });
-    shots.push(("session-light", render(&app, w, h)));
+    for flavor in [Flavor::Macchiato, Flavor::Frappe, Flavor::Latte] {
+        app.theme = Theme::flavor(flavor);
+        shots.push((flavor.name(), render(&app, w, h)));
+    }
     app.theme = Theme::dark();
     app.view = View::Help;
     shots.push(("help", render(&app, w, h)));

@@ -134,10 +134,10 @@ fn draw_header(f: &mut Frame<'_>, area: Rect, app: &App) {
         Span::styled(format!("{memo_pct:.0}% memo"), t.text()),
         Span::styled("  ▤ ", Style::default().fg(t.accent)),
         Span::styled(format!("{} tok", human(m.total_tokens)), t.text()),
-        Span::styled("  $ ", Style::default().fg(t.warn)),
+        Span::styled("  $ ", Style::default().fg(t.money)),
         Span::styled(
             format!("{:.4}", m.total_dollars),
-            Style::default().fg(t.warn).add_modifier(Modifier::BOLD),
+            Style::default().fg(t.money).add_modifier(Modifier::BOLD),
         ),
         Span::styled(format!("  {} ", t.name), t.dim()),
     ])
@@ -150,11 +150,11 @@ fn draw_header(f: &mut Frame<'_>, area: Rect, app: &App) {
         ])
         .split(area);
     f.render_widget(
-        Paragraph::new(left).style(Style::default().bg(t.bg)),
+        Paragraph::new(left).style(Style::default().bg(t.band)),
         cols[0],
     );
     f.render_widget(
-        Paragraph::new(right).style(Style::default().bg(t.bg)),
+        Paragraph::new(right).style(Style::default().bg(t.band)),
         cols[1],
     );
 }
@@ -215,11 +215,11 @@ fn draw_footer(f: &mut Frame<'_>, area: Rect, app: &App) {
         ])
         .split(area);
     f.render_widget(
-        Paragraph::new(Line::from(chips)).style(Style::default().bg(t.bg)),
+        Paragraph::new(Line::from(chips)).style(Style::default().bg(t.band)),
         cols[0],
     );
     f.render_widget(
-        Paragraph::new(notice_line).style(Style::default().bg(t.bg)),
+        Paragraph::new(notice_line).style(Style::default().bg(t.band)),
         cols[1],
     );
 }
@@ -319,7 +319,7 @@ fn tree_label_themed(m: &Model, row: &TreeRow, t: &Theme) -> (String, Color) {
                 } else if c.memo_hit {
                     t.muted
                 } else {
-                    t.warn
+                    t.call
                 };
                 (format!("λ {} · {tail}", c.alias), color)
             }
@@ -567,7 +567,9 @@ fn styled_transcript(text: &str, t: &Theme) -> Text<'static> {
             {
                 t.dim()
             } else if in_sql {
-                Style::default().fg(t.fg).add_modifier(Modifier::BOLD)
+                Style::default().fg(t.sql)
+            } else if trimmed.starts_with("  ") && !in_sql && trimmed.contains('(') {
+                Style::default().fg(t.tool)
             } else {
                 t.text()
             };
@@ -1034,7 +1036,7 @@ mod tests {
         assert_eq!(app.rows().len(), 1, "folded session hides its statement");
         let theme = KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE);
         assert_eq!(app.key(theme), crate::Action::None);
-        assert_eq!(app.theme.name, "light");
+        assert_eq!(app.theme.name, "macchiato");
         let quit = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
         assert_eq!(app.key(quit), crate::Action::Detach);
         app.view = View::Plan;
