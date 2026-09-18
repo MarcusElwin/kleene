@@ -383,6 +383,40 @@ impl Default for Theme {
 pub const BRAND: &str = "◆ kleene";
 /// One-line tagline.
 pub const TAGLINE: &str = "relational algebra for recursive model calls";
+/// The wordmark: six rows, fifty columns.
+pub const WORDMARK: [&str; 6] = [
+    "██╗  ██╗██╗     ███████╗███████╗███╗   ██╗███████╗",
+    "██║ ██╔╝██║     ██╔════╝██╔════╝████╗  ██║██╔════╝",
+    "█████╔╝ ██║     █████╗  █████╗  ██╔██╗ ██║█████╗  ",
+    "██╔═██╗ ██║     ██╔══╝  ██╔══╝  ██║╚██╗██║██╔══╝  ",
+    "██║  ██╗███████╗███████╗███████╗██║ ╚████║███████╗",
+    "╚═╝  ╚═╝╚══════╝╚══════╝╚══════╝╚═╝  ╚═══╝╚══════╝",
+];
+/// Width of [`WORDMARK`] in columns.
+pub const WORDMARK_WIDTH: u16 = 50;
+
+impl Theme {
+    /// The wordmark as styled lines: the letters shade from mauve through
+    /// pink to lavender, the base row in the muted colour, and a final line
+    /// with the Kleene star and the tagline.
+    pub fn wordmark(&self) -> Vec<Line<'static>> {
+        let p = self.palette;
+        let shades = [p.mauve, p.mauve, p.pink, p.pink, p.lavender, p.surface2];
+        let mut lines: Vec<Line<'static>> = WORDMARK
+            .iter()
+            .zip(shades)
+            .map(|(row, c)| Line::from(Span::styled(*row, Style::default().fg(c))))
+            .collect();
+        lines.push(Line::from(vec![
+            Span::styled(
+                "k*",
+                Style::default().fg(p.mauve).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(format!("  ·  {TAGLINE}"), self.dim()),
+        ]));
+        lines
+    }
+}
 
 #[cfg(test)]
 mod tests {

@@ -9,9 +9,19 @@ use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+/// The wordmark shown by `kleene --help` and by `kleene` outside a terminal.
+const BANNER: &str = "\
+██╗  ██╗██╗     ███████╗███████╗███╗   ██╗███████╗
+██║ ██╔╝██║     ██╔════╝██╔════╝████╗  ██║██╔════╝
+█████╔╝ ██║     █████╗  █████╗  ██╔██╗ ██║█████╗
+██╔═██╗ ██║     ██╔══╝  ██╔══╝  ██║╚██╗██║██╔══╝
+██║  ██╗███████╗███████╗███████╗██║ ╚████║███████╗
+╚═╝  ╚═╝╚══════╝╚══════╝╚══════╝╚═╝  ╚═══╝╚══════╝
+k*  ·  relational algebra for recursive model calls";
+
 /// Relational algebra for recursive model calls.
 #[derive(Parser, Debug)]
-#[command(name = "kleene", version, about, long_about = None)]
+#[command(name = "kleene", version, about, long_about = None, before_help = BANNER)]
 struct Cli {
     /// Log filter, e.g. `info` or `kleene=debug`.
     #[arg(long, default_value = "warn", global = true)]
@@ -736,8 +746,12 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
         None => {
-            println!("kleene {}", env!("CARGO_PKG_VERSION"));
-            println!("Relational algebra for recursive model calls. Run `kleene --help`.");
+            println!("{BANNER}");
+            println!();
+            println!(
+                "kleene {}  ·  `kleene` in a terminal opens the UI; `kleene --help` lists the commands.",
+                env!("CARGO_PKG_VERSION")
+            );
             Ok(())
         }
         Some(Command::Setup {

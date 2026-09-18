@@ -476,7 +476,7 @@ pub fn draw(f: &mut Frame<'_>, app: &SetupApp) {
     f.render_widget(Clear, area);
     f.render_widget(Paragraph::new("").style(Style::default().bg(t.bg)), area);
     let width = area.width.clamp(40, 78);
-    let height = area.height.clamp(12, 24);
+    let height = area.height.clamp(12, 32);
     let card = Rect {
         x: area.x + (area.width.saturating_sub(width)) / 2,
         y: area.y + (area.height.saturating_sub(height)) / 2,
@@ -508,7 +508,11 @@ pub fn draw(f: &mut Frame<'_>, app: &SetupApp) {
     let mut lines: Vec<Line> = Vec::new();
     match app.step {
         Step::Choose => {
-            lines.push(Line::from(Span::styled(TAGLINE, t.dim())));
+            if inner.width >= crate::theme::WORDMARK_WIDTH + 2 && inner.height >= 24 {
+                lines.extend(t.wordmark());
+            } else {
+                lines.push(Line::from(Span::styled(TAGLINE, t.dim())));
+            }
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
                 "Which providers should Kleene use? Space ticks, Enter continues.",

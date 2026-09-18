@@ -367,16 +367,22 @@ fn draw_welcome(f: &mut Frame<'_>, area: Rect, app: &App) {
     let block = t.panel("Welcome", false);
     let inner = block.inner(area);
     f.render_widget(block, area);
-    let lines = vec![
-        Line::from(""),
-        Line::from(Span::styled("╭──────────╮", Style::default().fg(t.accent))),
-        Line::from(vec![
-            Span::styled("│ ", Style::default().fg(t.accent)),
-            Span::styled(BRAND, t.accent_text()),
-            Span::styled(" │", Style::default().fg(t.accent)),
-        ]),
-        Line::from(Span::styled("╰──────────╯", Style::default().fg(t.accent))),
-        Line::from(Span::styled(TAGLINE, t.dim())),
+    let mut lines = vec![Line::from("")];
+    if inner.width >= crate::theme::WORDMARK_WIDTH + 2 && inner.height >= 18 {
+        lines.extend(t.wordmark());
+    } else {
+        lines.extend([
+            Line::from(Span::styled("╭──────────╮", Style::default().fg(t.accent))),
+            Line::from(vec![
+                Span::styled("│ ", Style::default().fg(t.accent)),
+                Span::styled(BRAND, t.accent_text()),
+                Span::styled(" │", Style::default().fg(t.accent)),
+            ]),
+            Line::from(Span::styled("╰──────────╯", Style::default().fg(t.accent))),
+            Line::from(Span::styled(TAGLINE, t.dim())),
+        ]);
+    }
+    lines.extend([
         Line::from(""),
         Line::from(Span::styled(
             "No run yet. Type a task in the prompt below and press Enter,",
@@ -401,7 +407,7 @@ fn draw_welcome(f: &mut Frame<'_>, area: Rect, app: &App) {
             "3 opens the trace explorer over the store; 4 the task board; ? the keymap.",
             t.dim(),
         )),
-    ];
+    ]);
     f.render_widget(
         Paragraph::new(Text::from(lines))
             .alignment(Alignment::Center)
