@@ -75,9 +75,11 @@ fn draw_prompt(f: &mut Frame<'_>, area: Rect, app: &App) {
     );
 }
 
+/// The tail of an id: UUID v7 starts with a timestamp, so the first
+/// characters are the same for every id minted in the same run.
 fn short(id: impl ToString) -> String {
     let s = id.to_string();
-    s[..s.len().min(8)].to_string()
+    s[s.len().saturating_sub(6)..].to_string()
 }
 
 fn human(n: u64) -> String {
@@ -544,11 +546,11 @@ fn styled_transcript(text: &str, t: &Theme) -> Text<'static> {
     let mut in_sql = false;
     let lines = text
         .lines()
-        .map(|l| {
+        .filter_map(|l| {
             let trimmed = l.trim_start();
             if trimmed.starts_with("```") {
                 in_sql = !in_sql;
-                return Line::from(Span::styled(l.to_string(), t.dim()));
+                return None;
             }
             let style = if trimmed.starts_with('→') {
                 Style::default().fg(t.ok)
@@ -569,7 +571,7 @@ fn styled_transcript(text: &str, t: &Theme) -> Text<'static> {
             } else {
                 t.text()
             };
-            Line::from(Span::styled(l.to_string(), style))
+            Some(Line::from(Span::styled(l.to_string(), style)))
         })
         .collect::<Vec<_>>();
     Text::from(lines)
@@ -597,10 +599,15 @@ pub fn plan_text(app: &App) -> String {
     let stmt = match app.selected_row() {
         Some(TreeRow::Statement(s)) => Some(s),
         Some(TreeRow::Call(c)) => m.call_owner.get(&c).copied(),
-        Some(TreeRow::Session(s)) => m
-            .sessions
-            .get(&s)
-            .and_then(|n| n.statement_ids.last().copied()),
+        Some(TreeRow::Session(s)) => m.sessions.get(&s).and_then(|n| {
+            // The last statement that has a plan: turn pseudo-statements
+            // never do.
+            n.statement_ids
+                .iter()
+                .rev()
+                .find(|id| m.statements.get(id).is_some_and(|st| st.explain.is_some()))
+                .copied()
+        }),
         None => None,
     };
     match stmt.and_then(|s| m.statements.get(&s)) {

@@ -133,9 +133,11 @@ impl Printer {
     }
 }
 
+/// The tail of an id: UUID v7 starts with a timestamp, so the head is the
+/// same for every id minted in the same run.
 fn short(id: &impl ToString) -> String {
     let s = id.to_string();
-    s[..s.len().min(8)].to_string()
+    s[s.len().saturating_sub(6)..].to_string()
 }
 
 fn first_line(s: &str, max: usize) -> String {

@@ -9,6 +9,8 @@
 
 #![forbid(unsafe_code)]
 
+#[cfg(test)]
+mod gallery;
 pub mod model;
 pub mod setup;
 pub mod theme;
