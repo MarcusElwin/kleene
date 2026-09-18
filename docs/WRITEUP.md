@@ -1,4 +1,4 @@
-# Callgebra: a relational calculus for language-model computation
+# Kleene: a relational calculus for language-model computation
 
 *Status: engineering write-up for the M0–M7 implementation. Every number in
 this document comes from the deterministic test suite (scripted providers,
@@ -59,7 +59,7 @@ lookup.
 
 ## 4. What the benchmarks will measure
 
-The measurement design from the plan is implemented in `callgebra bench`:
+The measurement design from the plan is implemented in `kleene bench`:
 
 - **Learning curve**: a pack run in `learning` mode against the same pack in
   `frozen` mode (no playbook, nothing adopted); accuracy and cost per task

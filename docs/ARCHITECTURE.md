@@ -1,6 +1,6 @@
 # Architecture
 
-How Callgebra is put together: the crates, the path a statement takes from
+How Kleene is put together: the crates, the path a statement takes from
 the model's reply to rows in DuckDB, and the processes that run it. The design
 rationale is in [`PLAN.md`](PLAN.md); the language is in
 [`DIALECT.md`](DIALECT.md); this document is the map of the code as built.
@@ -22,41 +22,41 @@ SQL, and the learning loop's state (tasks, ratings, playbook) is tables too.
 ## Crates
 
 ```
-callgebra            CLI binary: run, resume, repl, explain, trace, tui, attach, daemon, learn, bench
-├── callgebra-tui    ratatui client over the daemon protocol
-├── callgebra-daemon Unix-socket server, JSONL protocol with cursors, client
-└── callgebra-harness
+kleene            CLI binary: run, resume, repl, explain, trace, tui, attach, daemon, learn, bench
+├── kleene-tui    ratatui client over the daemon protocol
+├── kleene-daemon Unix-socket server, JSONL protocol with cursors, client
+└── kleene-harness
     │                sessions and the turn loop, LiveSink (memo → provider → budget → trace),
     │                Repl, prompt rendering, agent roles, the continual loop (learn/), bench
-    ├── callgebra-exec      operators, three-valued logic, semi-naive recursion, concurrent calls
-    │   └── callgebra-algebra   LogicalPlan → CallPlan: call kinds, cost model, rules, EXPLAIN
-    │       └── callgebra-sql   sqlparser → validated subset → name/type resolution → LogicalPlan
-    ├── callgebra-llm       Provider trait, Anthropic and OpenAI-compatible adapters, router, replay
-    ├── callgebra-tools     table functions and CALL tools with volatility labels, workspace jail
-    ├── callgebra-store     DuckDB: session tables, memo, trace tables, catalog metadata
-    └── callgebra-trace     TraceEvent, Tracer, sinks (store, fan-out)
-callgebra-core       shared interface types: Value, Batch, Schema, Catalog, Budget, CallKind, ids
-callgebra-difftest   proptest generator + DuckDB oracle for the relational core
+    ├── kleene-exec      operators, three-valued logic, semi-naive recursion, concurrent calls
+    │   └── kleene-algebra   LogicalPlan → CallPlan: call kinds, cost model, rules, EXPLAIN
+    │       └── kleene-sql   sqlparser → validated subset → name/type resolution → LogicalPlan
+    ├── kleene-llm       Provider trait, Anthropic and OpenAI-compatible adapters, router, replay
+    ├── kleene-tools     table functions and CALL tools with volatility labels, workspace jail
+    ├── kleene-store     DuckDB: session tables, memo, trace tables, catalog metadata
+    └── kleene-trace     TraceEvent, Tracer, sinks (store, fan-out)
+kleene-core       shared interface types: Value, Batch, Schema, Catalog, Budget, CallKind, ids
+kleene-difftest   proptest generator + DuckDB oracle for the relational core
 ```
 
-Every crate depends on `callgebra-core` and nothing else depends on the
-binary. `callgebra-core` changes deliberately and first (see `CLAUDE.md`).
+Every crate depends on `kleene-core` and nothing else depends on the
+binary. `kleene-core` changes deliberately and first (see `CLAUDE.md`).
 
 | Crate | Owns | Key types |
 |---|---|---|
-| `callgebra-core` | The vocabulary every crate shares | `Value`, `DataType`, `Schema`, `Batch`, `Catalog`, `FunctionDef`, `CallKind`, `Volatility`, `Budget`, `BudgetUsage`, `RunId`/`SessionId`/`StatementId` |
-| `callgebra-sql` | Parsing and planning to a positional logical plan; every rejection is an `SqlError` with a hint | `plan_sql()`, `LogicalPlan`, `Statement`, `SqlError`, `render_error()` |
-| `callgebra-algebra` | Call kinds on operators, estimates, rewrite rules, plan search, `EXPLAIN` text | `annotate()`, `CallPlan`, `Rule`, `Rewrite`, `explain()` |
-| `callgebra-exec` | Executing a plan against a `CallSink` | `execute()`, `execute_statement()`, `CallSink`, `MemorySink`, `ExecError` |
-| `callgebra-llm` | Talking to models over the wire, no SDKs | `Provider`, `CompletionRequest`, `AnthropicProvider`, `OpenAiCompatProvider`, `RoutedProvider`, `RouterConfig`, `Pricing`, `ReplayProvider`, `RecordingProvider`, `provider_from_env()` |
-| `callgebra-tools` | Tools as table functions and statements | `ToolRegistry`, `standard_tools()`, `ToolContext`, `catalog_entries()` |
-| `callgebra-store` | DuckDB behind a mutex on the blocking pool | `DuckDbStore`, `DuckDbTraceSink`, `MemoryStore` |
-| `callgebra-trace` | The event model | `TraceEvent`, `Tracer`, `TraceSink`, `FanoutSink` |
-| `callgebra-harness` | Sessions, the REPL, prompts, roles, learning, benchmarks | `Harness`, `HarnessConfig`, `Session`, `Repl`, `LiveSink`, `StoreSink`, `AgentRole`, `learn::Learn` |
-| `callgebra-daemon` | The engine as a server | `Daemon`, `Client`, `ClientRequest`, `ServerMessage`, `Cursor`, `EventLog` |
-| `callgebra-tui` | The terminal client | `App`, `Model`, `View`, `headless()` |
-| `callgebra` | The CLI | `main.rs` only |
-| `callgebra-difftest` | Property-based equivalence with DuckDB | `generator`, `run`, `compare` |
+| `kleene-core` | The vocabulary every crate shares | `Value`, `DataType`, `Schema`, `Batch`, `Catalog`, `FunctionDef`, `CallKind`, `Volatility`, `Budget`, `BudgetUsage`, `RunId`/`SessionId`/`StatementId` |
+| `kleene-sql` | Parsing and planning to a positional logical plan; every rejection is an `SqlError` with a hint | `plan_sql()`, `LogicalPlan`, `Statement`, `SqlError`, `render_error()` |
+| `kleene-algebra` | Call kinds on operators, estimates, rewrite rules, plan search, `EXPLAIN` text | `annotate()`, `CallPlan`, `Rule`, `Rewrite`, `explain()` |
+| `kleene-exec` | Executing a plan against a `CallSink` | `execute()`, `execute_statement()`, `CallSink`, `MemorySink`, `ExecError` |
+| `kleene-llm` | Talking to models over the wire, no SDKs | `Provider`, `CompletionRequest`, `AnthropicProvider`, `OpenAiCompatProvider`, `RoutedProvider`, `RouterConfig`, `Pricing`, `ReplayProvider`, `RecordingProvider`, `provider_from_env()` |
+| `kleene-tools` | Tools as table functions and statements | `ToolRegistry`, `standard_tools()`, `ToolContext`, `catalog_entries()` |
+| `kleene-store` | DuckDB behind a mutex on the blocking pool | `DuckDbStore`, `DuckDbTraceSink`, `MemoryStore` |
+| `kleene-trace` | The event model | `TraceEvent`, `Tracer`, `TraceSink`, `FanoutSink` |
+| `kleene-harness` | Sessions, the REPL, prompts, roles, learning, benchmarks | `Harness`, `HarnessConfig`, `Session`, `Repl`, `LiveSink`, `StoreSink`, `AgentRole`, `learn::Learn` |
+| `kleene-daemon` | The engine as a server | `Daemon`, `Client`, `ClientRequest`, `ServerMessage`, `Cursor`, `EventLog` |
+| `kleene-tui` | The terminal client and the setup wizard | `App`, `Model`, `View`, `Theme`, `setup::SetupApp`, `headless()` |
+| `kleene` | The CLI | `main.rs` only |
+| `kleene-difftest` | Property-based equivalence with DuckDB | `generator`, `run`, `compare` |
 
 ## The path of one statement
 
@@ -64,12 +64,12 @@ binary. `callgebra-core` changes deliberately and first (see `CLAUDE.md`).
 model reply ──extract_sql──▶ CallSQL text
                                  │
                                  ▼
-  callgebra-sql   sqlparser 0.62 AST ─▶ subset validation ─▶ CallSQL extensions
+  kleene-sql   sqlparser 0.62 AST ─▶ subset validation ─▶ CallSQL extensions
                   (CREATE FUNCTION … AS PROMPT, CREATE AGENT, CALL, SET, FINAL, EXPLAIN)
                   ─▶ name and type resolution against the Catalog ─▶ LogicalPlan
                                  │
                                  ▼
-  callgebra-algebra  annotate(LogicalPlan, Catalog, Stats) ─▶ CallPlan
+  kleene-algebra  annotate(LogicalPlan, Catalog, Stats) ─▶ CallPlan
                      every operator carries: rows, calls, tokens, dollars, depth,
                      call kinds (λ scalar, κ table, ρ recursive, tool), fences
                      rules run to a fixpoint: cheap-first, semi-join, cascade,
@@ -80,7 +80,7 @@ model reply ──extract_sql──▶ CallSQL text
   harness Repl       budget check: estimate > remaining ⇒ refuse with the plan
                                  │
                                  ▼
-  callgebra-exec     execute(plan, ExecContext) ─▶ stream of Batches
+  kleene-exec     execute(plan, ExecContext) ─▶ stream of Batches
                      materialising operators, semi-naive recursion with beams,
                      rows evaluated concurrently up to call_concurrency
                         │ scalar_call / table_call / tool_call / child session
@@ -94,7 +94,7 @@ model reply ──extract_sql──▶ CallSQL text
                      (calls, tokens, dollars, remaining budget) back into the transcript
 ```
 
-`callgebra repl` and `callgebra explain` run the same path without a model
+`kleene repl` and `kleene explain` run the same path without a model
 turn around it. `EXPLAIN` stops after annotation; `EXPLAIN ANALYZE` runs and
 prints actuals beside estimates.
 
@@ -139,23 +139,30 @@ Harness::run(task, context)
 - **Budgets.** `Budget` has calls, tokens, dollars, depth and wall clock. A
   child gets the parent's remaining slice intersected with its role's budget;
   its spending rolls up. Depth is enforced at the call site.
-- **Persistence and resume.** `callgebra_sessions` is written after every
-  turn (transcript, functions, agents, settings, usage). `callgebra resume`
+- **Persistence and resume.** `kleene_sessions` is written after every
+  turn (transcript, functions, agents, settings, usage). `kleene resume`
   continues a root session that hit its turn cap or was interrupted.
 - **Cancellation.** `LiveSink::cancel_statement` is checked before every model
   and tool call; the model sees a cancelled statement as an error and goes on.
+- **Observation.** `HarnessConfig.observer` is an `Observer` with hooks for
+  session start and end, each turn, and each model call's start, streamed
+  text and finish. The session's own reply goes through
+  `LiveSink::complete_streaming`, which uses the provider's streaming path
+  and forwards every text delta to the observer; statement calls use the
+  buffered path. `kleene run`'s printer and the daemon (which turns deltas
+  into `CallDelta` messages for the TUI) are both observers.
 
 ## Store and trace
 
-One DuckDB file (`.callgebra/run.duckdb` by default) holds everything:
+One DuckDB file (`.kleene/run.duckdb` by default) holds everything:
 
 | Tables | Written by | Read by |
 |---|---|---|
 | user tables, `ctx`, `cgs_*__*` | statements | statements |
-| `callgebra_columns` | store | planner (declared CallSQL types; JSON is stored as VARCHAR) |
+| `kleene_columns` | store | planner (declared CallSQL types; JSON is stored as VARCHAR) |
 | `memo` | `LiveSink` | `LiveSink` (keyed by model and prompt fingerprint, across runs) |
-| `trace_runs`, `trace_sessions`, `trace_statements`, `trace_calls`, `trace_tool_calls`, `trace_rounds`, `trace_final` | `DuckDbTraceSink` from a background task | `callgebra trace`, the TUI explorer, `EXPLAIN`'s sampled selectivity |
-| `callgebra_sessions` | harness after every turn | `callgebra resume` |
+| `trace_runs`, `trace_sessions`, `trace_statements`, `trace_calls`, `trace_tool_calls`, `trace_rounds`, `trace_final` | `DuckDbTraceSink` from a background task | `kleene trace`, the TUI explorer, `EXPLAIN`'s sampled selectivity |
+| `kleene_sessions` | harness after every turn | `kleene resume` |
 | `tasks`, `task_ratings`, `solver_ratings`, `generator_state`, `playbook`, `playbook_evals`, `attempts`, view `trace_tasks` | `learn` | `learn board/report/playbook`, TUI view 4 |
 | `evals`, `bench_runs` | `bench` | `bench report/curve/csv` |
 
@@ -167,12 +174,16 @@ the async writer before answering a `Query`, so the explorer never lags.
 ## Processes
 
 ```
-callgebra run / repl / explain / learn / bench      one process, in-process harness
+kleene run / repl / explain / learn / bench      one process, in-process harness
 
-callgebra daemon ──── .callgebra/daemon.sock ────┬─ callgebra tui      (ratatui client)
-   Daemon: EventLog with Cursor{generation,seq}   ├─ callgebra attach   (JSONL, headless)
+kleene daemon ──── .kleene/daemon.sock ────┬─ kleene tui      (ratatui client)
+   Daemon: EventLog with Cursor{generation,seq}   ├─ kleene attach   (JSONL, headless)
    Harness + store + provider                     └─ any JSONL client
 ```
+
+`kleene` with no arguments is the unified experience: it opens the TUI with a
+prompt bar, and a task typed there becomes a `StartRun` on the daemon while
+the reply streams back as `CallDelta` messages.
 
 The protocol (version 2) is newline-delimited JSON over a Unix socket.
 Requests: `Subscribe { after }`, `StartRun`, `Submit` (REPL statements for a
@@ -181,7 +192,7 @@ client-owned session), `Query` (DuckDB SQL over the store, with a `tag`),
 trace event with its cursor), `CallDelta`, `RunAccepted`, `RunFinished`,
 `Submitted`, `Table`, `Runs`, `Ok`, `Error`. A client that reconnects sends
 its last cursor and gets replay from there; a stale generation replays
-everything. `callgebra tui` starts a daemon in the background if none is
+everything. `kleene tui` starts a daemon in the background if none is
 listening.
 
 ## Model layer
@@ -194,12 +205,17 @@ ordered list of `(provider, model)` candidates with default options, skips
 candidates whose circuit breaker is open, prices usage from a `Pricing`
 table, and is what the harness holds. `ReplayProvider` serves recorded
 fixtures for tests and offline benchmarks; `RecordingProvider` writes them.
-Configuration comes from the environment or a TOML file; see
+
+Configuration is `ProviderSettings`: the config file `kleene setup` writes
+(`~/.config/kleene/config.toml`, owner-readable) with the environment layered
+on top field by field, so `KEY=... kleene run` still wins. The setup wizard
+itself lives in `kleene-tui::setup` as a pure state machine with a renderer,
+shared by `kleene setup` and the TUI's first start; see
 [`CLI.md`](CLI.md#configuring-a-model-provider).
 
 ## Planner
 
-`callgebra-algebra` runs rules over the annotated plan until nothing
+`kleene-algebra` runs rules over the annotated plan until nothing
 changes. Join ordering runs once first: it collects the relations under a
 tree of inner and cross joins, then does dynamic programming over subsets with
 branch-and-bound, pricing each split with the predicates that first become
@@ -230,7 +246,7 @@ the same provider, tools and budget, the baseline for cost parity.
 ## Testing strategy
 
 - The relational core is tested **differentially against DuckDB**
-  (`callgebra-difftest`): proptest generates schemas, data and queries in the
+  (`kleene-difftest`): proptest generates schemas, data and queries in the
   CallSQL/DuckDB intersection and compares multisets, plus a curated corpus
   of shrunk regressions.
 - Model-facing text (`EXPLAIN`, rendered tables, error messages) is part of
@@ -244,15 +260,16 @@ the same provider, tools and budget, the baseline for cost parity.
 
 | Question | File |
 |---|---|
-| What SQL is accepted | `crates/callgebra-sql/src/planner.rs`, `extensions.rs` |
-| How a plan is priced and rewritten | `crates/callgebra-algebra/src/annotate.rs`, `rules.rs` |
-| What the model reads each turn | `crates/callgebra-harness/src/prompt.rs` |
-| The turn loop and children | `crates/callgebra-harness/src/session.rs` |
-| Memo, budget, trace per call | `crates/callgebra-harness/src/live.rs` |
-| Wire formats | `crates/callgebra-llm/src/adapters/` |
-| Tool semantics and the workspace jail | `crates/callgebra-tools/src/tools/`, `paths.rs` |
-| Store schema | `crates/callgebra-store/src/duckdb.rs` |
-| Daemon protocol | `crates/callgebra-daemon/src/lib.rs` |
-| TUI layout and keys | `crates/callgebra-tui/src/ui.rs`, `lib.rs` |
-| The learning loop | `crates/callgebra-harness/src/learn/` |
-| CLI wiring | `crates/callgebra/src/main.rs` |
+| What SQL is accepted | `crates/kleene-sql/src/planner.rs`, `extensions.rs` |
+| How a plan is priced and rewritten | `crates/kleene-algebra/src/annotate.rs`, `rules.rs` |
+| What the model reads each turn | `crates/kleene-harness/src/prompt.rs` |
+| The turn loop and children | `crates/kleene-harness/src/session.rs` |
+| Memo, budget, trace per call | `crates/kleene-harness/src/live.rs` |
+| Wire formats | `crates/kleene-llm/src/adapters/` |
+| Tool semantics and the workspace jail | `crates/kleene-tools/src/tools/`, `paths.rs` |
+| Store schema | `crates/kleene-store/src/duckdb.rs` |
+| Daemon protocol | `crates/kleene-daemon/src/lib.rs` |
+| TUI layout, keys, theme | `crates/kleene-tui/src/ui.rs`, `lib.rs`, `theme.rs` |
+| Provider config file and the setup wizard | `crates/kleene-llm/src/config.rs`, `crates/kleene-tui/src/setup.rs` |
+| The learning loop | `crates/kleene-harness/src/learn/` |
+| CLI wiring | `crates/kleene/src/main.rs` |

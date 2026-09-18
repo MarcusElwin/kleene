@@ -1,7 +1,7 @@
 name: Release
 
 # Tag a version (`git tag v0.1.0 && git push --tags`) and this builds the
-# `callgebra` binary for macOS (Apple silicon and Intel) and Linux (x86_64
+# `kleene` binary for macOS (Apple silicon and Intel) and Linux (x86_64
 # and aarch64), attaches tarballs with SHA-256 checksums to a GitHub
 # release, and prints the values the Homebrew formula needs.
 #
@@ -20,7 +20,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  BIN: callgebra
+  BIN: kleene
 
 permissions:
   contents: write
@@ -53,7 +53,7 @@ jobs:
         with:
           key: release-${{ matrix.target }}
       - name: Build
-        run: cargo build --release --locked -p callgebra --target ${{ matrix.target }}
+        run: cargo build --release --locked -p kleene --target ${{ matrix.target }}
       - name: Smoke test
         run: |
           ./target/${{ matrix.target }}/release/$BIN --version
@@ -100,10 +100,10 @@ jobs:
           cat SHA256SUMS >> notes.md
           echo '```' >> notes.md
           echo >> notes.md
-          echo "Install with \`curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh\` or \`brew install ${{ github.repository_owner }}/callgebra/callgebra\`." >> notes.md
+          echo "Install with \`curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh\` or \`brew install ${{ github.repository_owner }}/kleene/kleene\`." >> notes.md
       - name: Formula values
         run: |
-          echo "Homebrew formula (Formula/callgebra.rb in the tap): set version to ${GITHUB_REF_NAME#v} and these sha256 values:"
+          echo "Homebrew formula (Formula/kleene.rb in the tap): set version to ${GITHUB_REF_NAME#v} and these sha256 values:"
           cat dist/SHA256SUMS
       - uses: softprops/action-gh-release@v2
         with:

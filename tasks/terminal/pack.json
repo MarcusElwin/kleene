@@ -86,14 +86,14 @@
     {
       "id": "write-json",
       "kind": null,
-      "task": "Write a file config.json in the workspace containing a JSON object with keys name (value \"callgebra\") and version (value 7). Answer with FINAL over one row with column done = true.",
+      "task": "Write a file config.json in the workspace containing a JSON object with keys name (value \"kleene\") and version (value 7). Answer with FINAL over one row with column done = true.",
       "context": null,
       "context_file": null,
       "setup": [],
       "workspace_from": null,
       "verify": {
         "kind": "shell",
-        "command": "python3 -c \"import json,sys; d=json.load(open('config.json')); sys.exit(0 if d.get('name')=='callgebra' and d.get('version')==7 else 1)\""
+        "command": "python3 -c \"import json,sys; d=json.load(open('config.json')); sys.exit(0 if d.get('name')=='kleene' and d.get('version')==7 else 1)\""
       },
       "difficulty": 1000.0
     }

@@ -1,6 +1,6 @@
 # CallSQL dialect reference
 
-CallSQL is the PostgreSQL-flavoured subset Callgebra executes, plus the
+CallSQL is the PostgreSQL-flavoured subset Kleene executes, plus the
 statements and functions that make model calls, tools, delegation, budgets
 and planning first-class. Everything the model does in a session is one or
 more CallSQL statements inside a single ```sql fence.
@@ -113,10 +113,10 @@ recursion costing.
 
 ## The continual loop
 
-`callgebra learn` keeps a `tasks` table fed by generators with code oracles,
+`kleene learn` keeps a `tasks` table fed by generators with code oracles,
 runs the curriculum's pick through a session, judges `FINAL`, moves
 Bradley-Terry ratings, and adopts winning SQL into a `playbook` only after a
 replay eval; see `demos/README.md`. Learned entries appear in the prompt as a
-marked section. `callgebra bench` runs task packs (`tasks/*/pack.json`) under
+marked section. `kleene bench` runs task packs (`tasks/*/pack.json`) under
 `learning`, `frozen` and `plain` (tool-calling agent) modes and records every
 task in `evals`.

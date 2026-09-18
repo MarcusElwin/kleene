@@ -1,0 +1,27 @@
+[package]
+name = "kleene-daemon"
+description = "Engine daemon: Unix socket, newline-delimited JSON events with cursors"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+kleene-core = { workspace = true }
+kleene-trace = { workspace = true }
+kleene-harness = { workspace = true }
+kleene-store = { workspace = true }
+kleene-llm = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

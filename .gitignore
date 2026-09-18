@@ -2,7 +2,7 @@
 *.duckdb
 *.duckdb.wal
 /results
-.callgebra/
+.kleene/
 
 # agent worktrees
 .claude/worktrees/

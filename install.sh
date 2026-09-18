@@ -1,20 +1,20 @@
 #!/bin/sh
-# Install the callgebra binary from a GitHub release.
+# Install the kleene binary from a GitHub release.
 #
 #   curl -fsSL https://raw.githubusercontent.com/MarcusElwin/callgebra/main/install.sh | sh
 #
 # Options (environment variables):
-#   CALLGEBRA_VERSION   tag to install, e.g. v0.1.0 (default: latest release)
-#   CALLGEBRA_INSTALL   directory to install into (default: ~/.local/bin,
+#   KLEENE_VERSION   tag to install, e.g. v0.1.0 (default: latest release)
+#   KLEENE_INSTALL   directory to install into (default: ~/.local/bin,
 #                       or /usr/local/bin when run as root)
-#   CALLGEBRA_REPO      owner/repo (default: MarcusElwin/callgebra)
+#   KLEENE_REPO      owner/repo (default: MarcusElwin/callgebra)
 #   GITHUB_TOKEN        (or GH_TOKEN) a token with read access; needed while
 #                       the repository is private, and raises the API rate
 #                       limit otherwise
 set -eu
 
-REPO="${CALLGEBRA_REPO:-MarcusElwin/callgebra}"
-BIN="callgebra"
+REPO="${KLEENE_REPO:-MarcusElwin/callgebra}"
+BIN="kleene"
 
 say() { printf '%s\n' "$*" >&2; }
 die() { say "install.sh: $*"; exit 1; }
@@ -28,7 +28,7 @@ arch="$(uname -m)"
 case "$os" in
   Linux) os_part="unknown-linux-gnu" ;;
   Darwin) os_part="apple-darwin" ;;
-  *) die "unsupported OS: $os (build from source with: cargo install --git https://github.com/$REPO callgebra)" ;;
+  *) die "unsupported OS: $os (build from source with: cargo install --git https://github.com/$REPO kleene)" ;;
 esac
 case "$arch" in
   x86_64|amd64) arch_part="x86_64" ;;
@@ -49,8 +49,8 @@ fetch() {
   fi
 }
 
-if [ -n "${CALLGEBRA_VERSION:-}" ]; then
-  release_url="$api/releases/tags/$CALLGEBRA_VERSION"
+if [ -n "${KLEENE_VERSION:-}" ]; then
+  release_url="$api/releases/tags/$KLEENE_VERSION"
 else
   release_url="$api/releases/latest"
 fi
@@ -60,7 +60,7 @@ release="$(fetch -H "Accept: application/vnd.github+json" "$release_url" 2>/dev/
   else
     die "no release found at $release_url: either none has been published yet, or \
 $REPO is private and needs GITHUB_TOKEN set. To build from source instead: \
-cargo install --git https://github.com/$REPO callgebra"
+cargo install --git https://github.com/$REPO kleene"
   fi
 }
 tag="$(printf '%s' "$release" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)"
@@ -84,8 +84,8 @@ sum_url="$(asset_url "$name.tar.gz.sha256")"
 [ -n "$tarball_url" ] || die "release $tag has no asset $name.tar.gz (unsupported target, or the release build is still running)"
 [ -n "$sum_url" ] || die "release $tag has no checksum for $name.tar.gz"
 
-if [ -n "${CALLGEBRA_INSTALL:-}" ]; then
-  dest="$CALLGEBRA_INSTALL"
+if [ -n "${KLEENE_INSTALL:-}" ]; then
+  dest="$KLEENE_INSTALL"
 elif [ "$(id -u)" = "0" ]; then
   dest="/usr/local/bin"
 else

@@ -1,7 +1,7 @@
 # Pass through prompt-cache controls and report `cached_tokens` per request
 
 ## Why
-Callgebra keeps a frozen system prefix (schema catalog and rules) and puts
+Kleene keeps a frozen system prefix (schema catalog and rules) and puts
 one `cache_control` breakpoint on it. With Aura in the path the breakpoint
 is dropped, so every call pays full input price, and the client cannot see
 cache hits even though `Usage.cached_tokens` exists.

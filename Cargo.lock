@@ -391,213 +391,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
-name = "callgebra"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "callgebra-algebra",
- "callgebra-core",
- "callgebra-daemon",
- "callgebra-exec",
- "callgebra-harness",
- "callgebra-llm",
- "callgebra-sql",
- "callgebra-store",
- "callgebra-tools",
- "callgebra-trace",
- "callgebra-tui",
- "clap",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
-name = "callgebra-algebra"
-version = "0.0.1"
-dependencies = [
- "async-trait",
- "callgebra-core",
- "callgebra-exec",
- "callgebra-sql",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
-]
-
-[[package]]
-name = "callgebra-core"
-version = "0.0.1"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror",
- "uuid",
-]
-
-[[package]]
-name = "callgebra-daemon"
-version = "0.0.1"
-dependencies = [
- "callgebra-core",
- "callgebra-harness",
- "callgebra-llm",
- "callgebra-store",
- "callgebra-trace",
- "futures",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "callgebra-difftest"
-version = "0.0.1"
-dependencies = [
- "callgebra-core",
- "callgebra-exec",
- "callgebra-sql",
- "callgebra-store",
- "proptest",
- "tokio",
-]
-
-[[package]]
-name = "callgebra-exec"
-version = "0.0.1"
-dependencies = [
- "async-recursion",
- "async-trait",
- "callgebra-algebra",
- "callgebra-core",
- "callgebra-sql",
- "futures",
- "serde_json",
- "thiserror",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "callgebra-harness"
-version = "0.0.1"
-dependencies = [
- "async-trait",
- "callgebra-algebra",
- "callgebra-core",
- "callgebra-exec",
- "callgebra-llm",
- "callgebra-sql",
- "callgebra-store",
- "callgebra-tools",
- "callgebra-trace",
- "serde",
- "serde_json",
- "sha2",
- "sqlparser",
- "tempfile",
- "thiserror",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "callgebra-llm"
-version = "0.0.1"
-dependencies = [
- "async-trait",
- "bytes",
- "callgebra-core",
- "futures",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "thiserror",
- "tokio",
- "toml",
- "tracing",
-]
-
-[[package]]
-name = "callgebra-sql"
-version = "0.0.1"
-dependencies = [
- "callgebra-core",
- "serde",
- "serde_json",
- "sqlparser",
- "thiserror",
-]
-
-[[package]]
-name = "callgebra-store"
-version = "0.0.1"
-dependencies = [
- "async-trait",
- "callgebra-core",
- "callgebra-trace",
- "duckdb",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "callgebra-tools"
-version = "0.0.1"
-dependencies = [
- "async-trait",
- "callgebra-core",
- "chrono",
- "globset",
- "regex",
- "reqwest",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "tokio",
- "walkdir",
-]
-
-[[package]]
-name = "callgebra-trace"
-version = "0.0.1"
-dependencies = [
- "callgebra-core",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "callgebra-tui"
-version = "0.0.1"
-dependencies = [
- "callgebra-core",
- "callgebra-daemon",
- "callgebra-trace",
- "crossterm",
- "futures",
- "ratatui",
- "serde_json",
- "thiserror",
- "tokio",
-]
-
-[[package]]
 name = "cassowary"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -733,6 +526,18 @@ dependencies = [
  "rustversion",
  "ryu",
  "static_assertions",
+]
+
+[[package]]
+name = "console"
+version = "0.16.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e96a4956774c13c126a8b5af4daa79384f4d826534c95a02d76afb39e2ab64e3"
+dependencies = [
+ "encode_unicode",
+ "libc",
+ "unicode-width 0.2.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -918,6 +723,12 @@ name = "either"
 version = "1.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "252afb9ae5eaa683babdc6a068b3f5726eb19e05070c731f9b2a23a7c3e8ed34"
+
+[[package]]
+name = "encode_unicode"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34aa73646ffb006b8f5147f3dc182bd4bcb190227ce861fc4a4844bf8e3cb2c0"
 
 [[package]]
 name = "equivalent"
@@ -1438,6 +1249,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "indicatif"
+version = "0.18.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9433806cd6b4ec1aba79c021c7e4c58fb4c3b9977c085062e611ac929998fb0c"
+dependencies = [
+ "console",
+ "portable-atomic",
+ "unicode-width 0.2.0",
+ "unit-prefix",
+ "web-time",
+]
+
+[[package]]
 name = "indoc"
 version = "2.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1505,6 +1329,217 @@ dependencies = [
  "cfg-if",
  "futures-util",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "kleene"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "clap",
+ "console",
+ "indicatif",
+ "kleene-algebra",
+ "kleene-core",
+ "kleene-daemon",
+ "kleene-exec",
+ "kleene-harness",
+ "kleene-llm",
+ "kleene-sql",
+ "kleene-store",
+ "kleene-tools",
+ "kleene-trace",
+ "kleene-tui",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "kleene-algebra"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "kleene-core",
+ "kleene-exec",
+ "kleene-sql",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
+name = "kleene-core"
+version = "0.0.1"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+ "uuid",
+]
+
+[[package]]
+name = "kleene-daemon"
+version = "0.0.1"
+dependencies = [
+ "futures",
+ "kleene-core",
+ "kleene-harness",
+ "kleene-llm",
+ "kleene-store",
+ "kleene-trace",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "kleene-difftest"
+version = "0.0.1"
+dependencies = [
+ "kleene-core",
+ "kleene-exec",
+ "kleene-sql",
+ "kleene-store",
+ "proptest",
+ "tokio",
+]
+
+[[package]]
+name = "kleene-exec"
+version = "0.0.1"
+dependencies = [
+ "async-recursion",
+ "async-trait",
+ "futures",
+ "kleene-algebra",
+ "kleene-core",
+ "kleene-sql",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "kleene-harness"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "futures",
+ "kleene-algebra",
+ "kleene-core",
+ "kleene-exec",
+ "kleene-llm",
+ "kleene-sql",
+ "kleene-store",
+ "kleene-tools",
+ "kleene-trace",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlparser",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "kleene-llm"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "futures",
+ "kleene-core",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "toml",
+ "tracing",
+]
+
+[[package]]
+name = "kleene-sql"
+version = "0.0.1"
+dependencies = [
+ "kleene-core",
+ "serde",
+ "serde_json",
+ "sqlparser",
+ "thiserror",
+]
+
+[[package]]
+name = "kleene-store"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "duckdb",
+ "kleene-core",
+ "kleene-trace",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "kleene-tools"
+version = "0.0.1"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "globset",
+ "kleene-core",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "walkdir",
+]
+
+[[package]]
+name = "kleene-trace"
+version = "0.0.1"
+dependencies = [
+ "kleene-core",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "kleene-tui"
+version = "0.0.1"
+dependencies = [
+ "crossterm",
+ "futures",
+ "kleene-core",
+ "kleene-daemon",
+ "kleene-llm",
+ "kleene-trace",
+ "ratatui",
+ "serde_json",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -1798,6 +1833,12 @@ name = "pkg-config"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
+
+[[package]]
+name = "portable-atomic"
+version = "1.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "05c8b63e8d9609db387f0324918f81d68fe27748f084ef092fb35954d0539a85"
 
 [[package]]
 name = "potential_utf"
@@ -2872,6 +2913,12 @@ name = "unicode-width"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fc81956842c57dac11422a97c3b8195a1ff727f06e85c84ed2e8aa277c9a0fd"
+
+[[package]]
+name = "unit-prefix"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "81e544489bf3d8ef66c953931f56617f423cd4b5494be343d9b9d3dda037b9a3"
 
 [[package]]
 name = "untrusted"

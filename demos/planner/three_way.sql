@@ -1,5 +1,5 @@
 -- Three relations, two LLM predicates. Run with:
---   callgebra repl < demos/planner/three_way.sql
+--   kleene repl < demos/planner/three_way.sql
 -- The tables are synthetic; the predicates are prompt functions, so a
 -- provider is needed only for the final SELECT (the EXPLAINs are free).
 

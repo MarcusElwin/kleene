@@ -1,6 +1,6 @@
 # Planner demos
 
-Two scripts for `callgebra repl` (pipe them in). The `EXPLAIN`s need no
+Two scripts for `kleene repl` (pipe them in). The `EXPLAIN`s need no
 provider; the `SELECT`s do.
 
 - `three_way.sql`: a three-way join with two LLM predicates written as a
