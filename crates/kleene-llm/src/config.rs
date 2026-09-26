@@ -17,6 +17,10 @@
 //! api_key = "sk-..."
 //! base_url = "https://api.openai.com/v1"
 //! model = "gpt-5.4-mini"
+//!
+//! [web_search]
+//! provider = "brave"        # or "tavily"
+//! api_key = "BSA..."
 //! ```
 
 use crate::types::ProviderError;
@@ -71,6 +75,40 @@ impl OpenAiCompatSettings {
     }
 }
 
+/// The service behind the `web_search` tool.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WebSearchSettings {
+    /// `KLEENE_WEB_SEARCH_PROVIDER`: `brave` (the default) or `tavily`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    /// `KLEENE_WEB_SEARCH_API_KEY`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+}
+
+impl WebSearchSettings {
+    /// Environment variable naming the service.
+    pub const PROVIDER_ENV: &'static str = "KLEENE_WEB_SEARCH_PROVIDER";
+    /// Environment variable holding the key.
+    pub const API_KEY_ENV: &'static str = "KLEENE_WEB_SEARCH_API_KEY";
+    /// The service used when none is named.
+    pub const DEFAULT_PROVIDER: &'static str = "brave";
+
+    /// Whether a key is present.
+    pub fn is_configured(&self) -> bool {
+        non_empty(&self.api_key)
+    }
+
+    /// The service name, defaulting to [`Self::DEFAULT_PROVIDER`].
+    pub fn provider_name(&self) -> &str {
+        self.provider
+            .as_deref()
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .unwrap_or(Self::DEFAULT_PROVIDER)
+    }
+}
+
 /// Everything needed to build the provider stack.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderSettings {
@@ -83,6 +121,9 @@ pub struct ProviderSettings {
     /// Path of a router TOML (`KLEENE_ROUTER_TOML`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub router: Option<PathBuf>,
+    /// The `web_search` tool's service and key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_search: Option<WebSearchSettings>,
 }
 
 fn non_empty(v: &Option<String>) -> bool {
@@ -126,11 +167,16 @@ impl ProviderSettings {
             base_url: env("OPENAI_BASE_URL"),
             model: env("OPENAI_MODEL"),
         };
+        let web_search = WebSearchSettings {
+            provider: env(WebSearchSettings::PROVIDER_ENV),
+            api_key: env(WebSearchSettings::API_KEY_ENV),
+        };
         Self {
             anthropic: (anthropic != AnthropicSettings::default()).then_some(anthropic),
             openai_compat: (openai_compat != OpenAiCompatSettings::default())
                 .then_some(openai_compat),
             router: env(crate::env::ROUTER_TOML_ENV).map(PathBuf::from),
+            web_search: (web_search != WebSearchSettings::default()).then_some(web_search),
         }
     }
 
@@ -212,7 +258,18 @@ impl ProviderSettings {
             self.openai_compat = Some(c);
         }
         self.router = other.router.or(self.router);
+        if let Some(o) = other.web_search {
+            let mut w = self.web_search.take().unwrap_or_default();
+            w.provider = o.provider.or(w.provider);
+            w.api_key = o.api_key.or(w.api_key);
+            self.web_search = Some(w);
+        }
         self
+    }
+
+    /// The web search service and key, when a key is set.
+    pub fn web_search_configured(&self) -> Option<&WebSearchSettings> {
+        self.web_search.as_ref().filter(|w| w.is_configured())
     }
 
     /// Whether at least one provider can be built.
@@ -253,9 +310,15 @@ mod tests {
                 model: Some("llama".into()),
             }),
             router: None,
+            web_search: Some(WebSearchSettings {
+                provider: None,
+                api_key: Some("BSA-x".into()),
+            }),
         };
         let text = s.to_toml();
         assert!(text.contains("[anthropic]"), "{text}");
+        assert!(text.contains("[web_search]"), "{text}");
+        assert_eq!(s.web_search_configured().unwrap().provider_name(), "brave");
         assert!(
             !text.contains("auth_token"),
             "unset fields are omitted: {text}"
@@ -289,6 +352,21 @@ mod tests {
             "kept from the file"
         );
         assert_eq!(e.openai_compat.unwrap().model.as_deref(), Some("m"));
+        let file = ProviderSettings::parse("[web_search]\nprovider = 'tavily'\n").unwrap();
+        assert!(
+            file.web_search_configured().is_none(),
+            "a provider alone is no key"
+        );
+        let env = ProviderSettings {
+            web_search: Some(WebSearchSettings {
+                provider: None,
+                api_key: Some("tvly-x".into()),
+            }),
+            ..Default::default()
+        };
+        let w = file.overlaid(env).web_search.unwrap();
+        assert_eq!(w.provider_name(), "tavily", "kept from the file");
+        assert!(w.is_configured());
     }
 
     #[test]

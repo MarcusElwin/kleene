@@ -22,6 +22,7 @@ async fn repl(provider: Arc<ScriptedProvider>) -> Fixture {
             workspace: dir.path().to_path_buf(),
             provider: Some(provider),
             tracer,
+            web_search: None,
         },
     )
     .await
