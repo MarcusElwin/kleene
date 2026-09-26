@@ -139,7 +139,7 @@ pub enum SetupAction {
     /// Leave without saving.
     Cancel,
     /// Save these settings.
-    Save(ProviderSettings),
+    Save(Box<ProviderSettings>),
 }
 
 /// The wizard state.
@@ -461,7 +461,7 @@ impl SetupApp {
                         );
                         return SetupAction::None;
                     }
-                    SetupAction::Save(s)
+                    SetupAction::Save(Box::new(s))
                 }
                 _ => SetupAction::None,
             },
@@ -724,7 +724,7 @@ pub async fn run(
             Some(Ok(Event::Key(k))) => match app.key(k) {
                 SetupAction::None => {}
                 SetupAction::Cancel => break Ok(None),
-                SetupAction::Save(s) => break Ok(Some(s)),
+                SetupAction::Save(s) => break Ok(Some(*s)),
             },
             Some(Ok(_)) => {}
             Some(Err(e)) => break Err(crate::TuiError::Io(e)),
