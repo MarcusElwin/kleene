@@ -1390,6 +1390,7 @@ dependencies = [
  "kleene-harness",
  "kleene-llm",
  "kleene-store",
+ "kleene-tools",
  "kleene-trace",
  "serde",
  "serde_json",

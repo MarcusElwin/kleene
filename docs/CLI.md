@@ -133,7 +133,8 @@ speaks two wire formats directly, with no SDK and no gateway required.
 
 ### `kleene setup`
 
-The guided way. It asks which providers to use, takes the keys with the
+The guided way. It asks which providers to use (a model provider, and
+optionally the service behind the `web_search` tool), takes the keys with the
 input masked, and writes them to the config file:
 
 ```bash
@@ -149,16 +150,22 @@ kleene setup
 │   ○ OpenAI                       OPENAI_API_KEY                  │
 │   ○ OpenAI-compatible endpoint   OPENAI_BASE_URL                 │
 │       Ollama, vLLM, LM Studio, a gateway.                        │
+│   ○ Web search                   KLEENE_WEB_SEARCH_API_KEY       │
+│       Optional. Brave Search or Tavily behind web_search.        │
 ╰──────────────────────────────────────────────────────────────────╯
 ```
 
 `kleene tui` runs the same wizard on its own the first time it starts
-without a configured provider. Non-interactive forms for scripts:
+without a configured provider, and `/setup` at the TUI's prompt opens it
+again at any time to add or change keys; saving there asks the running
+daemon to reload, so the next run uses the new keys without a restart.
+Non-interactive forms for scripts:
 
 ```bash
 kleene setup --anthropic-key sk-ant-...
 kleene setup --openai-base-url http://localhost:11434/v1 --openai-model llama3
 kleene setup --router ~/.config/kleene/router.toml
+kleene setup --web-search-provider brave --web-search-key BSA...   # or tavily
 kleene setup --show          # what is configured, keys masked, and from where
 ```
 
@@ -173,12 +180,16 @@ api_key = "sk-ant-..."
 [openai_compat]
 base_url = "http://localhost:11434/v1"
 model = "llama3"
+
+[web_search]
+provider = "brave"      # or "tavily"
+api_key = "BSA..."
 ```
 
 Environment variables always win over the file, field by field, so a
 one-off `ANTHROPIC_API_KEY=... kleene run` keeps working and CI never needs
-the file. A daemon that was already running before `setup` keeps its old
-provider until restarted.
+the file. A daemon that was already running before `kleene setup` keeps its
+old keys until it is restarted or a TUI's `/setup` asks it to reload.
 
 ### Environment variables
 
@@ -240,6 +251,18 @@ cache_read_per_mtok = 0.5
 cache_write_per_mtok = 6.25
 ```
 
+**Web search**
+
+```bash
+export KLEENE_WEB_SEARCH_API_KEY=BSA...
+export KLEENE_WEB_SEARCH_PROVIDER=brave     # optional; brave (default) or tavily
+```
+
+The `web_search(q [, n])` tool calls Brave Search (`api.search.brave.com`)
+or Tavily (`api.tavily.com`) with this key and returns `rank, title, url,
+snippet`, ten rows unless `n` says otherwise, at most twenty. Without a key
+every search fails with `no web search backend configured`.
+
 Candidates are tried in order; one whose calls keep failing is skipped until
 its circuit breaker cools down. `options` takes `effort`, `cache_prefix`,
 `temperature` and provider-specific `extra`. Aliases are what `SET
@@ -286,7 +309,7 @@ Files under the working directory:
 |---|---|
 | `.kleene/run.duckdb` | the store: your tables, `memo`, `trace_*`, `kleene_sessions`, learning and bench tables |
 | `.kleene/daemon.sock` | the daemon's Unix socket (`--socket` on `daemon`, `tui`, `attach`) |
-| `~/.config/kleene/config.toml` | provider keys written by `kleene setup` (`KLEENE_CONFIG_DIR` moves it) |
+| `~/.config/kleene/config.toml` | provider and web search keys written by `kleene setup` or `/setup` (`KLEENE_CONFIG_DIR` moves it) |
 
 `.kleene/` is git-ignored in this repository; add it to yours.
 
@@ -440,6 +463,7 @@ Slash commands, with completion (type `/`, `Tab` completes, `↑`/`↓` pick):
 | `/cancel` | cancel the run being followed |
 | `/plans` | show or hide `EXPLAIN` plans under statements |
 | `/theme [flavour]` | next Catppuccin flavour, or `mocha`, `macchiato`, `frappé`, `latte` |
+| `/setup` | the setup wizard over the stream: add or change model provider and web search keys; saving reloads the daemon |
 | `/clear` | clear the stream |
 | `/quit` | detach; the daemon and its runs keep going |
 

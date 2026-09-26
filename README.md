@@ -54,7 +54,7 @@ keys owner-readable under `~/.config/kleene/`; environment variables win
 over the file when both are set:
 
 ```bash
-kleene setup                               # pick Anthropic, OpenAI, or a compatible endpoint (Ollama, vLLM, a gateway)
+kleene setup                               # pick Anthropic, OpenAI, or a compatible endpoint (Ollama, vLLM, a gateway); optionally Brave or Tavily for web_search
 export ANTHROPIC_API_KEY=sk-ant-...        # or just the environment: Anthropic, routed root/worker/proxy/judge by default
 export OPENAI_API_KEY=sk-...               # or any OpenAI-compatible endpoint (OPENAI_BASE_URL, OPENAI_MODEL)
 ```
@@ -104,7 +104,7 @@ Everything lands in `.kleene/run.duckdb` under the current directory.
 | Command | Does |
 |---|---|
 | `kleene` | the terminal UI: one stream, a prompt, slash commands; type a task to run it |
-| `kleene setup` | pick providers and store their keys |
+| `kleene setup` | pick providers and store their keys; `/setup` in the TUI does the same without leaving it |
 | `kleene run <task>` | drive a model through the SQL turn loop to `FINAL`, streamed to the terminal |
 | `kleene resume <run-id>` | continue a run that hit its turn cap |
 | `kleene repl [-c SQL]` | CallSQL against the store, interactive or scripted |
