@@ -57,6 +57,7 @@ over the file when both are set:
 kleene setup                               # pick Anthropic, OpenAI, or a compatible endpoint (Ollama, vLLM, a gateway)
 export ANTHROPIC_API_KEY=sk-ant-...        # or just the environment: Anthropic, routed root/worker/proxy/judge by default
 export OPENAI_API_KEY=sk-...               # or any OpenAI-compatible endpoint (OPENAI_BASE_URL, OPENAI_MODEL)
+export TYPESAFE_API_KEY=ts-...             # optional: TypeSafe's Jev for typed decisions (jev_noul, jev_choice, jev_score)
 ```
 
 Then just run it. `kleene` alone opens the terminal UI: type a task, press
@@ -124,7 +125,7 @@ model reply ─▶ kleene-sql ─▶ kleene-algebra ─▶ budget check ─▶ k
    CallSQL     parse, resolve     call kinds, cost,   refuse if over    operators, recursion,   back to the model
                to a LogicalPlan   rules, EXPLAIN                        calls via LiveSink
                                                                             │
-                                    kleene-llm  (Anthropic, OpenAI-compatible, router, replay)
+                                    kleene-llm  (Anthropic, OpenAI-compatible, router, replay; Jev for typed decisions)
                                     kleene-tools (files, grep, read, shell, write_file, patch, git_*, web_*)
                                     child sessions  (rlm, spawn: same loop at depth + 1 with a role and a budget slice)
                                                                             │
