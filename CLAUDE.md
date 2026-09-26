@@ -46,7 +46,11 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 cargo run -- --help
 ```
 
-The GitHub Actions workflow lives in `.github/workflows/ci.yml`. The copy
+The GitHub Actions workflow lives in `.github/workflows/ci.yml`: `fmt`,
+`clippy, doc` and `test` run as three parallel jobs, each with rust-cache
+keyed on the lockfile and sccache behind it, and a change that only touches
+docs, the formula or the installer (`paths-ignore` in the workflow) runs
+none of them. The copy
 under `ci/` is a leftover from when it was staged there and is scheduled for
 deletion; do not edit it and do not treat it as the source of truth.
 
@@ -58,18 +62,38 @@ four milestone PRs silently ran no checks at all. If the push is rejected,
 stop and say so.
 
 DuckDB (`kleene-store`, feature `duckdb`) builds from source the first time:
-about ten minutes on four cores and four gigabytes per variant. Three
-variants are normal and all needed: the `check` profile (clippy) has its own
-`target/debug/build/libduckdb-sys-*` output, and `cargo build` and
-`cargo test` link different `liblibduckdb_sys-*.rlib`s because dev-dependencies
-change feature unification. Always use the `--workspace --all-features`
-shape above; `-p`, `--exclude` or a different feature set makes a fourth.
-Keep `target/` between runs; when disk runs low, delete `target/doc`,
+about six minutes on four cores per variant. Two variants are normal and both
+needed: `cargo clippy` (the check profile) and `cargo test` each run the
+`libduckdb-sys` build script into their own `target/debug/build/libduckdb-sys-*/out`,
+because cargo keys that directory on the compile mode. `cargo doc` shares
+clippy's. Always use the `--workspace --all-features` shape above; `-p`,
+`--exclude` or a different feature set makes a third.
+`Cargo.toml` turns debug info off for `libduckdb-sys` only, so the
+amalgamation's static library is ~500 MB per variant instead of over a
+gigabyte and a test binary that links it is 200–300 MB. Keep `target/`
+between runs; when disk runs low, delete `target/doc`,
 `target/debug/incremental` and stale test binaries in `target/debug/deps`
 before touching DuckDB artifacts. Every test binary that links the store
-carries DuckDB (about 700 MB each), so crates that depend on it keep one
-integration-test binary (`tests/all/main.rs` with `mod` files) and no
-examples.
+carries DuckDB, so crates that depend on it keep one integration-test binary
+(`tests/all/main.rs` with `mod` files) and no examples.
+
+[sccache](https://github.com/mozilla/sccache) makes a cold `target/` cheap:
+with `RUSTC_WRAPPER=sccache` the `cc` crate routes DuckDB's C++ through it
+too, so after one build every object is a cache hit whenever the same
+variant is rebuilt from scratch (a wiped `target/`, a dependency bump that
+misses rust-cache, a fresh container). It does not dedupe across the two
+variants: the build script untars the sources into `OUT_DIR`, so the two
+variants' preprocessed sources differ in their paths. CI sets it up; locally,
+`cargo install sccache` and put
+
+```toml
+[build]
+rustc-wrapper = "sccache"
+```
+
+in `~/.cargo/config.toml` (not the repo's: it would break every checkout
+without sccache).
+
 `DUCKDB_LIB_DIR` does **not** help while the dependency is declared
 `features = ["bundled"]` — bundled compiles the amalgamation and ignores it.
 Dropping `bundled` to link a prebuilt library is incompatible with the
