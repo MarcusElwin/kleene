@@ -257,10 +257,84 @@ pub fn call_functions() -> Vec<FunctionDef> {
     ]
 }
 
-/// A catalog pre-populated with [`standard_functions`] and [`call_functions`].
+/// The typed-decision functions every session sees, answered by the
+/// decision provider (TypeSafe's Jev) rather than a text model.
+///
+/// Each takes a `state` (the content to decide about, text or JSON) and a
+/// `question`. Labels and levels are a JSON array or a comma-separated list.
+///
+/// | name | signature | answer |
+/// |---|---|---|
+/// | `jev_noul` | `(state TEXT, question TEXT) -> DOUBLE` | probability in `[0, 1]` that the answer is yes |
+/// | `jev_choice` | `(state TEXT, question TEXT, labels TEXT) -> TEXT` | the most probable label |
+/// | `jev_score` | `(state TEXT, question TEXT, levels TEXT) -> DOUBLE` | expected level, `0` to `n - 1`, fractional between levels |
+/// | `jev_choices` | `(state TEXT, question TEXT, labels TEXT) -> TABLE(label TEXT, probability DOUBLE)` | every label with its probability |
+///
+/// All are `IMMUTABLE` on the same terms as [`call_functions`], and all run
+/// on the [`ModelAlias::jev`](crate::ModelAlias::jev) alias, which the cost
+/// model prices far below a text call.
+pub fn decision_functions() -> Vec<FunctionDef> {
+    use crate::catalog::ModelAlias;
+    use DataType::*;
+    let jev = || CallKind::LlmScalar {
+        alias: ModelAlias::jev(),
+    };
+    vec![
+        FunctionDef {
+            name: "jev_noul".into(),
+            args: vec![Text, Text],
+            variadic: false,
+            returns: FunctionReturn::Scalar { data_type: Float },
+            call_kind: jev(),
+            volatility: Volatility::Immutable,
+            description: "jev_noul(state, question): probability in [0, 1] that the answer about state is yes; a typed decision, not a text call".into(),
+        },
+        FunctionDef {
+            name: "jev_choice".into(),
+            args: vec![Text, Text, Text],
+            variadic: false,
+            returns: FunctionReturn::Scalar { data_type: Text },
+            call_kind: jev(),
+            volatility: Volatility::Immutable,
+            description: "jev_choice(state, question, labels): the most probable of the labels (JSON array or comma-separated)".into(),
+        },
+        FunctionDef {
+            name: "jev_score".into(),
+            args: vec![Text, Text, Text],
+            variadic: false,
+            returns: FunctionReturn::Scalar { data_type: Float },
+            call_kind: jev(),
+            volatility: Volatility::Immutable,
+            description: "jev_score(state, question, levels): expected level from 0 to n - 1 on the ordered rubric (JSON array or comma-separated)".into(),
+        },
+        FunctionDef {
+            name: "jev_choices".into(),
+            args: vec![Text, Text, Text],
+            variadic: false,
+            returns: FunctionReturn::Table {
+                schema: Schema::new(vec![
+                    Field::not_null("label", Text),
+                    Field::not_null("probability", Float),
+                ]),
+            },
+            call_kind: CallKind::LlmTable {
+                alias: ModelAlias::jev(),
+            },
+            volatility: Volatility::Immutable,
+            description: "jev_choices(state, question, labels): one row per label with its probability, most probable first".into(),
+        },
+    ]
+}
+
+/// A catalog pre-populated with [`standard_functions`], [`call_functions`]
+/// and [`decision_functions`].
 pub fn standard_catalog() -> crate::catalog::Catalog {
     let mut c = crate::catalog::Catalog::new();
-    for f in standard_functions().into_iter().chain(call_functions()) {
+    for f in standard_functions()
+        .into_iter()
+        .chain(call_functions())
+        .chain(decision_functions())
+    {
         c.add_function(f);
     }
     c
@@ -269,6 +343,7 @@ pub fn standard_catalog() -> crate::catalog::Catalog {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::catalog::ModelAlias;
 
     #[test]
     fn delegation_functions_are_recursive_table_calls() {
@@ -290,7 +365,7 @@ mod tests {
     #[test]
     fn standard_catalog_has_every_builtin_once() {
         let c = standard_catalog();
-        let n = standard_functions().len() + call_functions().len();
+        let n = standard_functions().len() + call_functions().len() + decision_functions().len();
         assert_eq!(c.functions().count(), n);
         assert!(matches!(
             c.function("LLM").unwrap().call_kind,
@@ -301,5 +376,23 @@ mod tests {
             c.function("generate_series").unwrap().returns,
             FunctionReturn::Table { .. }
         ));
+    }
+
+    #[test]
+    fn decision_functions_run_on_the_jev_alias() {
+        let c = standard_catalog();
+        for name in ["jev_noul", "jev_choice", "jev_score"] {
+            let f = c.function(name).unwrap();
+            let CallKind::LlmScalar { alias } = &f.call_kind else {
+                panic!("{name} is a scalar decision")
+            };
+            assert!(alias.is_jev());
+            assert_eq!(f.volatility, Volatility::Immutable);
+        }
+        let FunctionReturn::Table { schema } = &c.function("jev_choices").unwrap().returns else {
+            panic!()
+        };
+        assert_eq!(schema.names(), ["label", "probability"]);
+        assert!(!ModelAlias::worker().is_jev());
     }
 }
