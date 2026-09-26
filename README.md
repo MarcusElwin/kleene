@@ -74,6 +74,8 @@ kleene trace "SELECT depth, role, outcome, turns, calls, dollars FROM trace_sess
 spinner while statements execute and prints the results and the final
 relation as tables.
 
+![The terminal UI mid-run: turns under rules, the reply streaming in with SQL highlighted, a child session one level in](docs/screenshots/run.png)
+
 The model receives the context as a table `ctx(ordinal, text)` and writes
 CallSQL turn by turn: it can `SELECT` over the context, define prompt
 functions, call tools with `CALL`, delegate with `rlm(...)` and

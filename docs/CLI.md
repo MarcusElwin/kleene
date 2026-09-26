@@ -140,6 +140,8 @@ input masked, and writes them to the config file:
 kleene setup
 ```
 
+![The setup wizard's first step](screenshots/setup.png)
+
 ```
 ╭ ◆ kleene · setup · Welcome ─────────────────────── step 1 of 3 ╮
 │ Which providers should Kleene use? Space ticks, Enter continues. │
@@ -417,6 +419,8 @@ the same.
 kleene tui [--run <task|@file>] [--context <file>] [--socket <path>]
 ```
 
+![The stream mid-run](screenshots/run.png)
+
 It is one scrolling stream, in the manner of prime-agent and opencode: a
 header with the run, its status and the spend; the stream; a prompt that
 always has focus; a footer of keys. A task typed at the prompt starts a run
@@ -426,6 +430,8 @@ highlighted, every statement's result, child sessions one level in, and the
 answer as a FINAL block. `Ctrl-P` unfolds each statement's `EXPLAIN` under
 it. Runs started from a shell with `kleene run` against the same daemon
 appear in the same stream.
+
+![The command popup](screenshots/commands.png)
 
 Slash commands, with completion (type `/`, `Tab` completes, `↑`/`↓` pick):
 
