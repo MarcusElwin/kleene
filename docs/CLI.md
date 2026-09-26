@@ -133,12 +133,15 @@ speaks two wire formats directly, with no SDK and no gateway required.
 
 ### `kleene setup`
 
-The guided way. It asks which providers to use, takes the keys with the
+The guided way. It asks which providers to use (a model provider, and
+optionally the service behind the `web_search` tool), takes the keys with the
 input masked, and writes them to the config file:
 
 ```bash
 kleene setup
 ```
+
+![The setup wizard's first step](screenshots/setup.png)
 
 ```
 ╭ ◆ kleene · setup · Welcome ─────────────────────── step 1 of 3 ╮
@@ -149,16 +152,22 @@ kleene setup
 │   ○ OpenAI                       OPENAI_API_KEY                  │
 │   ○ OpenAI-compatible endpoint   OPENAI_BASE_URL                 │
 │       Ollama, vLLM, LM Studio, a gateway.                        │
+│   ○ Web search                   KLEENE_WEB_SEARCH_API_KEY       │
+│       Optional. Brave, Tavily, Exa or Linkup behind web_search.  │
 ╰──────────────────────────────────────────────────────────────────╯
 ```
 
 `kleene tui` runs the same wizard on its own the first time it starts
-without a configured provider. Non-interactive forms for scripts:
+without a configured provider, and `/setup` at the TUI's prompt opens it
+again at any time to add or change keys; saving there asks the running
+daemon to reload, so the next run uses the new keys without a restart.
+Non-interactive forms for scripts:
 
 ```bash
 kleene setup --anthropic-key sk-ant-...
 kleene setup --openai-base-url http://localhost:11434/v1 --openai-model llama3
 kleene setup --router ~/.config/kleene/router.toml
+kleene setup --web-search-provider brave --web-search-key BSA...   # or tavily, exa, linkup
 kleene setup --show          # what is configured, keys masked, and from where
 ```
 
@@ -173,12 +182,16 @@ api_key = "sk-ant-..."
 [openai_compat]
 base_url = "http://localhost:11434/v1"
 model = "llama3"
+
+[web_search]
+provider = "brave"      # or "tavily", "exa", "linkup"
+api_key = "BSA..."
 ```
 
 Environment variables always win over the file, field by field, so a
 one-off `ANTHROPIC_API_KEY=... kleene run` keeps working and CI never needs
-the file. A daemon that was already running before `setup` keeps its old
-provider until restarted.
+the file. A daemon that was already running before `kleene setup` keeps its
+old keys until it is restarted or a TUI's `/setup` asks it to reload.
 
 ### Environment variables
 
@@ -252,6 +265,20 @@ cache_read_per_mtok = 0.5
 cache_write_per_mtok = 6.25
 ```
 
+**Web search**
+
+```bash
+export KLEENE_WEB_SEARCH_API_KEY=BSA...
+export KLEENE_WEB_SEARCH_PROVIDER=brave     # optional; brave (default), tavily, exa or linkup
+```
+
+The `web_search(q [, n])` tool calls Brave Search (`api.search.brave.com`),
+Tavily (`api.tavily.com`), Exa (`api.exa.ai`, with a short page text as the
+snippet) or Linkup (`api.linkup.so`, standard depth) with this key and
+returns `rank, title, url, snippet`, ten rows unless `n` says otherwise, at
+most twenty. Without a key
+every search fails with `no web search backend configured`.
+
 Candidates are tried in order; one whose calls keep failing is skipped until
 its circuit breaker cools down. `options` takes `effort`, `cache_prefix`,
 `temperature` and provider-specific `extra`. Aliases are what `SET
@@ -298,7 +325,7 @@ Files under the working directory:
 |---|---|
 | `.kleene/run.duckdb` | the store: your tables, `memo`, `trace_*`, `kleene_sessions`, learning and bench tables |
 | `.kleene/daemon.sock` | the daemon's Unix socket (`--socket` on `daemon`, `tui`, `attach`) |
-| `~/.config/kleene/config.toml` | provider keys written by `kleene setup` (`KLEENE_CONFIG_DIR` moves it) |
+| `~/.config/kleene/config.toml` | provider and web search keys written by `kleene setup` or `/setup` (`KLEENE_CONFIG_DIR` moves it) |
 
 `.kleene/` is git-ignored in this repository; add it to yours.
 
@@ -325,9 +352,10 @@ Flags merge into the existing file; providers not mentioned are kept.
 
 ### `kleene`
 
-With no arguments, in a terminal, `kleene` opens the terminal UI with the
-prompt bar focused: type a task, press Enter, and watch the run. This is the
-same UI as `kleene tui`; see below. Outside a terminal it prints the version.
+With no arguments, in a terminal, `kleene` opens the terminal UI: a welcome
+block, the prompt focused, slash commands one `/` away. Type a task, press
+Enter, and watch the run. This is the same UI as `kleene tui`; see below.
+Outside a terminal it prints the wordmark and the version.
 
 ### `kleene run <task>`
 
@@ -421,37 +449,57 @@ Tables: `trace_runs`, `trace_sessions`, `trace_statements`, `trace_calls`,
 
 Open the terminal UI over the engine daemon, starting one in the background
 if nothing is listening on the socket. The first time, with no provider
-configured, it runs the setup wizard before connecting.
+configured, it runs the setup wizard before connecting. `kleene` alone does
+the same.
 
 ```
 kleene tui [--run <task|@file>] [--context <file>] [--socket <path>]
 ```
 
-The prompt bar at the bottom is where work starts: `i` (or `n`, `:`) focuses
-it, a task plus Enter starts a run on the daemon, and `/sql SELECT …` runs
-one statement in an interactive session. The newest run's root session stays
-selected while it works, so the model's reply streams into the transcript as
-it is written (`g` returns to following after you move around). Runs started
-from a shell with `kleene run` against the same daemon show up here too.
+![The stream mid-run](screenshots/run.png)
 
-Views and keys:
+It is one scrolling stream, in the manner of prime-agent and opencode: a
+header with the run, its status and the spend; the stream; a prompt that
+always has focus; a footer of keys. A task typed at the prompt starts a run
+on the daemon. The run appears in the stream as it happens: each turn under
+a rule with its calls and cost, the model's reply streaming in with the SQL
+highlighted, every statement's result, child sessions one level in, and the
+answer as a FINAL block. `Ctrl-P` unfolds each statement's `EXPLAIN` under
+it. Runs started from a shell with `kleene run` against the same daemon
+appear in the same stream.
+
+![The command popup](screenshots/commands.png)
+
+Slash commands, with completion (type `/`, `Tab` completes, `↑`/`↓` pick):
+
+| Command | Does |
+|---|---|
+| `/help` | the commands and keys |
+| `/sql <statement>` | run one CallSQL statement in an interactive session; the result prints inline |
+| `/trace <sql>` | query the store (`trace_*`, `memo`, `tasks`, `evals`, your tables) as a table |
+| `/board` | the continual loop's task board |
+| `/runs` | live runs on this daemon |
+| `/follow <run>` | show a run by the tail of its id; new runs are followed on their own |
+| `/cancel` | cancel the run being followed |
+| `/plans` | show or hide `EXPLAIN` plans under statements |
+| `/theme [flavour]` | next Catppuccin flavour, or `mocha`, `macchiato`, `frappé`, `latte` |
+| `/setup` | the setup wizard over the stream: add or change model provider and web search keys; saving reloads the daemon |
+| `/clear` | clear the stream |
+| `/quit` | detach; the daemon and its runs keep going |
+
+Keys:
 
 | Key | Action |
 |---|---|
-| `i`, `n`, `:` | focus the prompt bar; Enter runs, Esc leaves it, Ctrl-U clears |
-| `g` | follow the newest run again |
-| `1` | session view: call tree with live status, transcript of the selected row, plan sidebar with memo-hit gauge |
-| `2` | plan view: the selected statement's `EXPLAIN` with actuals |
-| `3` | trace explorer: SQL over the store; `e` or `/` edits, `Enter` runs, `r` re-runs |
-| `4` | task board for the continual loop (`r` refreshes; auto every two seconds) |
-| `?` | help |
-| `t` | cycle the Catppuccin flavour: Mocha (default), Macchiato, Frappé, Latte; `KLEENE_THEME=latte` picks the starting one |
-| `j` / `k`, arrows | move; `J` / `K`, PageUp/Down scroll the transcript |
-| `f`, `Enter`, space | fold or unfold the selected node |
-| `x`, `Esc` | cancel the selected statement, or the run from its root row |
-| `d`, `q`, Ctrl-C | detach; the daemon and the run keep going |
-
-Under 120×30 the layout switches to two columns.
+| `Enter` | run the task, or the command |
+| `Tab` | complete the command |
+| `↑` / `↓` | walk the input history, or move in the command popup |
+| `PgUp` / `PgDn`, `Home` / `End` | scroll the stream; `End` follows the newest output again |
+| `Ctrl-P` | show or hide plans |
+| `Ctrl-T` | next Catppuccin flavour; `KLEENE_THEME=latte` picks the starting one |
+| `Ctrl-X` | cancel the run being followed |
+| `Ctrl-U` | clear the input |
+| `Ctrl-C` | detach; the daemon and its runs keep going |
 
 ### `kleene attach`
 

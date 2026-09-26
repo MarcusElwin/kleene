@@ -23,6 +23,7 @@ async fn repl(provider: Arc<ScriptedProvider>) -> Fixture {
             provider: Some(provider),
             decisions: None,
             tracer,
+            web_search: None,
         },
     )
     .await

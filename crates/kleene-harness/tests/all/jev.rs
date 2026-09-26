@@ -30,6 +30,7 @@ async fn repl(decisions: Option<Arc<ScriptedDecisions>>) -> Fixture {
             ))),
             decisions: Some(decisions.clone()),
             tracer,
+            web_search: None,
         },
     )
     .await
@@ -144,6 +145,7 @@ async fn nulls_bad_labels_and_a_missing_provider_are_clear() {
             provider: None,
             decisions: None,
             tracer: None,
+            web_search: None,
         },
     )
     .await

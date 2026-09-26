@@ -10,7 +10,7 @@ use kleene_exec::{execute_statement, ExecContext, StatementResult};
 use kleene_llm::Provider;
 use kleene_sql::{parse, plan, plan_sql, render_error, Statement, StatementKind};
 use kleene_store::{DuckDbStore, Store};
-use kleene_tools::{catalog_entries, standard_tools, ToolContext};
+use kleene_tools::{catalog_entries, standard_tools, ToolContext, WebSearchBackend};
 use kleene_trace::{TraceEvent, Tracer};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -61,6 +61,8 @@ pub struct ReplConfig {
     pub decisions: Option<Arc<dyn kleene_llm::DecisionProvider>>,
     /// Trace sink, if any (the store's own sink is the usual choice).
     pub tracer: Option<Tracer>,
+    /// The service behind `web_search`, if any.
+    pub web_search: Option<WebSearchBackend>,
 }
 
 impl Repl {
@@ -74,6 +76,7 @@ impl Repl {
                 provider: None,
                 decisions: None,
                 tracer: None,
+                web_search: None,
             },
         )
         .await
@@ -91,7 +94,7 @@ impl Repl {
             store_sink,
             cfg.provider,
             tools,
-            ToolContext::new(cfg.workspace),
+            ToolContext::new(cfg.workspace).with_web_search(cfg.web_search),
             cfg.tracer.clone(),
         );
         live.register_tool_catalog(entries).await;

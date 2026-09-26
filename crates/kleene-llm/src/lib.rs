@@ -29,7 +29,9 @@ pub mod sse;
 pub mod types;
 
 pub use adapters::{AnthropicProvider, OpenAiCompatProvider, TypeSafeProvider};
-pub use config::{AnthropicSettings, OpenAiCompatSettings, ProviderSettings, TypeSafeSettings};
+pub use config::{
+    AnthropicSettings, OpenAiCompatSettings, ProviderSettings, TypeSafeSettings, WebSearchSettings,
+};
 pub use decision::{
     Answer, DecisionProvider, DecisionRequest, DecisionResponse, Question, DECISION_ALIAS,
 };
