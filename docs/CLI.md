@@ -151,7 +151,7 @@ kleene setup
 │   ○ OpenAI-compatible endpoint   OPENAI_BASE_URL                 │
 │       Ollama, vLLM, LM Studio, a gateway.                        │
 │   ○ Web search                   KLEENE_WEB_SEARCH_API_KEY       │
-│       Optional. Brave Search or Tavily behind web_search.        │
+│       Optional. Brave, Tavily, Exa or Linkup behind web_search.  │
 ╰──────────────────────────────────────────────────────────────────╯
 ```
 
@@ -165,7 +165,7 @@ Non-interactive forms for scripts:
 kleene setup --anthropic-key sk-ant-...
 kleene setup --openai-base-url http://localhost:11434/v1 --openai-model llama3
 kleene setup --router ~/.config/kleene/router.toml
-kleene setup --web-search-provider brave --web-search-key BSA...   # or tavily
+kleene setup --web-search-provider brave --web-search-key BSA...   # or tavily, exa, linkup
 kleene setup --show          # what is configured, keys masked, and from where
 ```
 
@@ -182,7 +182,7 @@ base_url = "http://localhost:11434/v1"
 model = "llama3"
 
 [web_search]
-provider = "brave"      # or "tavily"
+provider = "brave"      # or "tavily", "exa", "linkup"
 api_key = "BSA..."
 ```
 
@@ -255,12 +255,14 @@ cache_write_per_mtok = 6.25
 
 ```bash
 export KLEENE_WEB_SEARCH_API_KEY=BSA...
-export KLEENE_WEB_SEARCH_PROVIDER=brave     # optional; brave (default) or tavily
+export KLEENE_WEB_SEARCH_PROVIDER=brave     # optional; brave (default), tavily, exa or linkup
 ```
 
-The `web_search(q [, n])` tool calls Brave Search (`api.search.brave.com`)
-or Tavily (`api.tavily.com`) with this key and returns `rank, title, url,
-snippet`, ten rows unless `n` says otherwise, at most twenty. Without a key
+The `web_search(q [, n])` tool calls Brave Search (`api.search.brave.com`),
+Tavily (`api.tavily.com`), Exa (`api.exa.ai`, with a short page text as the
+snippet) or Linkup (`api.linkup.so`, standard depth) with this key and
+returns `rank, title, url, snippet`, ten rows unless `n` says otherwise, at
+most twenty. Without a key
 every search fails with `no web search backend configured`.
 
 Candidates are tried in order; one whose calls keep failing is skipped until

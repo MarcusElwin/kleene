@@ -9,8 +9,8 @@ use std::time::Duration;
 /// `web_search(q TEXT [, n BIGINT]) -> (rank BIGINT, title TEXT, url TEXT, snippet TEXT)`.
 ///
 /// The backend is [`ToolContext::web_search`]: Brave Search
-/// (`api.search.brave.com`) or Tavily (`api.tavily.com`), each with its own
-/// key. Without one every call fails with `no web search backend
+/// (`api.search.brave.com`), Tavily (`api.tavily.com`), Exa (`api.exa.ai`)
+/// or Linkup (`api.linkup.so`), each with its own key. Without one every call fails with `no web search backend
 /// configured` after validating its arguments. `n` defaults to 10 and is
 /// capped at 20. The column shape is part of the interface.
 #[derive(Debug, Default, Clone, Copy)]
@@ -84,6 +84,75 @@ pub fn parse_tavily(body: &serde_json::Value, n: usize) -> Vec<Hit> {
         .unwrap_or_default()
 }
 
+/// Read Exa's `results[*]` into hits; the snippet is the page text Exa was
+/// asked for. `n` caps them.
+pub fn parse_exa(body: &serde_json::Value, n: usize) -> Vec<Hit> {
+    body.get("results")
+        .and_then(|r| r.as_array())
+        .map(|results| {
+            results
+                .iter()
+                .filter_map(|r| {
+                    Some(Hit {
+                        title: r
+                            .get("title")
+                            .and_then(|t| t.as_str())
+                            .unwrap_or_default()
+                            .to_string(),
+                        url: r.get("url")?.as_str()?.to_string(),
+                        snippet: r
+                            .get("text")
+                            .and_then(|d| d.as_str())
+                            .or_else(|| {
+                                r.get("highlights")
+                                    .and_then(|h| h.as_array())
+                                    .and_then(|h| h.first())
+                                    .and_then(|h| h.as_str())
+                            })
+                            .unwrap_or_default()
+                            .trim()
+                            .to_string(),
+                    })
+                })
+                .take(n)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Read Linkup's `results[*]` (`name`, `url`, `content`) into hits; `n`
+/// caps them.
+pub fn parse_linkup(body: &serde_json::Value, n: usize) -> Vec<Hit> {
+    body.get("results")
+        .and_then(|r| r.as_array())
+        .map(|results| {
+            results
+                .iter()
+                .filter_map(|r| {
+                    Some(Hit {
+                        title: r
+                            .get("name")
+                            .and_then(|t| t.as_str())
+                            .unwrap_or_default()
+                            .to_string(),
+                        url: r.get("url")?.as_str()?.to_string(),
+                        snippet: r
+                            .get("content")
+                            .and_then(|d| d.as_str())
+                            .unwrap_or_default()
+                            .trim()
+                            .to_string(),
+                    })
+                })
+                .take(n)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Most characters of page text asked of Exa per hit.
+const EXA_SNIPPET_CHARS: u32 = 400;
+
 /// Reads a service's JSON reply into hits.
 type Parser = fn(&serde_json::Value, usize) -> Vec<Hit>;
 
@@ -120,9 +189,38 @@ async fn search(backend: &WebSearchBackend, q: &str, n: i64) -> Result<Vec<Hit>,
                 .map_err(http)?,
             parse_tavily,
         ),
+        "exa" => (
+            client
+                .post("https://api.exa.ai/search")
+                .header("x-api-key", &backend.api_key)
+                .json(&serde_json::json!({
+                    "query": q,
+                    "numResults": n,
+                    "contents": {"text": {"maxCharacters": EXA_SNIPPET_CHARS}},
+                }))
+                .send()
+                .await
+                .map_err(http)?,
+            parse_exa,
+        ),
+        "linkup" => (
+            client
+                .post("https://api.linkup.so/v1/search")
+                .bearer_auth(&backend.api_key)
+                .json(&serde_json::json!({
+                    "q": q,
+                    "depth": "standard",
+                    "outputType": "searchResults",
+                }))
+                .send()
+                .await
+                .map_err(http)?,
+            parse_linkup,
+        ),
         other => {
             return Err(ToolError::Other(format!(
-                "unknown web search provider {other:?}; use brave or tavily"
+                "unknown web search provider {other:?}; use {}",
+                WebSearchBackend::PROVIDERS.join(", ")
             )))
         }
     };
@@ -271,6 +369,25 @@ mod tests {
         let hits = parse_tavily(&tavily, 5);
         assert_eq!(hits[0].snippet, "c");
         assert!(parse_tavily(&serde_json::json!({}), 5).is_empty());
+        let exa = serde_json::json!({
+            "results": [
+                {"title": "E", "url": "https://e.example", "text": " body \n"},
+                {"title": "H", "url": "https://h.example", "highlights": ["hi"]}
+            ]
+        });
+        let hits = parse_exa(&exa, 5);
+        assert_eq!(hits[0].snippet, "body");
+        assert_eq!(hits[1].snippet, "hi");
+        let linkup = serde_json::json!({
+            "results": [
+                {"type": "text", "name": "L", "url": "https://l.example", "content": "c"},
+                {"type": "text", "name": "M", "url": "https://m.example", "content": "d"}
+            ]
+        });
+        let hits = parse_linkup(&linkup, 1);
+        assert_eq!(hits.len(), 1, "n caps a service that takes no count");
+        assert_eq!(hits[0].title, "L");
+        let hits = parse_tavily(&tavily, 5);
         let batch = hits_to_batch(WebSearch.schema(), hits).unwrap();
         assert_eq!(batch.len(), 1);
         let header = batch.render_table(10).lines().next().unwrap().to_string();

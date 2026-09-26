@@ -30,7 +30,7 @@
 //! | `web_search` | `(q TEXT [, n BIGINT])` | `rank, title, url, snippet` | VOLATILE |
 //!
 //! `web_search` calls the service named by [`ToolContext::web_search`]
-//! (Brave Search or Tavily, configured by `kleene setup`); without one every
+//! (Brave Search, Tavily, Exa or Linkup, configured by `kleene setup`); without one every
 //! search fails with `no web search backend configured`.
 //!
 //! Every path argument is resolved under the session workspace by
@@ -86,7 +86,7 @@ pub type ReadRegistry = Arc<Mutex<HashMap<PathBuf, SystemTime>>>;
 /// appears in `Debug` output.
 #[derive(Clone, PartialEq, Eq)]
 pub struct WebSearchBackend {
-    /// `brave` or `tavily`.
+    /// `brave`, `tavily`, `exa` or `linkup`.
     pub provider: String,
     /// The service's API key.
     pub api_key: String,
@@ -94,7 +94,7 @@ pub struct WebSearchBackend {
 
 impl WebSearchBackend {
     /// The services `web_search` can call, in the order the wizard lists them.
-    pub const PROVIDERS: [&'static str; 2] = ["brave", "tavily"];
+    pub const PROVIDERS: [&'static str; 4] = ["brave", "tavily", "exa", "linkup"];
 
     /// A backend, or `None` when the provider name is not one of
     /// [`Self::PROVIDERS`] or the key is blank.

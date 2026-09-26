@@ -19,7 +19,7 @@
 //! model = "gpt-5.4-mini"
 //!
 //! [web_search]
-//! provider = "brave"        # or "tavily"
+//! provider = "brave"        # or "tavily", "exa", "linkup"
 //! api_key = "BSA..."
 //! ```
 
@@ -78,7 +78,8 @@ impl OpenAiCompatSettings {
 /// The service behind the `web_search` tool.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WebSearchSettings {
-    /// `KLEENE_WEB_SEARCH_PROVIDER`: `brave` (the default) or `tavily`.
+    /// `KLEENE_WEB_SEARCH_PROVIDER`: `brave` (the default), `tavily`, `exa`
+    /// or `linkup`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
     /// `KLEENE_WEB_SEARCH_API_KEY`.
@@ -93,6 +94,8 @@ impl WebSearchSettings {
     pub const API_KEY_ENV: &'static str = "KLEENE_WEB_SEARCH_API_KEY";
     /// The service used when none is named.
     pub const DEFAULT_PROVIDER: &'static str = "brave";
+    /// The services `web_search` can call.
+    pub const PROVIDERS: [&'static str; 4] = ["brave", "tavily", "exa", "linkup"];
 
     /// Whether a key is present.
     pub fn is_configured(&self) -> bool {

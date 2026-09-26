@@ -214,7 +214,7 @@ Configuration is `ProviderSettings`: the config file `kleene setup` writes
 (`~/.config/kleene/config.toml`, owner-readable) with the environment layered
 on top field by field, so `KEY=... kleene run` still wins. Besides the model
 providers it names the service behind the `web_search` tool (`[web_search]`:
-Brave or Tavily and a key), which the CLI turns into a
+Brave, Tavily, Exa or Linkup and a key), which the CLI turns into a
 `kleene_tools::WebSearchBackend` on the `ToolContext`. The setup wizard
 itself lives in `kleene-tui::setup` as a pure state machine with a renderer,
 shared by `kleene setup`, the TUI's first start and its `/setup` command;

@@ -58,7 +58,7 @@ impl Choice {
                 "Ollama, vLLM, LM Studio, a gateway: anything speaking the chat-completions API."
             }
             Choice::WebSearch => {
-                "Optional. Brave Search or Tavily behind the web_search tool; without it searches fail."
+                "Optional. Brave, Tavily, Exa or Linkup behind the web_search tool; without it searches fail."
             }
         }
     }
@@ -274,14 +274,14 @@ impl SetupApp {
             vec![
                 Field::new(
                     "Service",
-                    "brave (api.search.brave.com) or tavily (api.tavily.com)",
+                    "brave, tavily, exa or linkup",
                     w.provider_name().to_string(),
                     false,
                     false,
                 ),
                 Field::new(
                     "API key",
-                    "from brave.com/search/api or app.tavily.com",
+                    "from brave.com/search/api, app.tavily.com, dashboard.exa.ai or app.linkup.so",
                     w.api_key.clone().unwrap_or_default(),
                     true,
                     false,
@@ -380,9 +380,10 @@ impl SetupApp {
                 .value
                 .trim()
                 .to_ascii_lowercase();
-            if service != "brave" && service != "tavily" {
+            if !WebSearchSettings::PROVIDERS.contains(&service.as_str()) {
                 return Some(format!(
-                    "web search service must be brave or tavily, not {service:?}"
+                    "web search service must be one of {}, not {service:?}",
+                    WebSearchSettings::PROVIDERS.join(", ")
                 ));
             }
         }
@@ -927,7 +928,11 @@ mod tests {
         press(&mut app, KeyCode::Enter);
         type_text(&mut app, "k");
         press(&mut app, KeyCode::Enter);
-        assert!(app.error.as_deref().unwrap().contains("brave or tavily"));
+        assert!(app
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("brave, tavily, exa, linkup"));
         assert_eq!(app.step, Step::Fields(0));
     }
 

@@ -152,8 +152,8 @@ enum Command {
         /// Router TOML with aliases, failover and pricing.
         #[arg(long)]
         router: Option<PathBuf>,
-        /// Service behind the `web_search` tool: brave (default) or tavily.
-        #[arg(long, value_parser = ["brave", "tavily"])]
+        /// Service behind the `web_search` tool: brave (default), tavily, exa or linkup.
+        #[arg(long, value_parser = ["brave", "tavily", "exa", "linkup"])]
         web_search_provider: Option<String>,
         /// API key for the web search service.
         #[arg(long)]
@@ -598,8 +598,9 @@ fn web_search_from_env() -> Option<kleene_tools::WebSearchBackend> {
         kleene_tools::WebSearchBackend::new(w.provider_name(), w.api_key.as_deref().unwrap_or(""));
     if backend.is_none() {
         eprintln!(
-            "kleene: unknown web search provider {:?}; use brave or tavily",
-            w.provider_name()
+            "kleene: unknown web search provider {:?}; use one of {}",
+            w.provider_name(),
+            kleene_tools::WebSearchBackend::PROVIDERS.join(", ")
         );
     }
     backend

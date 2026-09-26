@@ -54,7 +54,7 @@ keys owner-readable under `~/.config/kleene/`; environment variables win
 over the file when both are set:
 
 ```bash
-kleene setup                               # pick Anthropic, OpenAI, or a compatible endpoint (Ollama, vLLM, a gateway); optionally Brave or Tavily for web_search
+kleene setup                               # pick Anthropic, OpenAI, or a compatible endpoint (Ollama, vLLM, a gateway); optionally Brave, Tavily, Exa or Linkup for web_search
 export ANTHROPIC_API_KEY=sk-ant-...        # or just the environment: Anthropic, routed root/worker/proxy/judge by default
 export OPENAI_API_KEY=sk-...               # or any OpenAI-compatible endpoint (OPENAI_BASE_URL, OPENAI_MODEL)
 ```
