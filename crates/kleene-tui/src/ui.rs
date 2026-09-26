@@ -69,11 +69,6 @@ fn first_line(s: &str, max: usize) -> String {
 fn draw_header(f: &mut Frame<'_>, area: Rect, app: &App) {
     let t = app.theme;
     let m = &app.model;
-    let run = app
-        .followed()
-        .and_then(|r| m.runs.get(&r))
-        .map(|r| format!("{} · {}", short(r.id), first_line(&r.task, 48)))
-        .unwrap_or_else(|| "no run yet".into());
     let (dot, status, color) = if !app.connected {
         ("✕", "disconnected", t.err)
     } else if m.busy() {
@@ -86,20 +81,6 @@ fn draw_header(f: &mut Frame<'_>, area: Rect, app: &App) {
     } else {
         0.0
     };
-    let left = Line::from(vec![
-        Span::styled(
-            format!(" {BRAND} "),
-            Style::default()
-                .fg(t.on_accent)
-                .bg(t.accent)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(format!("  {run}  "), t.text()),
-        Span::styled(
-            format!("{dot} {status}"),
-            Style::default().fg(color).add_modifier(Modifier::BOLD),
-        ),
-    ]);
     let right = Line::from(vec![
         Span::styled("λ ", Style::default().fg(t.call)),
         Span::styled(format!("{} calls", m.total_calls), t.text()),
@@ -115,6 +96,31 @@ fn draw_header(f: &mut Frame<'_>, area: Rect, app: &App) {
         Span::styled(format!("  {} ", t.name), t.dim()),
     ])
     .alignment(Alignment::Right);
+    // Room for the task: the width minus the brand, the status and the right
+    // side, so the status never gets clipped.
+    let right_width = right.width();
+    let room = (area.width as usize)
+        .saturating_sub(right_width + BRAND.chars().count() + status.len() + 12)
+        .max(12);
+    let run = app
+        .followed()
+        .and_then(|r| m.runs.get(&r))
+        .map(|r| format!("{} · {}", short(r.id), first_line(&r.task, room)))
+        .unwrap_or_else(|| "no run yet".into());
+    let left = Line::from(vec![
+        Span::styled(
+            format!(" {BRAND} "),
+            Style::default()
+                .fg(t.on_accent)
+                .bg(t.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(format!("  {run}  "), t.text()),
+        Span::styled(
+            format!("{dot} {status}"),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ),
+    ]);
     let cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -381,12 +387,13 @@ fn chip(t: &Theme) -> Style {
         .add_modifier(Modifier::BOLD)
 }
 
-fn rule(t: &Theme, label: String, right: String, width: usize) -> Line<'static> {
+fn rule(t: &Theme, prefix: &str, label: String, right: String, width: usize) -> Line<'static> {
     let left = format!("── {label} ");
     let fill = width
-        .saturating_sub(left.chars().count() + right.chars().count() + 2)
+        .saturating_sub(prefix.chars().count() + left.chars().count() + right.chars().count() + 2)
         .max(4);
     Line::from(vec![
+        Span::styled(prefix.to_string(), Style::default().fg(t.border)),
         Span::styled(left, Style::default().fg(t.faint)),
         Span::styled("─".repeat(fill), Style::default().fg(t.border)),
         Span::styled(format!(" {right} "), t.dim()),
@@ -537,7 +544,8 @@ fn session_lines(app: &App, s: &SessionNode, depth: usize, out: &mut Vec<Line<'s
         out.push(Line::from(""));
         out.push(rule(
             &t,
-            format!("{pad_text}turn {}", turn.n),
+            &pad_text,
+            format!("turn {}", turn.n),
             usage,
             app.width,
         ));
@@ -566,6 +574,12 @@ fn session_lines(app: &App, s: &SessionNode, depth: usize, out: &mut Vec<Line<'s
                 r.is_error,
                 &format!("{pad_text}  "),
             ));
+        }
+    }
+    // Children ran inside earlier turns, so they come before the live one.
+    for child in &s.children {
+        if let Some(c) = m.sessions.get(child) {
+            session_lines(app, c, depth + 1, out);
         }
     }
     // The turn in progress: the reply streaming in, or the statements running.
@@ -604,7 +618,7 @@ fn session_lines(app: &App, s: &SessionNode, depth: usize, out: &mut Vec<Line<'s
             } else {
                 "◐".to_string()
             };
-            out.push(rule(&t, format!("{pad_text}turn {n}"), state, app.width));
+            out.push(rule(&t, &pad_text, format!("turn {n}"), state, app.width));
             if let Some(c) = streaming {
                 reply_lines(&t, &c.streaming, &pad_text, out);
             }
@@ -624,11 +638,6 @@ fn session_lines(app: &App, s: &SessionNode, depth: usize, out: &mut Vec<Line<'s
                     Style::default().fg(t.ok).add_modifier(Modifier::ITALIC),
                 )));
             }
-        }
-    }
-    for child in &s.children {
-        if let Some(c) = m.sessions.get(child) {
-            session_lines(app, c, depth + 1, out);
         }
     }
     if let Some(o) = &s.outcome {
@@ -669,7 +678,9 @@ fn turn_usage(m: &Model, s: &SessionNode, n: u32) -> String {
     let marker = format!("-- turn {n}");
     let mut calls = 0u64;
     let mut dollars = 0.0f64;
-    let mut in_turn = false;
+    // Statements before any turn marker (a REPL session, a test) count as
+    // turn 1.
+    let mut in_turn = n == 1;
     for id in &s.statement_ids {
         let Some(st) = m.statements.get(id) else {
             continue;
@@ -692,7 +703,7 @@ fn turn_usage(m: &Model, s: &SessionNode, n: u32) -> String {
 fn turn_plans(m: &Model, s: &SessionNode, n: u32) -> Vec<Option<String>> {
     let marker = format!("-- turn {n}");
     let mut plans = vec![];
-    let mut in_turn = false;
+    let mut in_turn = n == 1;
     for id in &s.statement_ids {
         let Some(st) = m.statements.get(id) else {
             continue;
@@ -1006,7 +1017,7 @@ mod tests {
             "{:?}",
             table.iter().map(|l| l.width()).collect::<Vec<_>>()
         );
-        assert_eq!(table.len(), 5);
+        assert_eq!(table.len(), 6, "rule, header, rule, two rows, rule");
     }
 
     #[test]
