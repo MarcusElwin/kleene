@@ -21,7 +21,7 @@ use kleene_exec::ExecError;
 use kleene_llm::{CompletionRequest, Message, Provider, ProviderOptions, StopReason};
 use kleene_store::duckdb::literal;
 use kleene_store::{DuckDbStore, StoreError};
-use kleene_tools::{catalog_entries, standard_tools, ToolContext, ToolRegistry};
+use kleene_tools::{catalog_entries, standard_tools, ToolContext, ToolRegistry, WebSearchBackend};
 use kleene_trace::{TraceEvent, Tracer};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -83,6 +83,8 @@ pub struct HarnessConfig {
     pub playbook: Vec<crate::PlaybookExample>,
     /// Skip the memo so every call is real (replay evals compare true cost).
     pub no_memo: bool,
+    /// The service behind `web_search`; `None` makes every search fail.
+    pub web_search: Option<WebSearchBackend>,
 }
 
 impl Default for HarnessConfig {
@@ -101,6 +103,7 @@ impl Default for HarnessConfig {
             observer: None,
             playbook: vec![],
             no_memo: false,
+            web_search: None,
         }
     }
 }
@@ -421,7 +424,8 @@ impl Harness {
             store_sink,
             self.cfg.provider.clone(),
             self.tools.clone(),
-            ToolContext::new(self.cfg.workspace.clone()),
+            ToolContext::new(self.cfg.workspace.clone())
+                .with_web_search(self.cfg.web_search.clone()),
             self.cfg.tracer.clone(),
         ));
         sink.set_meta(meta.clone()).await;

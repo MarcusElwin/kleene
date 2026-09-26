@@ -1,11 +1,12 @@
-//! First-run onboarding: pick the providers to use, enter their keys, save
-//! the config file. A pure state machine ([`SetupApp`]) plus a renderer, so
-//! `kleene setup` and the TUI's first start share it and tests drive it with
-//! key events.
+//! Onboarding and `/setup`: pick the providers to use (model providers, and
+//! the service behind `web_search`), enter their keys, save the config file.
+//! A pure state machine ([`SetupApp`]) plus a renderer, so `kleene setup`,
+//! the TUI's first start and its `/setup` command share it and tests drive
+//! it with key events.
 
 use crate::theme::{Theme, BRAND, TAGLINE};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use kleene_llm::{AnthropicSettings, OpenAiCompatSettings, ProviderSettings};
+use kleene_llm::{AnthropicSettings, OpenAiCompatSettings, ProviderSettings, WebSearchSettings};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
@@ -22,17 +23,28 @@ pub enum Choice {
     OpenAi,
     /// Any OpenAI-compatible endpoint: a local server, a gateway.
     Compatible,
+    /// The service behind the `web_search` tool.
+    WebSearch,
 }
 
+/// How many choices there are.
+pub const CHOICES: usize = 4;
+
 impl Choice {
-    /// All choices, in display order.
-    pub const ALL: [Choice; 3] = [Choice::Anthropic, Choice::OpenAi, Choice::Compatible];
+    /// All choices, in display order: model providers first, then tools.
+    pub const ALL: [Choice; CHOICES] = [
+        Choice::Anthropic,
+        Choice::OpenAi,
+        Choice::Compatible,
+        Choice::WebSearch,
+    ];
 
     fn title(self) -> &'static str {
         match self {
             Choice::Anthropic => "Anthropic",
             Choice::OpenAi => "OpenAI",
             Choice::Compatible => "OpenAI-compatible endpoint",
+            Choice::WebSearch => "Web search",
         }
     }
 
@@ -45,6 +57,9 @@ impl Choice {
             Choice::Compatible => {
                 "Ollama, vLLM, LM Studio, a gateway: anything speaking the chat-completions API."
             }
+            Choice::WebSearch => {
+                "Optional. Brave, Tavily, Exa or Linkup behind the web_search tool; without it searches fail."
+            }
         }
     }
 
@@ -52,6 +67,7 @@ impl Choice {
         match self {
             Choice::Anthropic => "ANTHROPIC_API_KEY",
             Choice::OpenAi => "OPENAI_API_KEY",
+            Choice::WebSearch => "KLEENE_WEB_SEARCH_API_KEY",
             Choice::Compatible => "OPENAI_BASE_URL",
         }
     }
@@ -138,8 +154,8 @@ pub enum SetupAction {
     None,
     /// Leave without saving.
     Cancel,
-    /// Save these settings.
-    Save(ProviderSettings),
+    /// Save these settings (boxed: the enum stays small next to `None`).
+    Save(Box<ProviderSettings>),
 }
 
 /// The wizard state.
@@ -148,11 +164,11 @@ pub struct SetupApp {
     /// Current step.
     pub step: Step,
     /// Which choices are ticked.
-    pub chosen: [bool; 3],
+    pub chosen: [bool; CHOICES],
     /// Highlighted row on the choose page.
     pub cursor: usize,
     /// Fields per choice, in [`Choice::ALL`] order.
-    pub fields: [Vec<Field>; 3],
+    pub fields: [Vec<Field>; CHOICES],
     /// Focused field on a provider page.
     pub field_cursor: usize,
     /// Settings the wizard started from; untouched providers are kept.
@@ -171,6 +187,7 @@ impl SetupApp {
     pub fn new(existing: ProviderSettings, path: PathBuf) -> Self {
         let a = existing.anthropic.clone().unwrap_or_default();
         let o = existing.openai_compat.clone().unwrap_or_default();
+        let w = existing.web_search.clone().unwrap_or_default();
         let o_is_openai = o
             .base_url
             .as_deref()
@@ -254,11 +271,28 @@ impl SetupApp {
                     false,
                 ),
             ],
+            vec![
+                Field::new(
+                    "Service",
+                    "brave, tavily, exa or linkup",
+                    w.provider_name().to_string(),
+                    false,
+                    false,
+                ),
+                Field::new(
+                    "API key",
+                    "from brave.com/search/api, app.tavily.com, dashboard.exa.ai or app.linkup.so",
+                    w.api_key.clone().unwrap_or_default(),
+                    true,
+                    false,
+                ),
+            ],
         ];
         let chosen = [
             a.is_configured(),
             o.is_configured() && o_is_openai,
             o.is_configured() && !o_is_openai,
+            w.is_configured(),
         ];
         Self {
             step: Step::Choose,
@@ -323,14 +357,37 @@ impl SetupApp {
         } else {
             s.openai_compat = None;
         }
+        if self.chosen[Self::index(Choice::WebSearch)] {
+            s.web_search = Some(WebSearchSettings {
+                provider: get(Choice::WebSearch, 0).map(|p| p.to_ascii_lowercase()),
+                api_key: get(Choice::WebSearch, 1),
+            });
+        } else {
+            s.web_search = None;
+        }
         s
     }
 
     fn validate_page(&self, c: Choice) -> Option<String> {
-        self.fields[Self::index(c)]
+        if let Some(f) = self.fields[Self::index(c)]
             .iter()
             .find(|f| !f.optional && f.value.trim().is_empty())
-            .map(|f| format!("{} needs a {}", c.title(), f.label.to_lowercase()))
+        {
+            return Some(format!("{} needs a {}", c.title(), f.label.to_lowercase()));
+        }
+        if c == Choice::WebSearch {
+            let service = self.fields[Self::index(c)][0]
+                .value
+                .trim()
+                .to_ascii_lowercase();
+            if !WebSearchSettings::PROVIDERS.contains(&service.as_str()) {
+                return Some(format!(
+                    "web search service must be one of {}, not {service:?}",
+                    WebSearchSettings::PROVIDERS.join(", ")
+                ));
+            }
+        }
+        None
     }
 
     /// Handle a key.
@@ -457,11 +514,11 @@ impl SetupApp {
                     let s = self.settings();
                     if !s.is_configured() {
                         self.error = Some(
-                            "nothing usable: every provider needs a credential or a URL".into(),
+                            "nothing usable: a model provider needs a credential or a URL".into(),
                         );
                         return SetupAction::None;
                     }
-                    SetupAction::Save(s)
+                    SetupAction::Save(Box::new(s))
                 }
                 _ => SetupAction::None,
             },
@@ -515,7 +572,7 @@ pub fn draw(f: &mut Frame<'_>, app: &SetupApp) {
             }
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
-                "Which providers should Kleene use? Space ticks, Enter continues.",
+                "Which providers should Kleene use? Space ticks, Enter continues. A model provider is needed; web search is optional.",
                 t.text(),
             )));
             lines.push(Line::from(""));
@@ -661,6 +718,16 @@ pub fn draw(f: &mut Frame<'_>, app: &SetupApp) {
                     Span::styled(r.display().to_string(), t.dim()),
                 ]));
             }
+            if let Some(w) = &s.web_search {
+                lines.push(Line::from(vec![
+                    Span::styled("Web search       ", t.text()),
+                    Span::styled(w.provider_name().to_string(), t.dim()),
+                    Span::styled(
+                        format!("  key {}", mask(w.api_key.as_deref().unwrap_or(""))),
+                        t.dim(),
+                    ),
+                ]));
+            }
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
                 "Environment variables still win over this file, so a one-off KEY=... kleene run keeps working.",
@@ -724,7 +791,7 @@ pub async fn run(
             Some(Ok(Event::Key(k))) => match app.key(k) {
                 SetupAction::None => {}
                 SetupAction::Cancel => break Ok(None),
-                SetupAction::Save(s) => break Ok(Some(s)),
+                SetupAction::Save(s) => break Ok(Some(*s)),
             },
             Some(Ok(_)) => {}
             Some(Err(e)) => break Err(crate::TuiError::Io(e)),
@@ -815,11 +882,58 @@ mod tests {
         )
         .unwrap();
         let app = SetupApp::new(existing, "/tmp/x/config.toml".into());
-        assert_eq!(app.chosen, [true, true, false]);
+        assert_eq!(app.chosen, [true, true, false, false]);
         assert_eq!(app.fields[0][0].value, "sk-ant-old");
         let s = app.settings();
         assert_eq!(s.router.as_deref(), Some(std::path::Path::new("/r.toml")));
         assert_eq!(s.openai_compat.unwrap().api_key.as_deref(), Some("sk-old"));
+    }
+
+    #[test]
+    fn web_search_is_optional_and_checks_its_service() {
+        let mut app = SetupApp::new(ProviderSettings::default(), "/tmp/x/config.toml".into());
+        for _ in 0..3 {
+            press(&mut app, KeyCode::Down);
+        }
+        press(&mut app, KeyCode::Char(' '));
+        assert_eq!(app.selected(), vec![Choice::WebSearch]);
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.step, Step::Fields(0));
+        // Service is pre-filled with brave; the key is required.
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Enter);
+        assert!(app.error.is_some(), "key required: {:?}", app.error);
+        type_text(&mut app, "BSA-secret-key-1234");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.step, Step::Review);
+        // Without a model provider the review refuses to save.
+        press(&mut app, KeyCode::Enter);
+        assert!(app.error.as_deref().unwrap().contains("model provider"));
+        let s = app.settings();
+        let w = s.web_search.unwrap();
+        assert_eq!(w.provider_name(), "brave");
+        assert_eq!(w.api_key.as_deref(), Some("BSA-secret-key-1234"));
+
+        // A made-up service is refused on its page.
+        let mut app = SetupApp::new(ProviderSettings::default(), "/tmp/x/config.toml".into());
+        for _ in 0..3 {
+            press(&mut app, KeyCode::Down);
+        }
+        press(&mut app, KeyCode::Char(' '));
+        press(&mut app, KeyCode::Enter);
+        for _ in 0..5 {
+            press(&mut app, KeyCode::Backspace);
+        }
+        type_text(&mut app, "bing");
+        press(&mut app, KeyCode::Enter);
+        type_text(&mut app, "k");
+        press(&mut app, KeyCode::Enter);
+        assert!(app
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("brave, tavily, exa, linkup"));
+        assert_eq!(app.step, Step::Fields(0));
     }
 
     #[test]

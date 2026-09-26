@@ -13,6 +13,7 @@ kleene-trace = { workspace = true }
 kleene-harness = { workspace = true }
 kleene-store = { workspace = true }
 kleene-llm = { workspace = true }
+kleene-tools = { workspace = true }
 futures = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

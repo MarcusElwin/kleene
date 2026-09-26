@@ -84,6 +84,11 @@ pub enum ClientRequest {
     },
     /// List live runs.
     ListRuns,
+    /// Re-read the config file and the environment: the model provider and
+    /// the web search backend for runs and sessions started from now on.
+    /// Live runs keep the provider they started with. Replies `Ok` with what
+    /// is configured, or `Error` when nothing usable is.
+    Reload,
     /// Detach without stopping anything.
     Detach,
 }
@@ -138,6 +143,21 @@ pub enum ServerMessage {
         /// The answer relation rendered as text, when there is one.
         answer: Option<String>,
     },
+    /// A session's turn completed: what the model said and what each
+    /// statement rendered to, so a client can show the conversation without
+    /// the store.
+    TurnFinished {
+        /// Session.
+        session: SessionId,
+        /// 1-based turn number.
+        turn: u32,
+        /// The model's reply, verbatim.
+        reply: String,
+        /// The SQL extracted from it, if any.
+        sql: Option<String>,
+        /// One entry per statement that ran.
+        results: Vec<StatementOutput>,
+    },
     /// Reply to `Submit`.
     Submitted {
         /// Session.
@@ -173,7 +193,7 @@ pub enum ServerMessage {
 }
 
 /// Current protocol version.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// Daemon errors.
 #[derive(Debug, thiserror::Error)]

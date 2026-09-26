@@ -105,7 +105,11 @@ impl Client {
         loop {
             match self.recv().await? {
                 None => return Err(DaemonError::Closed),
-                Some(ServerMessage::Event { .. } | ServerMessage::CallDelta { .. }) => continue,
+                Some(
+                    ServerMessage::Event { .. }
+                    | ServerMessage::CallDelta { .. }
+                    | ServerMessage::TurnFinished { .. },
+                ) => continue,
                 Some(ServerMessage::RunFinished { .. })
                     if !matches!(req, ClientRequest::CancelRun { .. }) =>
                 {

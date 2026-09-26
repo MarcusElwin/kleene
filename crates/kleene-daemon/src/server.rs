@@ -4,7 +4,9 @@
 use crate::{ClientRequest, Cursor, DaemonError, ServerMessage, StatementOutput, PROTOCOL_VERSION};
 use kleene_core::{Budget, RunId, SessionId, StatementId};
 use kleene_harness::{Harness, HarnessConfig, Observer, Outcome, Repl, ReplConfig, SessionMeta};
+use kleene_llm::ProviderSettings;
 use kleene_store::DuckDbStore;
+use kleene_tools::WebSearchBackend;
 use kleene_trace::{FanoutSink, TraceEvent, TraceSink, Traced, Tracer};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -149,10 +151,10 @@ struct LiveRun {
 /// The engine daemon.
 pub struct Daemon {
     log: Arc<EventLog>,
-    harness: Arc<Harness>,
+    /// The harness and the config it was built from; `Reload` replaces both.
+    live: RwLock<(Arc<Harness>, HarnessConfig)>,
     store: DuckDbStore,
     trace: kleene_store::DuckDbTraceSink,
-    cfg: HarnessConfig,
     runs: Mutex<HashMap<RunId, LiveRun>>,
     repls: tokio::sync::Mutex<HashMap<SessionId, Arc<Repl>>>,
 }
@@ -167,6 +169,24 @@ impl Observer for LogObserver {
         self.0.push(ServerMessage::CallDelta {
             call,
             text: text.to_string(),
+        });
+    }
+
+    fn turn(&self, meta: &SessionMeta, turn: &kleene_harness::Turn) {
+        self.0.push(ServerMessage::TurnFinished {
+            session: meta.id,
+            turn: turn.n,
+            reply: turn.reply.clone(),
+            sql: turn.sql.clone(),
+            results: turn
+                .results
+                .iter()
+                .map(|r| StatementOutput {
+                    text: r.text.clone(),
+                    is_error: r.is_error,
+                    is_final: r.is_final,
+                })
+                .collect(),
         });
     }
 }
@@ -186,10 +206,9 @@ impl Daemon {
         let harness = Harness::new(store.clone(), cfg.clone()).await?;
         Ok(Arc::new(Self {
             log,
-            harness,
+            live: RwLock::new((harness, cfg)),
             store,
             trace,
-            cfg,
             runs: Mutex::new(HashMap::new()),
             repls: tokio::sync::Mutex::new(HashMap::new()),
         }))
@@ -200,9 +219,46 @@ impl Daemon {
         &self.log
     }
 
-    /// The harness.
-    pub fn harness(&self) -> &Arc<Harness> {
-        &self.harness
+    /// The harness runs and sessions are started on now.
+    pub fn harness(&self) -> Arc<Harness> {
+        self.live
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .0
+            .clone()
+    }
+
+    /// The config runs and sessions are started with now.
+    pub fn config(&self) -> HarnessConfig {
+        self.live
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .1
+            .clone()
+    }
+
+    /// Rebuild the provider and the web search backend from the config file
+    /// and the environment ([`ProviderSettings::effective`]); everything
+    /// else in the config is kept. Returns what is configured, for the
+    /// `Ok` reply.
+    async fn reload(&self) -> Result<String, String> {
+        let settings = ProviderSettings::effective().map_err(|e| e.to_string())?;
+        let provider = kleene_llm::provider_from_settings(&settings).map_err(|e| e.to_string())?;
+        let web_search = settings.web_search_configured().and_then(|w| {
+            WebSearchBackend::new(w.provider_name(), w.api_key.as_deref().unwrap_or(""))
+        });
+        let mut cfg = self.config();
+        cfg.provider = Some(provider);
+        cfg.web_search = web_search;
+        let harness = Harness::new(self.store.clone(), cfg.clone())
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut summary: Vec<String> = settings.configured().map(str::to_string).collect();
+        if let Some(w) = &cfg.web_search {
+            summary.push(format!("web search {}", w.provider));
+        }
+        *self.live.write().unwrap_or_else(|e| e.into_inner()) = (harness, cfg);
+        Ok(format!("reloaded: {}", summary.join(", ")))
     }
 
     /// Bind the socket (replacing a stale file) and serve forever.
@@ -344,7 +400,11 @@ impl Daemon {
                 max_depth,
                 budget_calls,
             } => {
-                let mut cfg = self.cfg.clone();
+                let (live_harness, live_cfg) = {
+                    let live = self.live.read().unwrap_or_else(|e| e.into_inner());
+                    (live.0.clone(), live.1.clone())
+                };
+                let mut cfg = live_cfg.clone();
                 if !workspace.is_empty() {
                     cfg.workspace = PathBuf::from(workspace);
                 }
@@ -360,12 +420,12 @@ impl Daemon {
                         ..cfg.budget
                     };
                 }
-                let harness = if cfg.workspace == self.cfg.workspace
-                    && cfg.max_turns == self.cfg.max_turns
-                    && cfg.max_depth == self.cfg.max_depth
-                    && cfg.budget == self.cfg.budget
+                let harness = if cfg.workspace == live_cfg.workspace
+                    && cfg.max_turns == live_cfg.max_turns
+                    && cfg.max_depth == live_cfg.max_depth
+                    && cfg.budget == live_cfg.budget
                 {
-                    self.harness.clone()
+                    live_harness
                 } else {
                     match Harness::new(self.store.clone(), cfg).await {
                         Ok(h) => h,
@@ -411,10 +471,12 @@ impl Daemon {
                     match repls.get(&session) {
                         Some(r) => r.clone(),
                         None => {
+                            let live = self.config();
                             let cfg = ReplConfig {
-                                workspace: self.cfg.workspace.clone(),
-                                provider: self.cfg.provider.clone(),
-                                tracer: self.cfg.tracer.clone(),
+                                workspace: live.workspace,
+                                provider: live.provider,
+                                tracer: live.tracer,
+                                web_search: live.web_search,
                             };
                             match Repl::with_config(self.store.clone(), cfg).await {
                                 Ok(mut r) => {
@@ -469,7 +531,7 @@ impl Daemon {
                         message: format!("unknown statement {statement}"),
                     };
                 };
-                let cancelled = self.harness.cancel_statement(session)
+                let cancelled = self.harness().cancel_statement(session)
                     || match self.repls.lock().await.get(&session) {
                         Some(r) => {
                             r.sink().cancel_statement();
@@ -506,6 +568,10 @@ impl Daemon {
                     },
                 }
             }
+            ClientRequest::Reload => match self.reload().await {
+                Ok(message) => ServerMessage::Ok { message },
+                Err(message) => ServerMessage::Error { message },
+            },
             ClientRequest::ListRuns => ServerMessage::Runs {
                 runs: self
                     .runs

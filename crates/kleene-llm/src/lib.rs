@@ -23,7 +23,7 @@ pub mod sse;
 pub mod types;
 
 pub use adapters::{AnthropicProvider, OpenAiCompatProvider};
-pub use config::{AnthropicSettings, OpenAiCompatSettings, ProviderSettings};
+pub use config::{AnthropicSettings, OpenAiCompatSettings, ProviderSettings, WebSearchSettings};
 pub use env::{provider_from_env, provider_from_settings, NOT_CONFIGURED};
 pub use replay::{RecordingProvider, ReplayProvider};
 pub use router::{
