@@ -99,8 +99,10 @@ fn draw_header(f: &mut Frame<'_>, area: Rect, app: &App) {
     // Room for the task: the width minus the brand, the status and the right
     // side, so the status never gets clipped.
     let right_width = right.width();
+    // Brand chip (10), gaps (6), id and separator (9), status (up to 14), a
+    // gap before the totals (2), the ellipsis (1).
     let room = (area.width as usize)
-        .saturating_sub(right_width + BRAND.chars().count() + status.len() + 12)
+        .saturating_sub(right_width + BRAND.chars().count() + status.len() + 30)
         .max(12);
     let run = app
         .followed()
@@ -117,7 +119,7 @@ fn draw_header(f: &mut Frame<'_>, area: Rect, app: &App) {
         ),
         Span::styled(format!("  {run}  "), t.text()),
         Span::styled(
-            format!("{dot} {status}"),
+            format!("{dot} {status}  "),
             Style::default().fg(color).add_modifier(Modifier::BOLD),
         ),
     ]);
