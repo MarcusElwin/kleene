@@ -2,6 +2,7 @@
 
 mod bench;
 mod calls;
+mod jev;
 mod learn;
 mod repl;
 mod session;

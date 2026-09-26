@@ -61,6 +61,9 @@ pub struct HarnessConfig {
     pub workspace: PathBuf,
     /// Model provider (`None` makes every model call fail with a clear error).
     pub provider: Option<Arc<dyn Provider>>,
+    /// Decision provider (TypeSafe's Jev) behind `jev_*` and `MODEL 'jev'`;
+    /// `None` makes those fail with a clear error and changes nothing else.
+    pub decisions: Option<Arc<dyn kleene_llm::DecisionProvider>>,
     /// Trace sink.
     pub tracer: Option<Tracer>,
     /// Deepest session allowed; `rlm`/`spawn` are refused beyond it.
@@ -90,6 +93,7 @@ impl Default for HarnessConfig {
         Self {
             workspace: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             provider: None,
+            decisions: None,
             tracer: None,
             max_depth: 2,
             max_turns: 30,
@@ -425,6 +429,7 @@ impl Harness {
             self.cfg.tracer.clone(),
         ));
         sink.set_meta(meta.clone()).await;
+        sink.set_decisions(self.cfg.decisions.clone()).await;
         sink.set_observer(self.cfg.observer.clone()).await;
         sink.set_agents(record.agents.clone()).await;
         sink.set_functions(record.functions.clone()).await;

@@ -414,6 +414,7 @@ impl Daemon {
                             let cfg = ReplConfig {
                                 workspace: self.cfg.workspace.clone(),
                                 provider: self.cfg.provider.clone(),
+                                decisions: self.cfg.decisions.clone(),
                                 tracer: self.cfg.tracer.clone(),
                             };
                             match Repl::with_config(self.store.clone(), cfg).await {

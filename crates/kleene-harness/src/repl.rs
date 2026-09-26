@@ -57,6 +57,8 @@ pub struct ReplConfig {
     pub workspace: PathBuf,
     /// Model provider, if any.
     pub provider: Option<Arc<dyn Provider>>,
+    /// Decision provider (TypeSafe's Jev), if any.
+    pub decisions: Option<Arc<dyn kleene_llm::DecisionProvider>>,
     /// Trace sink, if any (the store's own sink is the usual choice).
     pub tracer: Option<Tracer>,
 }
@@ -70,6 +72,7 @@ impl Repl {
             ReplConfig {
                 workspace: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
                 provider: None,
+                decisions: None,
                 tracer: None,
             },
         )
@@ -92,6 +95,7 @@ impl Repl {
             cfg.tracer.clone(),
         );
         live.register_tool_catalog(entries).await;
+        live.set_decisions(cfg.decisions).await;
         Ok(Self {
             sink: Arc::new(live),
             render: RenderOptions::default(),
