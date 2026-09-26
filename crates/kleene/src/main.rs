@@ -152,6 +152,12 @@ enum Command {
         /// Router TOML with aliases, failover and pricing.
         #[arg(long)]
         router: Option<PathBuf>,
+        /// Service behind the `web_search` tool: brave (default) or tavily.
+        #[arg(long, value_parser = ["brave", "tavily"])]
+        web_search_provider: Option<String>,
+        /// API key for the web search service.
+        #[arg(long)]
+        web_search_key: Option<String>,
         /// Print the effective settings with keys masked and stop.
         #[arg(long)]
         show: bool,
@@ -583,6 +589,22 @@ fn start_request(
     }))
 }
 
+/// The `web_search` backend from the config file and the environment, if a
+/// key is set.
+fn web_search_from_env() -> Option<kleene_tools::WebSearchBackend> {
+    let settings = kleene_llm::ProviderSettings::effective().ok()?;
+    let w = settings.web_search_configured()?;
+    let backend =
+        kleene_tools::WebSearchBackend::new(w.provider_name(), w.api_key.as_deref().unwrap_or(""));
+    if backend.is_none() {
+        eprintln!(
+            "kleene: unknown web search provider {:?}; use brave or tavily",
+            w.provider_name()
+        );
+    }
+    backend
+}
+
 async fn daemon_config(cli: &Cli) -> anyhow::Result<kleene_harness::HarnessConfig> {
     let workspace = cli
         .workspace
@@ -598,6 +620,7 @@ async fn daemon_config(cli: &Cli) -> anyhow::Result<kleene_harness::HarnessConfi
     Ok(kleene_harness::HarnessConfig {
         workspace,
         provider,
+        web_search: web_search_from_env(),
         ..kleene_harness::HarnessConfig::default()
     })
 }
@@ -687,6 +710,7 @@ async fn open_harness(
         max_turns,
         budget,
         observer: Some(std::sync::Arc::new(pretty::Printer::new(quiet))),
+        web_search: web_search_from_env(),
         ..kleene_harness::HarnessConfig::default()
     };
     let harness = kleene_harness::Harness::new(store, cfg).await?;
@@ -716,6 +740,7 @@ async fn open_repl(cli: &Cli) -> anyhow::Result<Opened> {
             workspace,
             provider,
             tracer,
+            web_search: web_search_from_env(),
         },
     )
     .await?;
@@ -761,6 +786,8 @@ async fn main() -> anyhow::Result<()> {
             openai_base_url,
             openai_model,
             router,
+            web_search_provider,
+            web_search_key,
             show,
         }) => {
             run_setup(SetupArgs {
@@ -770,6 +797,8 @@ async fn main() -> anyhow::Result<()> {
                 openai_base_url: openai_base_url.clone(),
                 openai_model: openai_model.clone(),
                 router: router.clone(),
+                web_search_provider: web_search_provider.clone(),
+                web_search_key: web_search_key.clone(),
                 show: *show,
             })
             .await
@@ -971,6 +1000,8 @@ struct SetupArgs {
     openai_base_url: Option<String>,
     openai_model: Option<String>,
     router: Option<PathBuf>,
+    web_search_provider: Option<String>,
+    web_search_key: Option<String>,
     show: bool,
 }
 
@@ -982,6 +1013,8 @@ impl SetupArgs {
             || self.openai_base_url.is_some()
             || self.openai_model.is_some()
             || self.router.is_some()
+            || self.web_search_provider.is_some()
+            || self.web_search_key.is_some()
     }
 }
 
@@ -1052,6 +1085,15 @@ fn describe_settings() -> anyhow::Result<String> {
         )),
         None => out.push_str("router       defaults for the configured provider\n"),
     }
+    match effective.web_search_configured() {
+        Some(w) => out.push_str(&format!(
+            "web search   {}  key {} ({})\n",
+            w.provider_name(),
+            mask(w.api_key.as_deref().unwrap_or("")),
+            source(env.web_search.as_ref().is_some_and(|e| e.api_key.is_some()))
+        )),
+        None => out.push_str("web search   not configured (web_search fails until a key is set)\n"),
+    }
     if !effective.is_configured() {
         out.push_str("\nNothing usable yet: run `kleene setup`.\n");
     }
@@ -1101,6 +1143,16 @@ async fn run_setup(args: SetupArgs) -> anyhow::Result<()> {
         }
         if let Some(r) = args.router {
             s.router = Some(r);
+        }
+        if args.web_search_provider.is_some() || args.web_search_key.is_some() {
+            let mut w = s.web_search.take().unwrap_or_default();
+            if let Some(p) = args.web_search_provider {
+                w.provider = Some(p);
+            }
+            if let Some(k) = args.web_search_key {
+                w.api_key = Some(k);
+            }
+            s.web_search = Some(w);
         }
         let path = s.save()?;
         eprintln!("kleene: wrote {}", path.display());

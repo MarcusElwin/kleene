@@ -84,6 +84,11 @@ pub enum ClientRequest {
     },
     /// List live runs.
     ListRuns,
+    /// Re-read the config file and the environment: the model provider and
+    /// the web search backend for runs and sessions started from now on.
+    /// Live runs keep the provider they started with. Replies `Ok` with what
+    /// is configured, or `Error` when nothing usable is.
+    Reload,
     /// Detach without stopping anything.
     Detach,
 }

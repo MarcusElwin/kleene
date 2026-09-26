@@ -35,6 +35,9 @@ pub fn draw(f: &mut Frame<'_>, app: &App) {
     draw_prompt(f, chunks[2], app);
     draw_footer(f, chunks[3], app);
     draw_completions(f, chunks[1], chunks[2], app);
+    if let Some(wizard) = &app.setup {
+        crate::setup::draw(f, wizard);
+    }
 }
 
 /// The tail of an id: UUID v7 starts with a timestamp, so the head is the
@@ -439,7 +442,7 @@ fn welcome(t: &Theme, width: usize, out: &mut Vec<Line<'static>>) {
     ]));
     out.push(Line::from(""));
     out.push(Line::from(Span::styled(
-        "Runs started from a shell against this daemon appear here too. Keys are stored by `kleene setup`.",
+        "Runs started from a shell against this daemon appear here too. /setup adds or changes API keys.",
         t.dim(),
     )));
 }

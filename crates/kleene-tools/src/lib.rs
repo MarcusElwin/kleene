@@ -29,6 +29,10 @@
 //! | `web_fetch` | `(url TEXT)` | `url, status, text, tokens` | VOLATILE |
 //! | `web_search` | `(q TEXT [, n BIGINT])` | `rank, title, url, snippet` | VOLATILE |
 //!
+//! `web_search` calls the service named by [`ToolContext::web_search`]
+//! (Brave Search or Tavily, configured by `kleene setup`); without one every
+//! search fails with `no web search backend configured`.
+//!
 //! Every path argument is resolved under the session workspace by
 //! [`paths`]; nothing outside it is readable, and writes are further limited
 //! to the [`ToolContext::writable`] allow-list. `shell` runs as a plain
@@ -76,6 +80,43 @@ pub enum ToolError {
 /// changed since. Keys are canonical absolute paths.
 pub type ReadRegistry = Arc<Mutex<HashMap<PathBuf, SystemTime>>>;
 
+/// The HTTP backend behind `web_search`: which service and its key.
+///
+/// `provider` is one of [`WebSearchBackend::PROVIDERS`]. The key never
+/// appears in `Debug` output.
+#[derive(Clone, PartialEq, Eq)]
+pub struct WebSearchBackend {
+    /// `brave` or `tavily`.
+    pub provider: String,
+    /// The service's API key.
+    pub api_key: String,
+}
+
+impl WebSearchBackend {
+    /// The services `web_search` can call, in the order the wizard lists them.
+    pub const PROVIDERS: [&'static str; 2] = ["brave", "tavily"];
+
+    /// A backend, or `None` when the provider name is not one of
+    /// [`Self::PROVIDERS`] or the key is blank.
+    pub fn new(provider: &str, api_key: &str) -> Option<Self> {
+        let provider = provider.trim().to_ascii_lowercase();
+        let api_key = api_key.trim();
+        (Self::PROVIDERS.contains(&provider.as_str()) && !api_key.is_empty()).then(|| Self {
+            provider,
+            api_key: api_key.to_string(),
+        })
+    }
+}
+
+impl std::fmt::Debug for WebSearchBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WebSearchBackend")
+            .field("provider", &self.provider)
+            .field("api_key", &"<redacted>")
+            .finish()
+    }
+}
+
 /// What a tool runs against: the workspace root, permissions, limits.
 #[derive(Debug, Clone)]
 pub struct ToolContext {
@@ -89,6 +130,9 @@ pub struct ToolContext {
     pub env_allowlist: Vec<String>,
     /// Host names `web_fetch` may contact (exact, case-insensitive match).
     pub network_allowlist: Vec<String>,
+    /// The service `web_search` calls; `None` makes every search fail with
+    /// `no web search backend configured`.
+    pub web_search: Option<WebSearchBackend>,
     /// Modification time of each file at its last `read`/`lines`; shared by
     /// every tool of a session so `patch` can refuse stale edits.
     pub reads: ReadRegistry,
@@ -96,8 +140,8 @@ pub struct ToolContext {
 
 impl ToolContext {
     /// A context rooted at `workspace` with the defaults: the whole workspace
-    /// writable, a 30 s shell timeout, and empty environment and network
-    /// allow-lists.
+    /// writable, a 30 s shell timeout, empty environment and network
+    /// allow-lists, and no web search backend.
     pub fn new(workspace: PathBuf) -> Self {
         Self {
             writable: vec![workspace.clone()],
@@ -105,8 +149,15 @@ impl ToolContext {
             shell_timeout_ms: 30_000,
             env_allowlist: Vec::new(),
             network_allowlist: Vec::new(),
+            web_search: None,
             reads: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// The same context with `web_search` set.
+    pub fn with_web_search(mut self, backend: Option<WebSearchBackend>) -> Self {
+        self.web_search = backend;
+        self
     }
 
     /// Record that `path` (canonical, absolute) was read while it had `mtime`.

@@ -7,8 +7,9 @@
 //! command's output, is appended to the stream above. State is a
 //! [`model::Model`] folded from the daemon's messages plus the list of
 //! [`Entry`] blocks, so the UI is a pure function of received events and
-//! renders into a test buffer. [`setup`] is the first-run onboarding wizard
-//! and [`theme`] the Catppuccin palettes every view draws with.
+//! renders into a test buffer. [`setup`] is the onboarding wizard, run on
+//! the first start and by `/setup`, and [`theme`] the Catppuccin palettes
+//! every view draws with.
 
 #![forbid(unsafe_code)]
 
@@ -24,9 +25,11 @@ use futures::StreamExt;
 use kleene_core::{RunId, SessionId};
 use kleene_daemon::client::{Client, ClientReader, ClientWriter};
 use kleene_daemon::{ClientRequest, ServerMessage, StatementOutput};
+use kleene_llm::ProviderSettings;
 use kleene_trace::TraceEvent;
 use model::Model;
-use std::path::Path;
+use setup::{SetupAction, SetupApp};
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 pub use theme::{Flavor, Theme};
 
@@ -100,6 +103,11 @@ pub const COMMANDS: &[Command] = &[
         help: "next Catppuccin flavour, or mocha | macchiato | frappé | latte",
     },
     Command {
+        name: "/setup",
+        args: "",
+        help: "add or change API keys: model providers and web search",
+    },
+    Command {
         name: "/clear",
         args: "",
         help: "clear the stream",
@@ -170,6 +178,10 @@ pub struct App {
     pub repl_session: SessionId,
     /// The stream's width in columns, for rules; set by the event loop.
     pub width: usize,
+    /// The setup wizard while `/setup` has it open; it takes every key.
+    pub setup: Option<SetupApp>,
+    /// Where `/setup` reads and writes the config file.
+    pub config_path: PathBuf,
 }
 
 impl Default for App {
@@ -193,6 +205,8 @@ impl Default for App {
             workspace: String::new(),
             repl_session: SessionId::new(),
             width: 100,
+            setup: None,
+            config_path: ProviderSettings::path(),
         }
     }
 }
@@ -416,6 +430,22 @@ impl App {
                 self.entries = vec![Entry::Welcome];
                 Action::None
             }
+            "setup" => {
+                self.entries.push(Entry::Input(typed.to_string()));
+                let existing = match ProviderSettings::load_from(&self.config_path) {
+                    Ok(s) => s.unwrap_or_default(),
+                    Err(e) => {
+                        self.entries.push(Entry::Notice(format!(
+                            "cannot read the config file: {e}; fix or remove it and try again"
+                        )));
+                        return Action::None;
+                    }
+                };
+                let mut wizard = SetupApp::new(existing, self.config_path.clone());
+                wizard.theme = self.theme;
+                self.setup = Some(wizard);
+                Action::None
+            }
             "quit" | "q" | "exit" | "detach" => Action::Detach,
             _ => {
                 self.entries.push(Entry::Notice(format!(
@@ -430,6 +460,9 @@ impl App {
     pub fn key(&mut self, key: KeyEvent) -> Action {
         if key.kind != KeyEventKind::Press {
             return Action::None;
+        }
+        if self.setup.is_some() {
+            return self.setup_key(key);
         }
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
@@ -526,6 +559,50 @@ impl App {
                 Action::None
             }
             _ => Action::None,
+        }
+    }
+}
+
+impl App {
+    /// A key while the wizard is open. Saving writes the config file and
+    /// asks the daemon to reload, so the next run uses the new keys.
+    fn setup_key(&mut self, key: KeyEvent) -> Action {
+        let Some(wizard) = self.setup.as_mut() else {
+            return Action::None;
+        };
+        match wizard.key(key) {
+            SetupAction::None => Action::None,
+            SetupAction::Cancel => {
+                self.theme = wizard.theme;
+                self.setup = None;
+                self.entries
+                    .push(Entry::Notice("setup cancelled; nothing written".into()));
+                Action::None
+            }
+            SetupAction::Save(settings) => {
+                self.theme = wizard.theme;
+                self.setup = None;
+                match settings.save_to(&self.config_path) {
+                    Ok(()) => {
+                        let mut what: Vec<String> =
+                            settings.configured().map(str::to_string).collect();
+                        if let Some(w) = settings.web_search_configured() {
+                            what.push(format!("web search {}", w.provider_name()));
+                        }
+                        self.entries.push(Entry::Notice(format!(
+                            "wrote {} ({}); asking the daemon to reload",
+                            self.config_path.display(),
+                            what.join(", ")
+                        )));
+                        Action::Send(ClientRequest::Reload)
+                    }
+                    Err(e) => {
+                        self.entries
+                            .push(Entry::Notice(format!("setup not saved: {e}")));
+                        Action::None
+                    }
+                }
+            }
         }
     }
 }
@@ -702,6 +779,50 @@ mod tests {
             app.key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
             Action::Detach
         );
+    }
+
+    #[test]
+    fn setup_opens_the_wizard_and_saving_reloads_the_daemon() {
+        let dir = std::env::temp_dir().join(format!("kleene-tui-setup-{}", std::process::id()));
+        let mut app = App {
+            config_path: dir.join("config.toml"),
+            ..App::default()
+        };
+        type_text(&mut app, "/setup");
+        assert_eq!(key(&mut app, KeyCode::Enter), Action::None);
+        assert!(app.setup.is_some(), "the wizard is open");
+        // Keys go to the wizard, not the prompt: Esc on its first page cancels.
+        assert_eq!(key(&mut app, KeyCode::Esc), Action::None);
+        assert!(app.setup.is_none());
+        assert!(matches!(app.entries.last(), Some(Entry::Notice(n)) if n.contains("cancelled")));
+
+        type_text(&mut app, "/setup");
+        key(&mut app, KeyCode::Enter);
+        key(&mut app, KeyCode::Char(' ')); // tick Anthropic
+        key(&mut app, KeyCode::Enter);
+        type_text(&mut app, "sk-ant-secret-1234");
+        key(&mut app, KeyCode::Enter);
+        key(&mut app, KeyCode::Enter);
+        assert!(app.input.is_empty(), "the prompt saw none of that");
+        assert_eq!(
+            key(&mut app, KeyCode::Enter),
+            Action::Send(ClientRequest::Reload)
+        );
+        assert!(app.setup.is_none());
+        let saved = ProviderSettings::load_from(&dir.join("config.toml"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            saved.anthropic.unwrap().api_key.as_deref(),
+            Some("sk-ant-secret-1234")
+        );
+        match app.entries.last() {
+            Some(Entry::Notice(n)) => {
+                assert!(n.contains("anthropic") && !n.contains("secret"), "{n}")
+            }
+            other => panic!("expected a notice, got {other:?}"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
