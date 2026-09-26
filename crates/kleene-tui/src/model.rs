@@ -60,7 +60,20 @@ pub struct StatementNode {
     pub rounds: Vec<(String, u32, u64, u64)>,
 }
 
-/// A session as the tree shows it.
+/// One completed turn of a session, as the daemon reported it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TurnRecord {
+    /// 1-based turn number.
+    pub n: u32,
+    /// The model's reply, verbatim.
+    pub reply: String,
+    /// The SQL extracted from it, if any.
+    pub sql: Option<String>,
+    /// What each statement rendered to.
+    pub results: Vec<kleene_daemon::StatementOutput>,
+}
+
+/// A session as the stream shows it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SessionNode {
     /// Id.
@@ -89,6 +102,8 @@ pub struct SessionNode {
     pub tokens: u64,
     /// Dollars.
     pub dollars: f64,
+    /// Completed turns, in order.
+    pub turns_done: Vec<TurnRecord>,
 }
 
 /// A run.
@@ -204,6 +219,22 @@ impl Model {
             ServerMessage::Submitted { results, .. } => {
                 self.notice = results.last().map(|r| r.text.clone());
             }
+            ServerMessage::TurnFinished {
+                session,
+                turn,
+                reply,
+                sql,
+                results,
+            } => {
+                if let Some(s) = self.sessions.get_mut(&session) {
+                    s.turns_done.push(TurnRecord {
+                        n: turn,
+                        reply,
+                        sql,
+                        results,
+                    });
+                }
+            }
             ServerMessage::Runs { runs } => {
                 self.notice = Some(format!("{} live run(s)", runs.len()));
             }
@@ -251,6 +282,7 @@ impl Model {
                         calls: 0,
                         tokens: 0,
                         dollars: 0.0,
+                        turns_done: vec![],
                     },
                 );
                 match parent {

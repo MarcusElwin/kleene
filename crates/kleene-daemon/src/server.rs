@@ -169,6 +169,24 @@ impl Observer for LogObserver {
             text: text.to_string(),
         });
     }
+
+    fn turn(&self, meta: &SessionMeta, turn: &kleene_harness::Turn) {
+        self.0.push(ServerMessage::TurnFinished {
+            session: meta.id,
+            turn: turn.n,
+            reply: turn.reply.clone(),
+            sql: turn.sql.clone(),
+            results: turn
+                .results
+                .iter()
+                .map(|r| StatementOutput {
+                    text: r.text.clone(),
+                    is_error: r.is_error,
+                    is_final: r.is_final,
+                })
+                .collect(),
+        });
+    }
 }
 
 impl Daemon {

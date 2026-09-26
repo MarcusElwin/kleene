@@ -1,16 +1,19 @@
 //! Rendering: a pure function of the [`App`] state.
 //!
-//! Layout: a one-line header (brand, run, status, spend), the view, and a
-//! footer of key chips. Panels are rounded and titled; the selected row is a
-//! highlighted band; states are colour-coded through the [`Theme`].
+//! One scrolling stream between a header and a prompt bar. The stream holds
+//! the welcome block, what the user typed, every run as it happens (turns,
+//! streamed replies, results, child sessions, the answer) and the output of
+//! slash commands. Everything is built as lines from the model, so it renders
+//! into a test buffer.
 
-use crate::model::{Model, TreeRow};
-use crate::theme::{Theme, BRAND, TAGLINE};
-use crate::{App, View};
+use crate::model::{Model, SessionNode};
+use crate::theme::{Theme, BRAND, TAGLINE, WORDMARK_WIDTH};
+use crate::{App, Entry, COMMANDS};
+use kleene_core::RunId;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Cell, Gauge, List, ListItem, Paragraph, Row, Sparkline, Table, Wrap};
+use ratatui::widgets::{Clear, Paragraph};
 use ratatui::Frame;
 
 /// Draw the whole screen.
@@ -22,62 +25,21 @@ pub fn draw(f: &mut Frame<'_>, app: &App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
-            Constraint::Min(5),
+            Constraint::Min(3),
             Constraint::Length(3),
             Constraint::Length(1),
         ])
         .split(area);
     draw_header(f, chunks[0], app);
-    match app.view {
-        View::Session => draw_session(f, chunks[1], app),
-        View::Plan => draw_plan(f, chunks[1], app),
-        View::Trace => draw_trace(f, chunks[1], app),
-        View::Tasks => draw_tasks(f, chunks[1], app),
-        View::Help => draw_help(f, chunks[1], app),
-    }
+    draw_stream(f, chunks[1], app);
     draw_prompt(f, chunks[2], app);
     draw_footer(f, chunks[3], app);
+    draw_completions(f, chunks[1], chunks[2], app);
 }
 
-/// The prompt bar: type a task and press Enter to start a run on the daemon;
-/// `/sql …` runs one statement in an interactive session.
-fn draw_prompt(f: &mut Frame<'_>, area: Rect, app: &App) {
-    let t = app.theme;
-    let (text, style) = if app.input.is_empty() && !app.composing {
-        (
-            "Press i to type a task and Enter to run it · /sql SELECT … runs a statement"
-                .to_string(),
-            t.dim(),
-        )
-    } else if app.input.is_empty() {
-        ("Describe the task…".to_string(), t.dim())
-    } else {
-        (app.input.clone(), t.text())
-    };
-    let caret = if app.composing { "▏" } else { "" };
-    let line = Line::from(vec![
-        Span::styled(
-            "❯ ",
-            Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(format!("{text}{caret}"), style),
-    ]);
-    let meta = if app.composing {
-        "⏎ run · esc leave · ctrl-u clear"
-    } else if app.follow {
-        "following"
-    } else {
-        "g follow"
-    };
-    f.render_widget(
-        Paragraph::new(line).block(t.panel_with_meta("Task", meta, app.composing)),
-        area,
-    );
-}
-
-/// The tail of an id: UUID v7 starts with a timestamp, so the first
-/// characters are the same for every id minted in the same run.
-fn short(id: impl ToString) -> String {
+/// The tail of an id: UUID v7 starts with a timestamp, so the head is the
+/// same for every id minted in the same run.
+pub fn short(id: impl ToString) -> String {
     let s = id.to_string();
     s[s.len().saturating_sub(6)..].to_string()
 }
@@ -92,13 +54,24 @@ fn human(n: u64) -> String {
     }
 }
 
+fn first_line(s: &str, max: usize) -> String {
+    let l = s.lines().next().unwrap_or_default().trim();
+    if l.chars().count() > max {
+        format!(
+            "{}…",
+            l.chars().take(max.saturating_sub(1)).collect::<String>()
+        )
+    } else {
+        l.to_string()
+    }
+}
+
 fn draw_header(f: &mut Frame<'_>, area: Rect, app: &App) {
     let t = app.theme;
     let m = &app.model;
-    let run = m
-        .run_order
-        .last()
-        .and_then(|r| m.runs.get(r))
+    let run = app
+        .followed()
+        .and_then(|r| m.runs.get(&r))
         .map(|r| format!("{} · {}", short(r.id), first_line(&r.task, 48)))
         .unwrap_or_else(|| "no run yet".into());
     let (dot, status, color) = if !app.connected {
@@ -128,7 +101,7 @@ fn draw_header(f: &mut Frame<'_>, area: Rect, app: &App) {
         ),
     ]);
     let right = Line::from(vec![
-        Span::styled("λ ", Style::default().fg(t.accent)),
+        Span::styled("λ ", Style::default().fg(t.call)),
         Span::styled(format!("{} calls", m.total_calls), t.text()),
         Span::styled("  ⟳ ", Style::default().fg(t.accent)),
         Span::styled(format!("{memo_pct:.0}% memo"), t.text()),
@@ -161,41 +134,17 @@ fn draw_header(f: &mut Frame<'_>, area: Rect, app: &App) {
 
 fn draw_footer(f: &mut Frame<'_>, area: Rect, app: &App) {
     let t = app.theme;
-    let chips: Vec<Span> = match app.view {
-        View::Trace if app.editing => [
-            t.chip("type", "SQL"),
-            t.chip("⏎", "run"),
-            t.chip("esc", "done"),
-        ]
-        .concat(),
-        View::Trace => [
-            t.chip("1-4", "views"),
-            t.chip("e", "edit"),
-            t.chip("r", "rerun"),
-            t.chip("t", "theme"),
-            t.chip("q", "detach"),
-        ]
-        .concat(),
-        View::Tasks => [
-            t.chip("1-4", "views"),
-            t.chip("r", "refresh"),
-            t.chip("t", "theme"),
-            t.chip("q", "detach"),
-        ]
-        .concat(),
-        _ if app.composing => [t.chip("⏎", "run"), t.chip("esc", "leave prompt")].concat(),
-        _ => [
-            t.chip("i", "task"),
-            t.chip("1-4", "views"),
-            t.chip("j/k", "move"),
-            t.chip("f", "fold"),
-            t.chip("x", "cancel"),
-            t.chip("t", "theme"),
-            t.chip("?", "help"),
-            t.chip("q", "detach"),
-        ]
-        .concat(),
-    };
+    let chips: Vec<Span> = [
+        t.chip("⏎", "run"),
+        t.chip("/", "commands"),
+        t.chip("↑↓", "history"),
+        t.chip("pgup/pgdn", "scroll"),
+        t.chip("^p", "plans"),
+        t.chip("^t", "theme"),
+        t.chip("^x", "cancel"),
+        t.chip("^c", "detach"),
+    ]
+    .concat();
     let notice = app
         .model
         .notice
@@ -224,720 +173,706 @@ fn draw_footer(f: &mut Frame<'_>, area: Rect, app: &App) {
     );
 }
 
-fn draw_session(f: &mut Frame<'_>, area: Rect, app: &App) {
-    let cols = if app.compact {
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
-            .split(area)
+/// The prompt bar: always focused; a task starts a run, `/…` is a command.
+fn draw_prompt(f: &mut Frame<'_>, area: Rect, app: &App) {
+    let t = app.theme;
+    let (text, style) = if app.input.is_empty() {
+        (
+            "Describe a task and press Enter · / for commands".to_string(),
+            Style::default().fg(t.faint),
+        )
+    } else if app.input.starts_with('/') {
+        (app.input.clone(), Style::default().fg(t.accent))
     } else {
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(30),
-                Constraint::Percentage(45),
-                Constraint::Percentage(25),
-            ])
-            .split(area)
+        (app.input.clone(), t.text())
     };
-    draw_tree(f, cols[0], app);
-    if app.model.runs.is_empty() {
-        draw_welcome(f, cols[1], app);
-    } else {
-        draw_transcript(f, cols[1], app);
-    }
-    if !app.compact {
-        draw_sidebar(f, cols[2], app);
-    }
-}
-
-/// Text and colour of one tree row.
-pub fn tree_label(m: &Model, row: &TreeRow) -> (String, Color) {
-    tree_label_themed(m, row, &Theme::default())
-}
-
-fn tree_label_themed(m: &Model, row: &TreeRow, t: &Theme) -> (String, Color) {
-    match row {
-        TreeRow::Session(id) => match m.sessions.get(id) {
-            Some(s) => {
-                let running = s.outcome.is_none();
-                let dot = if running { "◐" } else { "■" };
-                let tail = match &s.outcome {
-                    Some(o) => format!("{o} · {} calls · ${:.3}", s.calls, s.dollars),
-                    None => "running".into(),
-                };
-                let color = if running {
-                    t.ok
-                } else if s.outcome.as_deref() == Some("final") {
-                    t.accent
-                } else {
-                    t.err
-                };
-                (
-                    format!("{dot} {} {} d{} · {tail}", s.role, short(id), s.depth),
-                    color,
-                )
-            }
-            None => (format!("session {}", short(id)), t.muted),
-        },
-        TreeRow::Statement(id) => match m.statements.get(id) {
-            Some(s) => {
-                let dot = if s.finished { "▸" } else { "◐" };
-                let tail = if s.finished {
-                    match &s.error {
-                        Some(e) => format!("✗ {}", first_line(e, 40)),
-                        None => format!(
-                            "{} rows · {} calls · {:.1}s",
-                            s.rows,
-                            s.calls,
-                            s.elapsed.as_secs_f64()
-                        ),
-                    }
-                } else {
-                    "running".into()
-                };
-                (
-                    format!("{dot} {} · {tail}", first_line(&s.sql, 40)),
-                    t.state(!s.finished, s.error.is_some()),
-                )
-            }
-            None => (format!("stmt {}", short(id)), t.muted),
-        },
-        TreeRow::Call(id) => match m.calls.get(id) {
-            Some(c) => {
-                let tail = if !c.finished {
-                    "◐ running".to_string()
-                } else if let Some(e) = &c.error {
-                    format!("✗ {}", first_line(e, 30))
-                } else if c.memo_hit {
-                    "◇ memo".to_string()
-                } else {
-                    format!("{} tok · ${:.4}", c.tokens, c.dollars)
-                };
-                let color = if c.error.is_some() {
-                    t.err
-                } else if c.memo_hit {
-                    t.muted
-                } else {
-                    t.call
-                };
-                (format!("λ {} · {tail}", c.alias), color)
-            }
-            None => (format!("call {}", short(id)), t.muted),
-        },
-    }
-}
-
-fn draw_tree(f: &mut Frame<'_>, area: Rect, app: &App) {
-    let t = app.theme;
-    let rows = app.rows();
-    let items: Vec<ListItem> = rows
-        .iter()
-        .enumerate()
-        .map(|(i, (depth, row))| {
-            let (text, color) = tree_label_themed(&app.model, row, &t);
-            let fold = if app.folds.is_folded(row) { "▸ " } else { "" };
-            let guide = "│ ".repeat(*depth);
-            let mut style = Style::default().fg(color);
-            if i == app.selected {
-                style = style.bg(t.sel_bg).add_modifier(Modifier::BOLD);
-            }
-            ListItem::new(Line::from(vec![
-                Span::styled(guide, t.dim()),
-                Span::styled(format!("{fold}{text}"), style),
-            ]))
-        })
-        .collect();
-    let live = app
-        .model
-        .sessions
-        .values()
-        .filter(|s| s.outcome.is_none())
-        .count();
-    let list = List::new(items).block(t.panel_with_meta(
-        "Call tree",
-        format!("{} rows · {live} live", rows.len()),
-        app.view == View::Session,
-    ));
-    f.render_widget(list, area);
-}
-
-fn draw_welcome(f: &mut Frame<'_>, area: Rect, app: &App) {
-    let t = app.theme;
-    let block = t.panel("Welcome", false);
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-    let mut lines = vec![Line::from("")];
-    if inner.width >= crate::theme::WORDMARK_WIDTH + 2 && inner.height >= 18 {
-        lines.extend(t.wordmark());
-    } else {
-        lines.extend([
-            Line::from(Span::styled("╭──────────╮", Style::default().fg(t.accent))),
-            Line::from(vec![
-                Span::styled("│ ", Style::default().fg(t.accent)),
-                Span::styled(BRAND, t.accent_text()),
-                Span::styled(" │", Style::default().fg(t.accent)),
-            ]),
-            Line::from(Span::styled("╰──────────╯", Style::default().fg(t.accent))),
-            Line::from(Span::styled(TAGLINE, t.dim())),
-        ]);
-    }
-    lines.extend([
-        Line::from(""),
-        Line::from(Span::styled(
-            "No run yet. Type a task in the prompt below and press Enter,",
-            t.text(),
-        )),
-        Line::from(Span::styled("or start one from a shell:", t.text())),
-        Line::from(""),
-        Line::from(Span::styled(
-            "  kleene tui --run \"Which project consumed the most hours?\" --context notes.txt",
-            Style::default().fg(t.fg),
-        )),
-        Line::from(Span::styled(
-            "  kleene run @task.txt --budget-calls 60",
-            Style::default().fg(t.fg),
-        )),
-        Line::from(""),
-        Line::from(Span::styled(
-            "Runs started anywhere against this daemon appear here as they happen.",
-            t.dim(),
-        )),
-        Line::from(Span::styled(
-            "3 opens the trace explorer over the store; 4 the task board; ? the keymap.",
-            t.dim(),
-        )),
+    let line = Line::from(vec![
+        Span::styled(
+            "❯ ",
+            Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(format!("{text}▏"), style),
     ]);
+    let meta = if app.scroll > 0 {
+        format!("scrolled ↑{} · end returns", app.scroll)
+    } else if app.followed().is_some() {
+        "following".to_string()
+    } else {
+        String::new()
+    };
     f.render_widget(
-        Paragraph::new(Text::from(lines))
-            .alignment(Alignment::Center)
-            .wrap(Wrap { trim: false }),
-        inner,
-    );
-}
-
-/// The transcript text for the selected row.
-pub fn transcript_text(app: &App) -> String {
-    let m = &app.model;
-    match app.selected_row() {
-        None => {
-            "No sessions yet. Start one with `kleene tui --run \"task\"` or `kleene run`.".into()
-        }
-        Some(TreeRow::Session(id)) => {
-            let Some(s) = m.sessions.get(&id) else {
-                return String::new();
-            };
-            let mut out = format!(
-                "session {}  role {}  depth {}\ntask: {}\n\n",
-                s.id, s.role, s.depth, s.task
-            );
-            for sid in &s.statement_ids {
-                if let Some(st) = m.statements.get(sid) {
-                    out.push_str(&format!("{}\n", st.sql.trim()));
-                    if let Some(e) = &st.error {
-                        out.push_str(&format!("  ✗ {e}\n"));
-                    } else if st.finished {
-                        out.push_str(&format!(
-                            "  → {} rows · {} calls · {} tok · ${:.4} · {:.1}s\n",
-                            st.rows,
-                            st.calls,
-                            st.tokens,
-                            st.dollars,
-                            st.elapsed.as_secs_f64()
-                        ));
-                    }
-                    out.push('\n');
-                }
-            }
-            // The reply being written right now, streamed by the daemon.
-            let live = s
-                .statement_ids
-                .iter()
-                .rev()
-                .filter_map(|sid| m.statements.get(sid))
-                .find(|st| !st.finished && st.sql.starts_with("-- turn"))
-                .and_then(|st| {
-                    st.call_ids
-                        .iter()
-                        .filter_map(|c| m.calls.get(c))
-                        .find(|c| !c.finished)
-                });
-            if let Some(c) = live {
-                if c.streaming.is_empty() {
-                    out.push_str("◐ thinking…\n");
-                } else {
-                    out.push_str("◐ writing:\n");
-                    out.push_str(&c.streaming);
-                    out.push('\n');
-                }
-            }
-            if let Some(o) = &s.outcome {
-                out.push_str(&format!(
-                    "ended: {o} after {} turns · {} calls · {} tok · ${:.4}\n",
-                    s.turns, s.calls, s.tokens, s.dollars
-                ));
-            }
-            if let Some(run) = m.runs.get(&s.run) {
-                if s.parent.is_none() {
-                    if let Some(a) = &run.answer {
-                        out.push_str(&format!("\nANSWER\n{a}"));
-                    }
-                }
-            }
-            out
-        }
-        Some(TreeRow::Statement(id)) => {
-            let Some(st) = m.statements.get(&id) else {
-                return String::new();
-            };
-            let mut out = format!("```sql\n{}\n```\n", st.sql.trim());
-            if let Some(e) = &st.error {
-                out.push_str(&format!("✗ {e}\n"));
-            } else if st.finished {
-                out.push_str(&format!(
-                    "→ {} rows · {} calls · {} tok · ${:.4} · {:.1}s\n",
-                    st.rows,
-                    st.calls,
-                    st.tokens,
-                    st.dollars,
-                    st.elapsed.as_secs_f64()
-                ));
-            } else {
-                out.push_str("◐ running\n");
-            }
-            if !st.tool_calls.is_empty() {
-                out.push_str("\ntools:\n");
-                for t in &st.tool_calls {
-                    out.push_str(&format!("  {t}\n"));
-                }
-            }
-            if !st.rounds.is_empty() {
-                out.push_str("\nrecursion:\n");
-                for (cte, round, delta, total) in &st.rounds {
-                    out.push_str(&format!(
-                        "  μ {cte} round {round}: +{delta} rows, {total} total\n"
-                    ));
-                }
-            }
-            if !st.call_ids.is_empty() {
-                out.push_str(&format!("\n{} model call(s)\n", st.call_ids.len()));
-            }
-            out
-        }
-        Some(TreeRow::Call(id)) => {
-            let Some(c) = m.calls.get(&id) else {
-                return String::new();
-            };
-            let mut out = format!("call {}  alias {}\n", c.id, c.alias);
-            if c.finished {
-                out.push_str(&match &c.error {
-                    Some(e) => format!("✗ {e}\n"),
-                    None if c.memo_hit => "served from the memo\n".to_string(),
-                    None => format!("{} tokens · ${:.4}\n", c.tokens, c.dollars),
-                });
-            } else {
-                out.push_str("◐ running\n");
-            }
-            if !c.streaming.is_empty() {
-                out.push('\n');
-                out.push_str(&c.streaming);
-            }
-            out
-        }
-    }
-}
-
-/// Colour transcript lines by what they say: results, errors, fences, SQL.
-fn styled_transcript(text: &str, t: &Theme) -> Text<'static> {
-    let mut in_sql = false;
-    let lines = text
-        .lines()
-        .filter_map(|l| {
-            let trimmed = l.trim_start();
-            if trimmed.starts_with("```") {
-                in_sql = !in_sql;
-                return None;
-            }
-            let style = if trimmed.starts_with('→') {
-                Style::default().fg(t.ok)
-            } else if trimmed.starts_with('✗') {
-                Style::default().fg(t.err)
-            } else if trimmed.starts_with('◐') {
-                Style::default().fg(t.ok).add_modifier(Modifier::ITALIC)
-            } else if trimmed == "ANSWER" || trimmed.starts_with("ended:") {
-                t.accent_text()
-            } else if trimmed.starts_with("session ")
-                || trimmed.starts_with("task:")
-                || trimmed.starts_with("call ")
-                || trimmed.ends_with(':')
-            {
-                t.dim()
-            } else if in_sql {
-                Style::default().fg(t.sql)
-            } else if trimmed.starts_with("  ") && !in_sql && trimmed.contains('(') {
-                Style::default().fg(t.tool)
-            } else {
-                t.text()
-            };
-            Some(Line::from(Span::styled(l.to_string(), style)))
-        })
-        .collect::<Vec<_>>();
-    Text::from(lines)
-}
-
-fn draw_transcript(f: &mut Frame<'_>, area: Rect, app: &App) {
-    let t = app.theme;
-    let text = transcript_text(app);
-    let meta = match app.selected_row() {
-        Some(TreeRow::Session(_)) => "session",
-        Some(TreeRow::Statement(_)) => "statement",
-        Some(TreeRow::Call(_)) => "model call",
-        None => "",
-    };
-    let p = Paragraph::new(styled_transcript(&text, &t))
-        .block(t.panel_with_meta("Transcript", meta, false))
-        .wrap(Wrap { trim: false })
-        .scroll((app.scroll, 0));
-    f.render_widget(p, area);
-}
-
-/// The plan text for the selected row (its statement's `EXPLAIN`).
-pub fn plan_text(app: &App) -> String {
-    let m = &app.model;
-    let stmt = match app.selected_row() {
-        Some(TreeRow::Statement(s)) => Some(s),
-        Some(TreeRow::Call(c)) => m.call_owner.get(&c).copied(),
-        Some(TreeRow::Session(s)) => m.sessions.get(&s).and_then(|n| {
-            // The last statement that has a plan: turn pseudo-statements
-            // never do.
-            n.statement_ids
-                .iter()
-                .rev()
-                .find(|id| m.statements.get(id).is_some_and(|st| st.explain.is_some()))
-                .copied()
-        }),
-        None => None,
-    };
-    match stmt.and_then(|s| m.statements.get(&s)) {
-        Some(st) => match &st.explain {
-            Some(e) => {
-                let mut out = e.clone();
-                if st.finished {
-                    out.push_str(&format!(
-                        "\nactual: {} rows, {} calls, {} tok, ${:.4}",
-                        st.rows, st.calls, st.tokens, st.dollars
-                    ));
-                }
-                out
-            }
-            None => "no plan recorded for this statement (EXPLAIN it to see one)".into(),
-        },
-        None => "select a statement".into(),
-    }
-}
-
-fn draw_sidebar(f: &mut Frame<'_>, area: Rect, app: &App) {
-    let t = app.theme;
-    let parts = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(5), Constraint::Length(9)])
-        .split(area);
-    let p = Paragraph::new(plan_text(app))
-        .style(t.text())
-        .block(t.panel("Plan", false))
-        .wrap(Wrap { trim: false });
-    f.render_widget(p, parts[0]);
-    let m = &app.model;
-    let total = m.total_calls + m.total_memo;
-    let ratio = if total > 0 {
-        m.total_memo as f64 / total as f64
-    } else {
-        0.0
-    };
-    let running = m.sessions.values().filter(|s| s.outcome.is_none()).count();
-    let depth = m.sessions.values().map(|s| s.depth).max().unwrap_or(0);
-    let block = t.panel("Metrics", false);
-    let inner = block.inner(parts[1]);
-    f.render_widget(block, parts[1]);
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Min(1),
-        ])
-        .split(inner);
-    let gauge = Gauge::default()
-        .gauge_style(Style::default().fg(t.accent).bg(t.sel_bg))
-        .ratio(ratio.clamp(0.0, 1.0))
-        .label(format!("memo {:.0}%", ratio * 100.0));
-    f.render_widget(gauge, rows[0]);
-    let stats = vec![
-        stat_line(
-            &t,
-            "sessions",
-            format!("{} ({running} live)", m.sessions.len()),
-        ),
-        stat_line(&t, "depth", depth.to_string()),
-        stat_line(
-            &t,
-            "calls",
-            format!("{} + {} memo", m.total_calls, m.total_memo),
-        ),
-        stat_line(&t, "tokens", human(m.total_tokens)),
-        stat_line(&t, "spend", format!("${:.4}", m.total_dollars)),
-    ];
-    f.render_widget(Paragraph::new(Text::from(stats)), rows[2]);
-}
-
-fn stat_line(t: &Theme, label: &str, value: String) -> Line<'static> {
-    Line::from(vec![
-        Span::styled(format!("{label:<9}"), t.dim()),
-        Span::styled(value, t.text()),
-    ])
-}
-
-fn draw_plan(f: &mut Frame<'_>, area: Rect, app: &App) {
-    let t = app.theme;
-    let p = Paragraph::new(plan_text(app))
-        .style(t.text())
-        .block(t.panel_with_meta("Plan", "selected statement", true))
-        .wrap(Wrap { trim: false });
-    f.render_widget(p, area);
-}
-
-fn draw_trace(f: &mut Frame<'_>, area: Rect, app: &App) {
-    let t = app.theme;
-    let parts = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(3)])
-        .split(area);
-    let input_style = if app.editing {
-        Style::default().fg(t.sel_fg).bg(t.sel_bg)
-    } else {
-        t.text()
-    };
-    let caret = if app.editing { "▏" } else { "" };
-    let input = Paragraph::new(Line::from(vec![
-        Span::styled("❯ ", Style::default().fg(t.accent)),
-        Span::styled(format!("{}{caret}", app.query), input_style),
-    ]))
-    .block(t.panel_with_meta(
-        "SQL over the store",
-        if app.editing {
-            "editing · ⏎ runs · esc done"
-        } else {
-            "e edit · r run"
-        },
-        app.editing,
-    ));
-    f.render_widget(input, parts[0]);
-    match &app.model.table {
-        Some((columns, rows)) => f.render_widget(
-            table_widget(&t, columns, rows, "Result", format!("{} rows", rows.len()), 40),
-            parts[1],
-        ),
-        None => f.render_widget(
-            Paragraph::new(Text::from(vec![
-                Line::from(Span::styled("Press r to run the query.", t.text())),
-                Line::from(""),
-                Line::from(Span::styled(
-                    "Tables: trace_runs, trace_sessions, trace_statements, trace_calls, trace_tool_calls, trace_rounds, memo, tasks, playbook, evals.",
-                    t.dim(),
-                )),
-            ]))
-            .wrap(Wrap { trim: false })
-            .block(t.panel("Result", false)),
-            parts[1],
-        ),
-    }
-}
-
-fn table_widget<'a>(
-    t: &Theme,
-    columns: &'a [String],
-    rows: &'a [Vec<String>],
-    title: &'a str,
-    meta: String,
-    max_cell: usize,
-) -> Table<'a> {
-    let widths: Vec<Constraint> = columns
-        .iter()
-        .enumerate()
-        .map(|(i, c)| {
-            let w = rows
-                .iter()
-                .map(|r| r.get(i).map(|v| v.chars().count()).unwrap_or(0))
-                .max()
-                .unwrap_or(0)
-                .max(c.chars().count())
-                .min(max_cell) as u16;
-            Constraint::Length(w + 1)
-        })
-        .collect();
-    let header = Row::new(columns.iter().map(|c| Cell::from(c.as_str())))
-        .style(t.accent_text().add_modifier(Modifier::UNDERLINED));
-    let body: Vec<Row> = rows
-        .iter()
-        .enumerate()
-        .map(|(i, r)| {
-            let style = if i % 2 == 1 {
-                Style::default().fg(t.fg).bg(t.sel_bg)
-            } else {
-                t.text()
-            };
-            Row::new(r.iter().map(|v| Cell::from(first_line(v, max_cell)))).style(style)
-        })
-        .collect();
-    Table::new(body, widths)
-        .header(header)
-        .block(t.panel_with_meta(title, meta, false))
-}
-
-fn draw_tasks(f: &mut Frame<'_>, area: Rect, app: &App) {
-    let t = app.theme;
-    let m = &app.model;
-    let parts = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(4),
-            Constraint::Min(4),
-            Constraint::Min(4),
-        ])
-        .split(area);
-    let mut recent: Vec<u64> = m.outcomes.iter().rev().copied().collect();
-    if recent.is_empty() {
-        recent.push(0);
-    }
-    let solved: u64 = m.outcomes.iter().sum();
-    let rate = if m.outcomes.is_empty() {
-        0.0
-    } else {
-        solved as f64 / m.outcomes.len() as f64 * 100.0
-    };
-    let spark = Sparkline::default()
-        .block(t.panel_with_meta(
-            "Recent outcomes",
-            format!("{solved} of {} solved · {rate:.0}%", m.outcomes.len()),
-            false,
-        ))
-        .data(&recent)
-        .max(1)
-        .style(Style::default().fg(t.ok));
-    f.render_widget(spark, parts[0]);
-    match &m.board {
-        Some((cols, rows)) => f.render_widget(
-            table_widget(
-                &t,
-                cols,
-                rows,
-                "Board",
-                "pending / running / solved / failed / review · dial per generator".into(),
-                20,
-            ),
-            parts[1],
-        ),
-        None => f.render_widget(
-            Paragraph::new(Text::from(vec![
-                Line::from(Span::styled("No tasks yet.", t.text())),
-                Line::from(Span::styled(
-                    "`kleene learn generate puzzle` or `kleene learn run` fills the board; r refreshes.",
-                    t.dim(),
-                )),
-            ]))
-            .wrap(Wrap { trim: false })
-            .block(t.panel("Board", false)),
-            parts[1],
-        ),
-    }
-    match &m.tasks {
-        Some((cols, rows)) => f.render_widget(
-            table_widget(
-                &t,
-                cols,
-                rows,
-                "Recent tasks",
-                format!("{}", rows.len()),
-                48,
-            ),
-            parts[2],
-        ),
-        None => f.render_widget(
-            Paragraph::new("").block(t.panel("Recent tasks", false)),
-            parts[2],
-        ),
-    }
-}
-
-fn draw_help(f: &mut Frame<'_>, area: Rect, app: &App) {
-    let t = app.theme;
-    let rows: [(&str, &str); 11] = [
-        ("Task", "i, n or : focus the prompt; Enter starts a run; /sql SELECT … runs a statement; g follows the newest run"),
-        ("Views", "1 session · 2 plan · 3 trace · 4 tasks · ? help"),
-        ("Move", "j/k or arrows select a row in the call tree"),
-        (
-            "Fold",
-            "f, Enter or Space folds the selected session or statement",
-        ),
-        ("Scroll", "J/K or PageUp/PageDown scroll the transcript"),
-        (
-            "Cancel",
-            "x or Esc cancels the selected statement; a root session row cancels its run",
-        ),
-        ("Trace", "e or / edits the SQL, Enter runs it, r reruns it"),
-        (
-            "Tasks",
-            "the continual loop's board (kleene learn); r refreshes, auto every 2s",
-        ),
-        ("Theme", "t switches between the dark and light palettes"),
-        (
-            "Leave",
-            "d, q or Ctrl-C detaches; the daemon and its runs keep going",
-        ),
-        (
-            "Setup",
-            "kleene setup (in a shell) adds or changes provider keys",
-        ),
-    ];
-    let mut lines: Vec<Line> = rows
-        .iter()
-        .map(|(k, v)| {
-            Line::from(vec![
-                Span::styled(format!("{k:<8}"), t.accent_text()),
-                Span::styled((*v).to_string(), t.text()),
-            ])
-        })
-        .collect();
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        "The tree shows sessions (■/◐ role id depth), their statements (▸/◐) and model calls (λ, ◇ when served from the memo). Spend, tokens and the memo hit rate accumulate in the header.",
-        t.dim(),
-    )));
-    f.render_widget(
-        Paragraph::new(Text::from(lines))
-            .wrap(Wrap { trim: false })
-            .block(t.panel("Keymap", true)),
+        Paragraph::new(line).block(t.panel_with_meta("Task", meta, true)),
         area,
     );
 }
 
-fn first_line(s: &str, max: usize) -> String {
-    let l = s.lines().next().unwrap_or_default().trim();
-    if l.chars().count() > max {
-        format!(
-            "{}…",
-            l.chars().take(max.saturating_sub(1)).collect::<String>()
-        )
-    } else {
-        l.to_string()
+/// The command popup above the prompt while the input starts with `/`.
+fn draw_completions(f: &mut Frame<'_>, stream: Rect, prompt: Rect, app: &App) {
+    let matches = app.completions();
+    if matches.is_empty() {
+        return;
     }
+    let t = app.theme;
+    let width = 56u16.min(stream.width.saturating_sub(4)).max(20);
+    let height = (matches.len() as u16 + 2).min(stream.height);
+    let area = Rect {
+        x: prompt.x + 2,
+        y: prompt.y.saturating_sub(height),
+        width,
+        height,
+    };
+    f.render_widget(Clear, area);
+    let lines: Vec<Line> = matches
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            let selected = i == app.completion % matches.len().max(1);
+            let style = if selected {
+                Style::default()
+                    .fg(t.sel_fg)
+                    .bg(t.sel_bg)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                t.text()
+            };
+            Line::from(vec![
+                Span::styled(format!("{:<9}", c.name), style),
+                Span::styled(format!("{:<12}", c.args), Style::default().fg(t.faint)),
+                Span::styled(c.help, t.dim()),
+            ])
+        })
+        .collect();
+    f.render_widget(
+        Paragraph::new(Text::from(lines)).block(t.panel("Commands · tab completes", false)),
+        area,
+    );
+}
+
+fn draw_stream(f: &mut Frame<'_>, area: Rect, app: &App) {
+    let t = app.theme;
+    let inner = Rect {
+        x: area.x + 1,
+        y: area.y,
+        width: area.width.saturating_sub(2),
+        height: area.height,
+    };
+    let lines = stream_lines(app, inner.width as usize);
+    // Wrapped height is what scrolling must count, so wrap here by width.
+    let wrapped = wrap_lines(lines, inner.width as usize);
+    let total = wrapped.len();
+    let visible = inner.height as usize;
+    let bottom = total.saturating_sub(app.scroll.min(total.saturating_sub(visible)));
+    let top = bottom.saturating_sub(visible);
+    let shown: Vec<Line> = wrapped[top..bottom].to_vec();
+    f.render_widget(
+        Paragraph::new(Text::from(shown)).style(Style::default().bg(t.bg)),
+        inner,
+    );
+}
+
+/// Soft-wrap styled lines at `width` columns, keeping each span's style.
+fn wrap_lines(lines: Vec<Line<'static>>, width: usize) -> Vec<Line<'static>> {
+    if width == 0 {
+        return lines;
+    }
+    let mut out = Vec::with_capacity(lines.len());
+    for line in lines {
+        if line.width() <= width {
+            out.push(line);
+            continue;
+        }
+        let mut current: Vec<Span<'static>> = Vec::new();
+        let mut used = 0usize;
+        for span in line.spans {
+            let style = span.style;
+            let mut chunk = String::new();
+            for ch in span.content.chars() {
+                if used == width {
+                    current.push(Span::styled(std::mem::take(&mut chunk), style));
+                    out.push(Line::from(std::mem::take(&mut current)));
+                    used = 0;
+                }
+                chunk.push(ch);
+                used += 1;
+            }
+            if !chunk.is_empty() {
+                current.push(Span::styled(chunk, style));
+            }
+        }
+        if !current.is_empty() {
+            out.push(Line::from(current));
+        }
+    }
+    out
+}
+
+/// Every line of the stream, in order.
+pub fn stream_lines(app: &App, width: usize) -> Vec<Line<'static>> {
+    let t = app.theme;
+    let mut out: Vec<Line<'static>> = Vec::new();
+    for entry in &app.entries {
+        match entry {
+            Entry::Welcome => welcome(&t, width, &mut out),
+            Entry::Input(text) => {
+                out.push(Line::from(""));
+                out.push(Line::from(vec![
+                    Span::styled(
+                        "❯ ",
+                        Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(text.clone(), t.text().add_modifier(Modifier::BOLD)),
+                ]));
+            }
+            Entry::Run(run) => run_lines(app, *run, &mut out),
+            Entry::Table {
+                title,
+                columns,
+                rows,
+            } => {
+                out.push(Line::from(""));
+                out.push(Line::from(vec![
+                    Span::styled(format!(" {title} "), chip(&t)),
+                    Span::styled(
+                        format!(
+                            "  {} row{}",
+                            rows.len(),
+                            if rows.len() == 1 { "" } else { "s" }
+                        ),
+                        t.dim(),
+                    ),
+                ]));
+                out.extend(table_lines(
+                    &t,
+                    columns,
+                    rows,
+                    40,
+                    width.saturating_sub(2),
+                    100,
+                ));
+            }
+            Entry::Notice(text) => {
+                out.push(Line::from(""));
+                out.push(Line::from(vec![
+                    Span::styled("⚠ ", Style::default().fg(t.warn)),
+                    Span::styled(text.clone(), Style::default().fg(t.warn)),
+                ]));
+            }
+            Entry::Help => help_lines(&t, &mut out),
+            Entry::Text(text) => {
+                out.push(Line::from(""));
+                for l in text.lines() {
+                    out.push(Line::from(Span::styled(l.to_string(), t.text())));
+                }
+            }
+            Entry::Results(results) => {
+                for r in results {
+                    out.extend(result_lines(&t, &r.text, r.is_error, "  "));
+                }
+            }
+        }
+    }
+    out
+}
+
+fn chip(t: &Theme) -> Style {
+    Style::default()
+        .fg(t.on_accent)
+        .bg(t.accent)
+        .add_modifier(Modifier::BOLD)
+}
+
+fn rule(t: &Theme, label: String, right: String, width: usize) -> Line<'static> {
+    let left = format!("── {label} ");
+    let fill = width
+        .saturating_sub(left.chars().count() + right.chars().count() + 2)
+        .max(4);
+    Line::from(vec![
+        Span::styled(left, Style::default().fg(t.faint)),
+        Span::styled("─".repeat(fill), Style::default().fg(t.border)),
+        Span::styled(format!(" {right} "), t.dim()),
+    ])
+}
+
+fn welcome(t: &Theme, width: usize, out: &mut Vec<Line<'static>>) {
+    out.push(Line::from(""));
+    if width >= WORDMARK_WIDTH as usize + 2 {
+        out.extend(t.wordmark());
+    } else {
+        out.push(Line::from(Span::styled(BRAND, t.accent_text())));
+        out.push(Line::from(Span::styled(TAGLINE, t.dim())));
+    }
+    out.push(Line::from(""));
+    out.push(Line::from(Span::styled(
+        "Describe a task below and press Enter. The model writes CallSQL turn by turn; you watch it think,",
+        t.text(),
+    )));
+    out.push(Line::from(Span::styled(
+        "see every statement's plan and cost, and get the answer as a relation.",
+        t.text(),
+    )));
+    out.push(Line::from(""));
+    out.push(Line::from(vec![
+        Span::styled("  /sql ", Style::default().fg(t.accent)),
+        Span::styled("SELECT COUNT(*) FROM ctx", Style::default().fg(t.sql)),
+        Span::styled("        run one statement yourself", t.dim()),
+    ]));
+    out.push(Line::from(vec![
+        Span::styled("  /trace ", Style::default().fg(t.accent)),
+        Span::styled("SELECT * FROM trace_sessions", Style::default().fg(t.sql)),
+        Span::styled("   query the trace, memo and task tables", t.dim()),
+    ]));
+    out.push(Line::from(vec![
+        Span::styled("  /help", Style::default().fg(t.accent)),
+        Span::styled(
+            "                                 every command and key",
+            t.dim(),
+        ),
+    ]));
+    out.push(Line::from(""));
+    out.push(Line::from(Span::styled(
+        "Runs started from a shell against this daemon appear here too. Keys are stored by `kleene setup`.",
+        t.dim(),
+    )));
+}
+
+fn help_lines(t: &Theme, out: &mut Vec<Line<'static>>) {
+    out.push(Line::from(""));
+    out.push(Line::from(Span::styled(" Commands ", chip(t))));
+    for c in COMMANDS {
+        out.push(Line::from(vec![
+            Span::styled(format!("  {:<9}", c.name), Style::default().fg(t.accent)),
+            Span::styled(format!("{:<14}", c.args), Style::default().fg(t.faint)),
+            Span::styled(c.help, t.text()),
+        ]));
+    }
+    out.push(Line::from(""));
+    out.push(Line::from(Span::styled(" Keys ", chip(t))));
+    for (k, v) in [
+        ("Enter", "run the task, or the command"),
+        ("Tab", "complete the command"),
+        ("↑ / ↓", "walk the input history"),
+        (
+            "PgUp / PgDn, Home / End",
+            "scroll the stream; End follows again",
+        ),
+        ("Ctrl-P", "show or hide EXPLAIN plans under statements"),
+        ("Ctrl-T", "next Catppuccin flavour"),
+        ("Ctrl-X", "cancel the run being followed"),
+        ("Ctrl-U", "clear the input"),
+        ("Ctrl-C", "detach; the daemon and its runs keep going"),
+    ] {
+        out.push(Line::from(vec![
+            Span::styled(format!("  {k:<24}"), Style::default().fg(t.accent)),
+            Span::styled(v, t.text()),
+        ]));
+    }
+}
+
+/// A run: its task, the root session's turns, children, and the outcome.
+fn run_lines(app: &App, run: RunId, out: &mut Vec<Line<'static>>) {
+    let t = app.theme;
+    let m = &app.model;
+    let Some(r) = m.runs.get(&run) else {
+        return;
+    };
+    out.push(Line::from(""));
+    out.push(Line::from(vec![
+        Span::styled(format!(" run {} ", short(run)), chip(&t)),
+        Span::styled(format!("  {}", first_line(&r.task, 120)), t.text()),
+    ]));
+    if let Some(root) = r.root.and_then(|s| m.sessions.get(&s)) {
+        session_lines(app, root, 0, out);
+    }
+    match (&r.outcome, &r.answer) {
+        (Some(o), Some(answer)) if o == "final" => {
+            out.push(Line::from(""));
+            out.push(Line::from(Span::styled(
+                " FINAL ",
+                Style::default()
+                    .fg(t.on_accent)
+                    .bg(t.ok)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            out.extend(result_lines(&t, answer, false, "  "));
+        }
+        (Some(o), _) if o != "final" => {
+            out.push(Line::from(""));
+            out.push(Line::from(vec![
+                Span::styled(
+                    " NO FINAL ",
+                    Style::default()
+                        .fg(t.on_accent)
+                        .bg(t.err)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(format!("  {o}"), Style::default().fg(t.err)),
+            ]));
+        }
+        _ => {}
+    }
+}
+
+fn session_lines(app: &App, s: &SessionNode, depth: usize, out: &mut Vec<Line<'static>>) {
+    let t = app.theme;
+    let m = &app.model;
+    let pad = "  ".repeat(depth + 1);
+    let guide = if depth > 0 { "│ " } else { "" };
+    let pad_text = format!("{pad}{guide}");
+    if depth > 0 {
+        out.push(Line::from(""));
+        out.push(Line::from(vec![
+            Span::styled(format!("{pad}↳ "), Style::default().fg(t.accent)),
+            Span::styled(
+                format!("{} {}", s.role, short(s.id)),
+                Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(format!("  d{}  ", s.depth), t.dim()),
+            Span::styled(first_line(&s.task, 90), t.dim()),
+        ]));
+    }
+    // Completed turns, with their statements' plans between the SQL and the
+    // results.
+    for turn in &s.turns_done {
+        let usage = turn_usage(m, s, turn.n);
+        out.push(Line::from(""));
+        out.push(rule(
+            &t,
+            format!("{pad_text}turn {}", turn.n),
+            usage,
+            app.width,
+        ));
+        reply_lines(&t, &turn.reply, &pad_text, out);
+        let plans = if app.show_plans {
+            turn_plans(m, s, turn.n)
+        } else {
+            vec![]
+        };
+        for (i, r) in turn.results.iter().enumerate() {
+            if let Some(Some(explain)) = plans.get(i) {
+                out.push(Line::from(Span::styled(
+                    format!("{pad_text}  ▾ plan"),
+                    Style::default().fg(t.faint),
+                )));
+                for l in explain.lines() {
+                    out.push(Line::from(Span::styled(
+                        format!("{pad_text}    {l}"),
+                        Style::default().fg(t.faint),
+                    )));
+                }
+            }
+            out.extend(result_lines(
+                &t,
+                &r.text,
+                r.is_error,
+                &format!("{pad_text}  "),
+            ));
+        }
+    }
+    // The turn in progress: the reply streaming in, or the statements running.
+    if s.outcome.is_none() {
+        let n = s.turns_done.len() as u32 + 1;
+        let live_turn = s
+            .statement_ids
+            .iter()
+            .rev()
+            .filter_map(|id| m.statements.get(id))
+            .find(|st| st.sql.starts_with("-- turn"));
+        let streaming = live_turn.and_then(|st| {
+            st.call_ids
+                .iter()
+                .filter_map(|c| m.calls.get(c))
+                .find(|c| !c.finished)
+        });
+        let executing: Vec<_> = s
+            .statement_ids
+            .iter()
+            .filter_map(|id| m.statements.get(id))
+            .filter(|st| !st.finished && !st.sql.starts_with("-- turn"))
+            .collect();
+        if streaming.is_some() || !executing.is_empty() || live_turn.is_some_and(|st| !st.finished)
+        {
+            out.push(Line::from(""));
+            let state = if let Some(c) = streaming {
+                if c.streaming.is_empty() {
+                    "◐ thinking".to_string()
+                } else {
+                    "◐ writing".to_string()
+                }
+            } else if !executing.is_empty() {
+                let calls: u64 = executing.iter().map(|st| st.calls).sum();
+                format!("◐ executing · λ {calls}")
+            } else {
+                "◐".to_string()
+            };
+            out.push(rule(&t, format!("{pad_text}turn {n}"), state, app.width));
+            if let Some(c) = streaming {
+                reply_lines(&t, &c.streaming, &pad_text, out);
+            }
+            for st in executing {
+                for l in st.sql.lines() {
+                    out.push(Line::from(Span::styled(
+                        format!("{pad_text}{l}"),
+                        Style::default().fg(t.sql),
+                    )));
+                }
+                out.push(Line::from(Span::styled(
+                    format!(
+                        "{pad_text}  ◐ running · {} call{} so far",
+                        st.calls,
+                        if st.calls == 1 { "" } else { "s" }
+                    ),
+                    Style::default().fg(t.ok).add_modifier(Modifier::ITALIC),
+                )));
+            }
+        }
+    }
+    for child in &s.children {
+        if let Some(c) = m.sessions.get(child) {
+            session_lines(app, c, depth + 1, out);
+        }
+    }
+    if let Some(o) = &s.outcome {
+        if depth > 0 {
+            out.push(Line::from(vec![
+                Span::styled(
+                    format!("{pad_text}■ "),
+                    Style::default().fg(if o == "final" { t.ok } else { t.err }),
+                ),
+                Span::styled(
+                    format!(
+                        "{o} · {} turns · {} calls · {} tok · ${:.4}",
+                        s.turns,
+                        s.calls,
+                        human(s.tokens),
+                        s.dollars
+                    ),
+                    t.dim(),
+                ),
+            ]));
+        } else {
+            out.push(Line::from(Span::styled(
+                format!(
+                    "{pad_text}■ {o} · {} turns · {} calls · {} tok · ${:.4}",
+                    s.turns,
+                    s.calls,
+                    human(s.tokens),
+                    s.dollars
+                ),
+                t.dim(),
+            )));
+        }
+    }
+}
+
+/// "k calls · $x" for a turn, from its pseudo-statement and its statements.
+fn turn_usage(m: &Model, s: &SessionNode, n: u32) -> String {
+    let marker = format!("-- turn {n}");
+    let mut calls = 0u64;
+    let mut dollars = 0.0f64;
+    let mut in_turn = false;
+    for id in &s.statement_ids {
+        let Some(st) = m.statements.get(id) else {
+            continue;
+        };
+        if st.sql.starts_with("-- turn") {
+            in_turn = st.sql == marker;
+        }
+        if in_turn {
+            calls += st.calls;
+            dollars += st.dollars;
+        }
+    }
+    format!(
+        "{calls} call{} · ${dollars:.4}",
+        if calls == 1 { "" } else { "s" }
+    )
+}
+
+/// The `EXPLAIN` of each statement of a turn, in order.
+fn turn_plans(m: &Model, s: &SessionNode, n: u32) -> Vec<Option<String>> {
+    let marker = format!("-- turn {n}");
+    let mut plans = vec![];
+    let mut in_turn = false;
+    for id in &s.statement_ids {
+        let Some(st) = m.statements.get(id) else {
+            continue;
+        };
+        if st.sql.starts_with("-- turn") {
+            in_turn = st.sql == marker;
+            continue;
+        }
+        if in_turn {
+            plans.push(st.explain.clone());
+        }
+    }
+    plans
+}
+
+/// A reply: prose dimmed, SQL inside fences in the SQL colour, fences hidden.
+fn reply_lines(t: &Theme, reply: &str, pad: &str, out: &mut Vec<Line<'static>>) {
+    let mut in_sql = false;
+    for l in reply.lines() {
+        let trimmed = l.trim_start();
+        if trimmed.starts_with("```") {
+            in_sql = !in_sql;
+            continue;
+        }
+        if trimmed.is_empty() {
+            continue;
+        }
+        let style = if in_sql {
+            Style::default().fg(t.sql)
+        } else {
+            t.dim()
+        };
+        out.push(Line::from(Span::styled(format!("{pad}{l}"), style)));
+    }
+}
+
+/// One rendered result: a table gets a bold header and dim rules, an error
+/// goes red with its hint in yellow, the row count is dim.
+pub fn result_lines(t: &Theme, text: &str, is_error: bool, pad: &str) -> Vec<Line<'static>> {
+    let mut out = Vec::new();
+    let mut header_seen = false;
+    for line in text.lines() {
+        let tr = line.trim_start();
+        let styled = if is_error {
+            if let Some(rest) = tr.strip_prefix("error:") {
+                Line::from(vec![
+                    Span::styled(
+                        format!("{pad}✗ error: "),
+                        Style::default().fg(t.err).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(rest.trim().to_string(), Style::default().fg(t.err)),
+                ])
+            } else if let Some(rest) = tr.strip_prefix("hint:") {
+                Line::from(vec![
+                    Span::styled(format!("{pad}  hint: "), Style::default().fg(t.warn)),
+                    Span::styled(rest.trim().to_string(), Style::default().fg(t.warn)),
+                ])
+            } else {
+                Line::from(Span::styled(
+                    format!("{pad}{line}"),
+                    Style::default().fg(t.err),
+                ))
+            }
+        } else if tr.contains("--+--")
+            || (tr.starts_with('-') && tr.chars().all(|c| c == '-' || c == '+' || c == ' '))
+        {
+            header_seen = true;
+            Line::from(Span::styled(
+                format!("{pad}{line}"),
+                Style::default().fg(t.border),
+            ))
+        } else if !header_seen && tr.contains('|') {
+            Line::from(Span::styled(
+                format!("{pad}{line}"),
+                Style::default().fg(t.fg).add_modifier(Modifier::BOLD),
+            ))
+        } else if tr.ends_with(" rows") || tr.ends_with(" row") || tr == "FINAL" {
+            Line::from(Span::styled(format!("{pad}{line}"), t.dim()))
+        } else {
+            Line::from(Span::styled(format!("{pad}{line}"), t.text()))
+        };
+        out.push(styled);
+    }
+    out
+}
+
+/// A box-drawn table sized to `width`, at most `max_rows` rows.
+pub fn table_lines(
+    t: &Theme,
+    columns: &[String],
+    rows: &[Vec<String>],
+    max_cell: usize,
+    width: usize,
+    max_rows: usize,
+) -> Vec<Line<'static>> {
+    let ncols = columns.len().max(1);
+    let shown = &rows[..rows.len().min(max_rows)];
+    let mut widths: Vec<usize> = (0..ncols)
+        .map(|i| {
+            shown
+                .iter()
+                .map(|r| r.get(i).map(|v| v.chars().count()).unwrap_or(0))
+                .max()
+                .unwrap_or(0)
+                .max(columns.get(i).map(|c| c.chars().count()).unwrap_or(0))
+                .min(max_cell)
+                .max(1)
+        })
+        .collect();
+    let overhead = 3 * ncols + 1;
+    while widths.iter().sum::<usize>() + overhead > width.max(overhead + ncols) {
+        let Some((i, _)) = widths.iter().enumerate().max_by_key(|(_, w)| **w) else {
+            break;
+        };
+        if widths[i] <= 4 {
+            break;
+        }
+        widths[i] -= 1;
+    }
+    let cell = |v: &str, w: usize| -> String {
+        let n = v.chars().count();
+        if n > w {
+            format!(
+                "{}…",
+                v.chars().take(w.saturating_sub(1)).collect::<String>()
+            )
+        } else {
+            format!("{v}{}", " ".repeat(w - n))
+        }
+    };
+    let border = Style::default().fg(t.border);
+    let rule = |l: &str, m: &str, r: &str| -> Line<'static> {
+        let segs: Vec<String> = widths.iter().map(|w| "─".repeat(w + 2)).collect();
+        Line::from(Span::styled(format!("{l}{}{r}", segs.join(m)), border))
+    };
+    let mut out = vec![rule("╭", "┬", "╮")];
+    let mut header: Vec<Span<'static>> = vec![Span::styled("│", border)];
+    for (i, w) in widths.iter().enumerate() {
+        header.push(Span::styled(
+            format!(
+                " {} ",
+                cell(columns.get(i).map(|s| s.as_str()).unwrap_or(""), *w)
+            ),
+            Style::default().fg(t.fg).add_modifier(Modifier::BOLD),
+        ));
+        header.push(Span::styled("│", border));
+    }
+    out.push(Line::from(header));
+    out.push(rule("├", "┼", "┤"));
+    for (ri, r) in shown.iter().enumerate() {
+        let mut spans: Vec<Span<'static>> = vec![Span::styled("│", border)];
+        for (i, w) in widths.iter().enumerate() {
+            let v = r.get(i).map(|s| s.as_str()).unwrap_or("");
+            let style = if v == "NULL" {
+                Style::default().fg(t.faint)
+            } else if ri % 2 == 1 {
+                Style::default().fg(t.fg).bg(t.sel_bg)
+            } else {
+                t.text()
+            };
+            spans.push(Span::styled(format!(" {} ", cell(v, *w)), style));
+            spans.push(Span::styled("│", border));
+        }
+        out.push(Line::from(spans));
+    }
+    out.push(rule("╰", "┴", "╯"));
+    if rows.len() > shown.len() {
+        out.push(Line::from(Span::styled(
+            format!("… {} more rows", rows.len() - shown.len()),
+            t.dim(),
+        )));
+    }
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use kleene_core::{RunId, SessionId, StatementId};
-    use kleene_daemon::{Cursor, ServerMessage};
+    use kleene_daemon::{Cursor, ServerMessage, StatementOutput};
     use kleene_trace::{TraceEvent, Traced};
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
@@ -994,135 +929,18 @@ mod tests {
                 estimate: serde_json::json!({}),
             },
         ));
+        app.apply(ServerMessage::TurnFinished {
+            session: root,
+            turn: 1,
+            reply: "Counting.\n```sql\nSELECT COUNT(*) FROM ctx\n```".into(),
+            sql: Some("SELECT COUNT(*) FROM ctx".into()),
+            results: vec![StatementOutput {
+                text: "count\n-----\n60\n1 row".into(),
+                is_error: false,
+                is_final: false,
+            }],
+        });
         app
-    }
-
-    #[test]
-    fn session_view_renders_tree_transcript_and_plan() {
-        let app = app_with_run();
-        let backend = TestBackend::new(140, 30);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|f| draw(f, &app)).unwrap();
-        let text = buffer_text(terminal.backend());
-        assert!(text.contains("Call tree"), "{text}");
-        assert!(text.contains("root"), "{text}");
-        assert!(text.contains("Find the bug"), "{text}");
-        assert!(text.contains("Plan"), "{text}");
-        assert!(text.contains("running"), "{text}");
-        assert!(text.contains("kleene"), "brand in the header: {text}");
-    }
-
-    #[test]
-    fn empty_state_shows_the_welcome_card() {
-        let app = App::default();
-        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
-        terminal.draw(|f| draw(f, &app)).unwrap();
-        let text = buffer_text(terminal.backend());
-        assert!(text.contains("Welcome"), "{text}");
-        assert!(text.contains("kleene tui --run"), "{text}");
-    }
-
-    #[test]
-    fn keys_move_fold_cancel_and_theme() {
-        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-        let mut app = app_with_run();
-        assert_eq!(app.rows().len(), 2);
-        let down = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
-        assert_eq!(app.key(down), crate::Action::None);
-        assert!(matches!(app.selected_row(), Some(TreeRow::Statement(_))));
-        let cancel = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
-        assert!(matches!(
-            app.key(cancel),
-            crate::Action::Send(kleene_daemon::ClientRequest::Cancel { .. })
-        ));
-        let up = KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE);
-        app.key(up);
-        let fold = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE);
-        app.key(fold);
-        assert_eq!(app.rows().len(), 1, "folded session hides its statement");
-        let theme = KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE);
-        assert_eq!(app.key(theme), crate::Action::None);
-        assert_eq!(app.theme.name, "macchiato");
-        let quit = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE);
-        assert_eq!(app.key(quit), crate::Action::Detach);
-        app.view = View::Plan;
-        assert!(plan_text(&app).contains("scan ctx"));
-        app.view = View::Trace;
-        app.key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE));
-        assert!(app.editing);
-        app.query.clear();
-        app.key(KeyEvent::new(KeyCode::Char('S'), KeyModifiers::NONE));
-        let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
-        assert!(matches!(
-            app.key(enter),
-            crate::Action::Send(kleene_daemon::ClientRequest::Query { sql, .. }) if sql == "S"
-        ));
-    }
-
-    #[test]
-    fn prompt_bar_starts_runs_and_submits_sql() {
-        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-        let mut app = App {
-            workspace: "/ws".into(),
-            ..App::default()
-        };
-        let key = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
-        assert_eq!(app.key(key('i')), crate::Action::None);
-        assert!(app.composing);
-        for c in "Sum 1..4".chars() {
-            app.key(key(c));
-        }
-        match app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)) {
-            crate::Action::Send(kleene_daemon::ClientRequest::StartRun {
-                task, workspace, ..
-            }) => {
-                assert_eq!(task, "Sum 1..4");
-                assert_eq!(workspace, "/ws");
-            }
-            other => panic!("expected StartRun, got {other:?}"),
-        }
-        assert!(!app.composing && app.input.is_empty());
-        app.key(key(':'));
-        for c in "/sql SELECT 1".chars() {
-            app.key(key(c));
-        }
-        match app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)) {
-            crate::Action::Send(kleene_daemon::ClientRequest::Submit { sql, session }) => {
-                assert_eq!(sql, "SELECT 1");
-                assert_eq!(session, app.repl_session);
-            }
-            other => panic!("expected Submit, got {other:?}"),
-        }
-        // Typing 'q' while composing is text, not detach.
-        app.key(key('n'));
-        assert_eq!(app.key(key('q')), crate::Action::None);
-        assert_eq!(app.input, "q");
-        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
-        terminal.draw(|f| draw(f, &app)).unwrap();
-        let text = buffer_text(terminal.backend());
-        assert!(text.contains("Task"), "{text}");
-    }
-
-    #[test]
-    fn every_view_renders_in_both_layouts_and_themes() {
-        let mut app = app_with_run();
-        for (compact, size) in [(true, (80, 24)), (false, (140, 40))] {
-            app.compact = compact;
-            let mut terminal = Terminal::new(TestBackend::new(size.0, size.1)).unwrap();
-            for theme in [Theme::dark(), Theme::light()] {
-                app.theme = theme;
-                for view in [
-                    View::Session,
-                    View::Plan,
-                    View::Trace,
-                    View::Tasks,
-                    View::Help,
-                ] {
-                    app.view = view;
-                    terminal.draw(|f| draw(f, &app)).unwrap();
-                }
-            }
-        }
     }
 
     fn buffer_text(backend: &TestBackend) -> String {
@@ -1135,5 +953,74 @@ mod tests {
             out.push('\n');
         }
         out
+    }
+
+    #[test]
+    fn stream_shows_task_turn_sql_and_result() {
+        let app = app_with_run();
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+        let text = buffer_text(terminal.backend());
+        assert!(text.contains("Find the bug"), "{text}");
+        assert!(text.contains("turn 1"), "{text}");
+        assert!(text.contains("SELECT COUNT(*) FROM ctx"), "{text}");
+        assert!(text.contains("count"), "{text}");
+        assert!(!text.contains("```"), "fences are hidden: {text}");
+        assert!(text.contains("kleene"), "brand in the header: {text}");
+    }
+
+    #[test]
+    fn welcome_block_and_help_render() {
+        let mut app = App::default();
+        let mut terminal = Terminal::new(TestBackend::new(120, 34)).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+        let text = buffer_text(terminal.backend());
+        assert!(text.contains("/help"), "{text}");
+        app.entries.push(Entry::Help);
+        terminal.draw(|f| draw(f, &app)).unwrap();
+        let text = buffer_text(terminal.backend());
+        assert!(text.contains("Commands"), "{text}");
+        assert!(text.contains("/trace"), "{text}");
+    }
+
+    #[test]
+    fn plans_toggle_and_tables_fit() {
+        let mut app = app_with_run();
+        let lines = stream_lines(&app, 100);
+        assert!(!lines.iter().any(|l| l.to_string().contains("scan ctx")));
+        app.show_plans = true;
+        let lines = stream_lines(&app, 100);
+        assert!(lines.iter().any(|l| l.to_string().contains("scan ctx")));
+        let t = Theme::default();
+        let cols = vec!["name".to_string(), "n".to_string()];
+        let rows = vec![
+            vec!["a".to_string(), "1".to_string()],
+            vec![
+                "a much longer value than fits".to_string(),
+                "NULL".to_string(),
+            ],
+        ];
+        let table = table_lines(&t, &cols, &rows, 40, 24, 10);
+        assert!(
+            table.iter().all(|l| l.width() <= 24),
+            "{:?}",
+            table.iter().map(|l| l.width()).collect::<Vec<_>>()
+        );
+        assert_eq!(table.len(), 5);
+    }
+
+    #[test]
+    fn wrapping_keeps_every_character() {
+        let line = Line::from(vec![
+            Span::raw("abcdefghij"),
+            Span::styled(
+                "klmnopqrst",
+                Style::default().fg(ratatui::style::Color::Red),
+            ),
+        ]);
+        let wrapped = wrap_lines(vec![line], 7);
+        assert_eq!(wrapped.len(), 3);
+        let joined: String = wrapped.iter().map(|l| l.to_string()).collect();
+        assert_eq!(joined, "abcdefghijklmnopqrst");
     }
 }

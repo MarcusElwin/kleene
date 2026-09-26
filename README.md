@@ -59,9 +59,10 @@ export ANTHROPIC_API_KEY=sk-ant-...        # or just the environment: Anthropic,
 export OPENAI_API_KEY=sk-...               # or any OpenAI-compatible endpoint (OPENAI_BASE_URL, OPENAI_MODEL)
 ```
 
-Then just run it. `kleene` alone opens the terminal UI: type a task, press
-Enter, watch the model's reply stream in and its SQL run. Or drive it from
-the shell:
+Then just run it. `kleene` alone opens the terminal UI, one scrolling stream
+with a prompt: type a task, press Enter, watch the model's reply stream in,
+its SQL run and the answer arrive; `/sql`, `/trace` and `/board` query the
+engine from the same prompt. Or drive it from the shell:
 
 ```bash
 kleene                                              # the UI, prompt bar focused
@@ -102,14 +103,14 @@ Everything lands in `.kleene/run.duckdb` under the current directory.
 
 | Command | Does |
 |---|---|
-| `kleene` | the terminal UI with the prompt bar focused; type a task to run it |
+| `kleene` | the terminal UI: one stream, a prompt, slash commands; type a task to run it |
 | `kleene setup` | pick providers and store their keys |
 | `kleene run <task>` | drive a model through the SQL turn loop to `FINAL`, streamed to the terminal |
 | `kleene resume <run-id>` | continue a run that hit its turn cap |
 | `kleene repl [-c SQL]` | CallSQL against the store, interactive or scripted |
 | `kleene explain <sql>` | the call plan and its cost, without executing |
 | `kleene trace <sql>` | DuckDB SQL over the trace, memo and session tables |
-| `kleene tui` | the terminal UI over the engine daemon: call tree, transcript, plan, trace explorer, task board; Catppuccin flavours |
+| `kleene tui` | the same UI over the engine daemon, optionally starting a run on connect |
 | `kleene attach` | the same, headless: every event as a JSON line |
 | `kleene daemon` | the engine as a server on a Unix socket |
 | `kleene learn …` | the continual loop: tasks, oracles, ratings, curriculum, playbook |

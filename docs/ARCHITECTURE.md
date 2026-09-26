@@ -54,7 +54,7 @@ binary. `kleene-core` changes deliberately and first (see `CLAUDE.md`).
 | `kleene-trace` | The event model | `TraceEvent`, `Tracer`, `TraceSink`, `FanoutSink` |
 | `kleene-harness` | Sessions, the REPL, prompts, roles, learning, benchmarks | `Harness`, `HarnessConfig`, `Session`, `Repl`, `LiveSink`, `StoreSink`, `AgentRole`, `learn::Learn` |
 | `kleene-daemon` | The engine as a server | `Daemon`, `Client`, `ClientRequest`, `ServerMessage`, `Cursor`, `EventLog` |
-| `kleene-tui` | The terminal client and the setup wizard | `App`, `Model`, `View`, `Theme`, `setup::SetupApp`, `headless()` |
+| `kleene-tui` | The terminal client (one stream, slash commands) and the setup wizard | `App`, `Entry`, `Model`, `Theme`, `setup::SetupApp`, `headless()` |
 | `kleene` | The CLI | `main.rs` only |
 | `kleene-difftest` | Property-based equivalence with DuckDB | `generator`, `run`, `compare` |
 
@@ -181,16 +181,19 @@ kleene daemon ──── .kleene/daemon.sock ────┬─ kleene tui    
    Harness + store + provider                     └─ any JSONL client
 ```
 
-`kleene` with no arguments is the unified experience: it opens the TUI with a
-prompt bar, and a task typed there becomes a `StartRun` on the daemon while
-the reply streams back as `CallDelta` messages.
+`kleene` with no arguments is the unified experience: the TUI is one
+scrolling stream with a prompt, and a task typed there becomes a `StartRun`
+on the daemon. The reply streams back as `CallDelta` messages and each
+finished turn as a `TurnFinished` carrying the reply, its SQL and every
+statement's rendered result, so the client shows the conversation without
+reading the store. `/sql` is a `Submit`, `/trace` and `/board` are `Query`.
 
-The protocol (version 2) is newline-delimited JSON over a Unix socket.
+The protocol (version 3) is newline-delimited JSON over a Unix socket.
 Requests: `Subscribe { after }`, `StartRun`, `Submit` (REPL statements for a
 client-owned session), `Query` (DuckDB SQL over the store, with a `tag`),
 `Cancel`, `CancelRun`, `ListRuns`, `Detach`. Replies: `Hello`, `Event` (a
-trace event with its cursor), `CallDelta`, `RunAccepted`, `RunFinished`,
-`Submitted`, `Table`, `Runs`, `Ok`, `Error`. A client that reconnects sends
+trace event with its cursor), `CallDelta`, `TurnFinished`, `RunAccepted`,
+`RunFinished`, `Submitted`, `Table`, `Runs`, `Ok`, `Error`. A client that reconnects sends
 its last cursor and gets replay from there; a stale generation replays
 everything. `kleene tui` starts a daemon in the background if none is
 listening.

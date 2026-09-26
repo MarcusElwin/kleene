@@ -4,10 +4,10 @@
 
 use crate::setup::{SetupApp, Step};
 use crate::theme::{Flavor, Theme};
-use crate::{ui, App, View};
+use crate::{ui, App, Entry};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use kleene_core::{BudgetUsage, CallId, RunId, SessionId, StatementId};
-use kleene_daemon::{Cursor, ServerMessage};
+use kleene_daemon::{Cursor, ServerMessage, StatementOutput};
 use kleene_llm::ProviderSettings;
 use kleene_trace::{TraceEvent, Traced};
 use ratatui::backend::TestBackend;
@@ -18,15 +18,6 @@ use std::time::Duration;
 fn css(c: Color, fallback: &str) -> String {
     match c {
         Color::Rgb(r, g, b) => format!("rgb({r},{g},{b})"),
-        Color::Reset => fallback.to_string(),
-        Color::Black => "#000".into(),
-        Color::White => "#fff".into(),
-        Color::Cyan => "#5fd7ff".into(),
-        Color::Green => "#5fd75f".into(),
-        Color::Red => "#ff5f5f".into(),
-        Color::Yellow => "#ffd75f".into(),
-        Color::Magenta => "#d75fff".into(),
-        Color::Gray | Color::DarkGray => "#888".into(),
         _ => fallback.to_string(),
     }
 }
@@ -42,10 +33,9 @@ fn to_html(backend: &TestBackend, theme: &Theme) -> String {
         let mut run = String::new();
         for x in 0..buf.area.width {
             let cell = &buf[(x, y)];
-            let mut style = String::new();
             let cfg = css(cell.fg, &fg);
             let cbg = css(cell.bg, &bg);
-            style.push_str(&format!("color:{cfg};background:{cbg};"));
+            let mut style = format!("color:{cfg};background:{cbg};");
             let m = cell.modifier;
             if m.contains(Modifier::BOLD) {
                 style.push_str("font-weight:bold;");
@@ -58,9 +48,6 @@ fn to_html(backend: &TestBackend, theme: &Theme) -> String {
             }
             if m.contains(Modifier::UNDERLINED) {
                 style.push_str("text-decoration:underline;");
-            }
-            if m.contains(Modifier::REVERSED) {
-                style = format!("color:{cbg};background:{cfg};");
             }
             let sym = cell
                 .symbol()
@@ -107,14 +94,26 @@ fn usage(calls: u64, tokens: u64, dollars: f64) -> BudgetUsage {
     }
 }
 
-/// A run in progress: two finished statements, a child session, and the
+fn out(text: &str) -> StatementOutput {
+    StatementOutput {
+        text: text.into(),
+        is_error: false,
+        is_final: false,
+    }
+}
+
+/// A run in progress: two turns done, a child session finished, and the
 /// root's third turn streaming.
-fn app_mid_run() -> App {
-    let mut app = App::default();
+fn app_mid_run(width: usize) -> App {
+    let mut app = App {
+        width,
+        ..App::default()
+    };
     let run = RunId::new();
     let root = SessionId::new();
     let child = SessionId::new();
     let task = "Which project consumed the most hours in total?";
+    app.entries.push(Entry::Input(task.into()));
     let mut seq = 0;
     let mut push = |app: &mut App, e: TraceEvent| {
         app.apply(ev(seq, e));
@@ -138,7 +137,7 @@ fn app_mid_run() -> App {
             task: task.into(),
         },
     );
-    // Turn 1: a peek at the context.
+    // Turn 1.
     let t1 = StatementId::new();
     push(
         &mut app,
@@ -191,7 +190,15 @@ fn app_mid_run() -> App {
             sql: "SELECT COUNT(*) AS rows, MIN(ordinal) AS lo, MAX(ordinal) AS hi FROM ctx".into(),
         },
     );
-    push(&mut app, TraceEvent::StatementPlanned { statement: s1, explain: "γ count, min, max  ~1 row · 0 calls\n  scan ctx  60 rows\n\nfragment: CQ · rules: —".into(), estimate: serde_json::json!({}) });
+    push(
+        &mut app,
+        TraceEvent::StatementPlanned {
+            statement: s1,
+            explain: "γ count, min, max  ~1 row · 0 calls\n  scan ctx  60 rows\nfragment: CQ"
+                .into(),
+            estimate: serde_json::json!({}),
+        },
+    );
     push(
         &mut app,
         TraceEvent::StatementFinished {
@@ -202,7 +209,14 @@ fn app_mid_run() -> App {
             elapsed: Duration::from_millis(3),
         },
     );
-    // Turn 2: a verify predicate over the notes, 12 calls, half memoised.
+    app.apply(ServerMessage::TurnFinished {
+        session: root,
+        turn: 1,
+        reply: "Let me look at the shape of the context first.\n\n```sql\nSELECT COUNT(*) AS rows, MIN(ordinal) AS lo, MAX(ordinal) AS hi FROM ctx;\n```".into(),
+        sql: Some("SELECT COUNT(*) AS rows, MIN(ordinal) AS lo, MAX(ordinal) AS hi FROM ctx".into()),
+        results: vec![out("rows | lo | hi\n-----+----+---\n60   | 0  | 59\n1 row")],
+    });
+    // Turn 2.
     let t2 = StatementId::new();
     push(
         &mut app,
@@ -247,8 +261,16 @@ fn app_mid_run() -> App {
         },
     );
     let s2 = StatementId::new();
-    push(&mut app, TraceEvent::StatementStarted { session: root, statement: s2, sql: "CREATE TABLE hours AS\nSELECT ordinal, llm_json('Extract project and hours from: ' || text, '{\"project\":\"string\",\"hours\":\"number\"}') AS h\nFROM ctx WHERE mentions_hours(text)".into() });
-    push(&mut app, TraceEvent::StatementPlanned { statement: s2, explain: "π ordinal, λ llm_json(worker)  ~30 rows · ~30 calls · ~$0.09\n  σ λ mentions_hours(proxy)  sel 0.5 (sampled, 12 seen)\n    scan ctx  60 rows\n\nfragment: CQ · rules: cheap-first, cascade\nalternatives:\n  ▶ chosen: proxy then oracle  ~66 calls · ~$0.11\n    as written: oracle on every row  ~120 calls · ~$0.32".into(), estimate: serde_json::json!({}) });
+    let sql2 = "CREATE TABLE hours AS\nSELECT ordinal, llm_json('Extract project and hours from: ' || text, '{\"project\":\"string\",\"hours\":\"number\"}') AS h\nFROM ctx WHERE mentions_hours(text)";
+    push(
+        &mut app,
+        TraceEvent::StatementStarted {
+            session: root,
+            statement: s2,
+            sql: sql2.into(),
+        },
+    );
+    push(&mut app, TraceEvent::StatementPlanned { statement: s2, explain: "π ordinal, λ llm_json(worker)  ~30 rows · ~30 calls · ~$0.09\n  σ λ mentions_hours(proxy)  sel 0.5 (sampled, 12 seen)\n    scan ctx  60 rows\nrules: cheap-first, cascade\nalternatives:\n  ▶ chosen: proxy then oracle  ~66 calls · ~$0.11\n    as written: oracle on every row  ~120 calls · ~$0.32".into(), estimate: serde_json::json!({}) });
     for i in 0..6 {
         let c = CallId::new();
         push(
@@ -289,7 +311,6 @@ fn app_mid_run() -> App {
             elapsed: Duration::from_millis(7800),
         },
     );
-    // A child session spawned for the ambiguous notes.
     push(
         &mut app,
         TraceEvent::SessionStarted {
@@ -320,15 +341,29 @@ fn app_mid_run() -> App {
             elapsed: Duration::from_millis(2),
         },
     );
+    app.apply(ServerMessage::TurnFinished {
+        session: child,
+        turn: 1,
+        reply: "```sql\nSELECT ordinal, text FROM ctx WHERE ordinal IN (14, 22, 41);\nFINAL FROM (SELECT 'Osprey' AS project);\n```".into(),
+        sql: Some("SELECT ordinal, text FROM ctx WHERE ordinal IN (14, 22, 41);\nFINAL FROM (SELECT 'Osprey' AS project)".into()),
+        results: vec![out("ordinal | text\n--------+------\n14      | Meeting notes 2026-03-15. Project Osprey: the migration…\n3 rows"), out("FINAL\nproject\n-------\nOsprey\n1 row")],
+    });
     push(
         &mut app,
         TraceEvent::SessionFinished {
             session: child,
             outcome: "final".into(),
-            turns: 2,
+            turns: 1,
             usage: usage(2, 3100, 0.004),
         },
     );
+    app.apply(ServerMessage::TurnFinished {
+        session: root,
+        turn: 2,
+        reply: "Only some notes mention hours. A cheap proxy filters those, then a worker extracts project and hours as JSON.\n\n```sql\nCREATE TABLE hours AS\nSELECT ordinal, llm_json('Extract project and hours from: ' || text, '{\"project\":\"string\",\"hours\":\"number\"}') AS h\nFROM ctx WHERE mentions_hours(text);\n```".into(),
+        sql: Some(sql2.into()),
+        results: vec![out("28 rows")],
+    });
     // Turn 3: streaming right now.
     let t3 = StatementId::new();
     push(
@@ -352,7 +387,7 @@ fn app_mid_run() -> App {
     );
     app.apply(ServerMessage::CallDelta {
         call: c3,
-        text: "The hours table has 28 rows across six projects. Summing per project and picking the top one:\n\n```sql\nFINAL FROM (\n  SELECT h.project, SUM(h.hours) AS total_hours\n  FROM hours\n  GROUP BY h.project\n  ORDER BY total_hours DESC\n  LIMIT 1\n);\n```".into(),
+        text: "The hours table has 28 rows across six projects. Summing per project and picking the top one:\n\n```sql\nFINAL FROM (\n  SELECT h.project, SUM(h.hours) AS total_hours\n  FROM hours\n  GROUP BY h.project\n  ORDER BY total_hours DESC\n  LIMIT 1\n);".into(),
     });
     app
 }
@@ -381,10 +416,9 @@ fn gallery() {
     };
     let dir = std::path::PathBuf::from(dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let (w, h) = (132, 38);
+    let (w, h) = (120u16, 40u16);
     let mut shots: Vec<(&str, String)> = Vec::new();
 
-    // Setup wizard: choose, credentials, review.
     let mut s = SetupApp::new(
         ProviderSettings::default(),
         "/Users/marcus/.config/kleene/config.toml".into(),
@@ -401,27 +435,31 @@ fn gallery() {
     assert_eq!(s.step, Step::Review);
     shots.push(("setup-review", render_setup(&s, w, h)));
 
-    // Empty daemon, prompt focused with a task half typed.
     let mut empty = App {
         workspace: "/Users/marcus/notes".into(),
-        composing: true,
         input: "Which project consumed the most hours in total?".into(),
+        width: w as usize - 2,
         ..App::default()
     };
     shots.push(("welcome", render(&empty, w, h)));
+    empty.input = "/tr".into();
+    shots.push(("completion", render(&empty, w, h)));
+    empty.input.clear();
     empty.theme = Theme::light();
     shots.push(("welcome-latte", render(&empty, w, h)));
 
-    // Mid-run: session view streaming, plan view, trace view, tasks, help.
-    let mut app = app_mid_run();
-    shots.push(("session", render(&app, w, h)));
-    app.view = View::Plan;
-    app.follow = false;
-    app.selected = 3;
-    shots.push(("plan", render(&app, w, h)));
-    app.view = View::Trace;
-    app.model.table = Some((
-        vec![
+    let mut app = app_mid_run(w as usize - 2);
+    shots.push(("run", render(&app, w, h)));
+    app.show_plans = true;
+    app.scroll = 14;
+    shots.push(("run-plans", render(&app, w, h)));
+    app.show_plans = false;
+    app.scroll = 0;
+    app.entries.push(Entry::Input(
+        "/trace SELECT depth, role, outcome, turns, calls, dollars FROM trace_sessions".into(),
+    ));
+    app.apply(ServerMessage::Table {
+        columns: vec![
             "depth".into(),
             "role".into(),
             "outcome".into(),
@@ -429,7 +467,7 @@ fn gallery() {
             "calls".into(),
             "dollars".into(),
         ],
-        vec![
+        rows: vec![
             vec![
                 "0".into(),
                 "root".into(),
@@ -442,81 +480,25 @@ fn gallery() {
                 "1".into(),
                 "worker".into(),
                 "final".into(),
-                "2".into(),
+                "1".into(),
                 "2".into(),
                 "0.0040".into(),
             ],
         ],
-    ));
-    shots.push(("trace", render(&app, w, h)));
-    app.view = View::Tasks;
-    app.model.outcomes = vec![1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 1];
-    app.model.board = Some((
-        vec![
-            "generator".into(),
-            "dial".into(),
-            "pending".into(),
-            "running".into(),
-            "solved".into(),
-            "failed".into(),
-            "review".into(),
-        ],
-        vec![
-            vec![
-                "corpus".into(),
-                "0.55".into(),
-                "3".into(),
-                "1".into(),
-                "14".into(),
-                "4".into(),
-                "0".into(),
-            ],
-            vec![
-                "graph".into(),
-                "0.40".into(),
-                "3".into(),
-                "0".into(),
-                "9".into(),
-                "6".into(),
-                "0".into(),
-            ],
-            vec![
-                "puzzle".into(),
-                "0.70".into(),
-                "2".into(),
-                "0".into(),
-                "21".into(),
-                "3".into(),
-                "0".into(),
-            ],
-            vec![
-                "user".into(),
-                "0.30".into(),
-                "1".into(),
-                "0".into(),
-                "2".into(),
-                "0".into(),
-                "1".into(),
-            ],
-        ],
-    ));
-    shots.push(("tasks", render(&app, w, h)));
-    app.view = View::Session;
-    app.follow = true;
-    app.apply(ServerMessage::CallDelta {
-        call: CallId::new(),
-        text: String::new(),
+        tag: None,
     });
+    shots.push(("trace", render(&app, w, h)));
+    app.entries.pop();
+    app.entries.pop();
     for flavor in [Flavor::Macchiato, Flavor::Frappe, Flavor::Latte] {
         app.theme = Theme::flavor(flavor);
         shots.push((flavor.name(), render(&app, w, h)));
     }
     app.theme = Theme::dark();
-    app.view = View::Help;
+    app.entries.push(Entry::Help);
     shots.push(("help", render(&app, w, h)));
 
     for (name, html) in &shots {
         std::fs::write(dir.join(format!("{name}.html")), html).unwrap();
     }
-    let _ = &mut empty;
 }
