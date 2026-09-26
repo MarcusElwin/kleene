@@ -287,10 +287,18 @@ async fn run_bench(cli: &Cli, action: &BenchAction) -> anyhow::Result<()> {
     let mut cfg = daemon_config(cli).await?;
     if let BenchAction::Run { record, replay, .. } = action {
         if let Some(dir) = replay {
-            cfg.provider = Some(Arc::new(kleene_llm::ReplayProvider::new(dir.clone())));
+            let replay = Arc::new(kleene_llm::ReplayProvider::new(dir.clone()));
+            cfg.provider = Some(replay.clone());
+            cfg.decisions = Some(replay);
         } else if let Some(dir) = record {
             if let Some(inner) = cfg.provider.take() {
                 cfg.provider = Some(Arc::new(kleene_llm::RecordingProvider::new(
+                    inner,
+                    dir.clone(),
+                )));
+            }
+            if let Some(inner) = cfg.decisions.take() {
+                cfg.decisions = Some(Arc::new(kleene_llm::RecordingDecisions::new(
                     inner,
                     dir.clone(),
                 )));
@@ -621,9 +629,23 @@ async fn daemon_config(cli: &Cli) -> anyhow::Result<kleene_harness::HarnessConfi
     Ok(kleene_harness::HarnessConfig {
         workspace,
         provider,
+        decisions: decisions_from_env(),
         web_search: web_search_from_env(),
         ..kleene_harness::HarnessConfig::default()
     })
+}
+
+/// The decision provider (TypeSafe's Jev) if a key is configured; a broken
+/// config is reported once and treated as absent, since decisions are
+/// optional.
+fn decisions_from_env() -> Option<std::sync::Arc<dyn kleene_llm::DecisionProvider>> {
+    match kleene_llm::decisions_from_env() {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("kleene: no decision provider ({e}); jev_* calls will fail");
+            None
+        }
+    }
 }
 
 /// Connect to the daemon, spawning one in the background if the socket is
@@ -706,6 +728,7 @@ async fn open_harness(
     let cfg = kleene_harness::HarnessConfig {
         workspace,
         provider,
+        decisions: decisions_from_env(),
         tracer,
         max_depth,
         max_turns,
@@ -740,6 +763,7 @@ async fn open_repl(cli: &Cli) -> anyhow::Result<Opened> {
         kleene_harness::ReplConfig {
             workspace,
             provider,
+            decisions: decisions_from_env(),
             tracer,
             web_search: web_search_from_env(),
         },
@@ -1077,6 +1101,24 @@ fn describe_settings() -> anyhow::Result<String> {
             ));
         }
         _ => out.push_str("openai       not configured\n"),
+    }
+    match &effective.typesafe {
+        Some(t) if t.is_configured() => {
+            let from_env = env.typesafe.as_ref().is_some_and(|e| e.api_key.is_some());
+            out.push_str(&format!(
+                "typesafe     {}  model {} ({}){}\n",
+                t.api_key.as_deref().map(mask).unwrap_or_default(),
+                t.model
+                    .as_deref()
+                    .unwrap_or(kleene_llm::adapters::typesafe::DEFAULT_MODEL),
+                source(from_env),
+                t.base_url
+                    .as_deref()
+                    .map(|u| format!("  {u}"))
+                    .unwrap_or_default()
+            ));
+        }
+        _ => out.push_str("typesafe     not configured (jev_* decisions off)\n"),
     }
     match &effective.router {
         Some(r) => out.push_str(&format!(

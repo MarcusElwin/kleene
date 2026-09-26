@@ -502,6 +502,16 @@ trace.
 `usage.cost_usd`), otherwise from the local pricing table. The planner's
 estimates use the same table. Both are stored per call.
 
+**Decision models beside text models.** TypeSafe's Jev answers typed
+questions about a JSON state (a yes/no probability, a choice with a
+probability per label, a score on a rubric) for a fraction of a text call.
+It gets its own trait, `DecisionProvider`, next to `Provider`, one adapter
+over `reqwest`, and the `jev` model alias. In CallSQL it is the `jev_*`
+functions and `MODEL 'jev'` on prompt-defined functions, which is how a
+cascade (rule 4 in 3.3) gets a proxy that is actually cheap. Decisions take
+a call slot, are priced, traced and memoised like any call. See
+`docs/JEV.md`.
+
 ### 3.9 Tools and sandboxing
 
 Filesystem tools are read-only by default and rooted at the session workspace.

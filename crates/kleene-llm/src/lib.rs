@@ -10,11 +10,17 @@
 //! [`Pricing`] table. [`ReplayProvider`] serves recorded fixtures so tests and
 //! re-runs cost nothing. [`provider_from_env`] assembles the stack from the
 //! environment.
+//!
+//! Beside the text providers sits one *decision* provider:
+//! [`DecisionProvider`] answers typed questions (a yes/no probability, a
+//! choice, a score) about a JSON state, which is what TypeSafe's Jev does;
+//! [`TypeSafeProvider`] is its adapter and [`decisions_from_env`] builds it.
 
 #![forbid(unsafe_code)]
 
 pub mod adapters;
 pub mod config;
+pub mod decision;
 pub mod env;
 mod http;
 pub mod replay;
@@ -22,10 +28,18 @@ pub mod router;
 pub mod sse;
 pub mod types;
 
-pub use adapters::{AnthropicProvider, OpenAiCompatProvider};
-pub use config::{AnthropicSettings, OpenAiCompatSettings, ProviderSettings, WebSearchSettings};
-pub use env::{provider_from_env, provider_from_settings, NOT_CONFIGURED};
-pub use replay::{RecordingProvider, ReplayProvider};
+pub use adapters::{AnthropicProvider, OpenAiCompatProvider, TypeSafeProvider};
+pub use config::{
+    AnthropicSettings, OpenAiCompatSettings, ProviderSettings, TypeSafeSettings, WebSearchSettings,
+};
+pub use decision::{
+    Answer, DecisionProvider, DecisionRequest, DecisionResponse, Question, DECISION_ALIAS,
+};
+pub use env::{
+    decisions_from_env, decisions_from_settings, provider_from_env, provider_from_settings,
+    NOT_CONFIGURED,
+};
+pub use replay::{RecordingDecisions, RecordingProvider, ReplayProvider};
 pub use router::{
     AliasConfig, Candidate, CircuitState, ModelPricing, Pricing, RoutedProvider, Router,
     RouterConfig,

@@ -237,7 +237,7 @@ impl Daemon {
             .clone()
     }
 
-    /// Rebuild the provider and the web search backend from the config file
+    /// Rebuild the provider, the decision provider and the web search backend from the config file
     /// and the environment ([`ProviderSettings::effective`]); everything
     /// else in the config is kept. Returns what is configured, for the
     /// `Ok` reply.
@@ -249,11 +249,15 @@ impl Daemon {
         });
         let mut cfg = self.config();
         cfg.provider = Some(provider);
+        cfg.decisions = kleene_llm::decisions_from_settings(&settings);
         cfg.web_search = web_search;
         let harness = Harness::new(self.store.clone(), cfg.clone())
             .await
             .map_err(|e| e.to_string())?;
         let mut summary: Vec<String> = settings.configured().map(str::to_string).collect();
+        if cfg.decisions.is_some() {
+            summary.push("typesafe".into());
+        }
         if let Some(w) = &cfg.web_search {
             summary.push(format!("web search {}", w.provider));
         }
@@ -475,6 +479,7 @@ impl Daemon {
                             let cfg = ReplConfig {
                                 workspace: live.workspace,
                                 provider: live.provider,
+                                decisions: live.decisions,
                                 tracer: live.tracer,
                                 web_search: live.web_search,
                             };

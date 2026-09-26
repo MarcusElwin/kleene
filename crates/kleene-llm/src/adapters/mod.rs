@@ -3,9 +3,11 @@
 
 pub mod anthropic;
 pub mod openai_compat;
+pub mod typesafe;
 
 pub use anthropic::AnthropicProvider;
 pub use openai_compat::OpenAiCompatProvider;
+pub use typesafe::TypeSafeProvider;
 
 /// An `f32` option as a JSON number with its shortest decimal form, so a
 /// temperature of `0.2` goes on the wire as `0.2` rather than the widened

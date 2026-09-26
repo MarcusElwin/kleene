@@ -18,6 +18,9 @@
 //! base_url = "https://api.openai.com/v1"
 //! model = "gpt-5.4-mini"
 //!
+//! [typesafe]                      # Jev, the decision model behind jev_* and MODEL 'jev'
+//! api_key = "ts-..."
+//! model = "jev-latest"
 //! [web_search]
 //! provider = "brave"        # or "tavily", "exa", "linkup"
 //! api_key = "BSA..."
@@ -75,6 +78,27 @@ impl OpenAiCompatSettings {
     }
 }
 
+/// TypeSafe (Jev) decision-model settings.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TypeSafeSettings {
+    /// `TYPESAFE_API_KEY`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+    /// `TYPESAFE_BASE_URL`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    /// `TYPESAFE_DEFAULT_MODEL`: the model a decision uses when none is named.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
+impl TypeSafeSettings {
+    /// Whether a key is present.
+    pub fn is_configured(&self) -> bool {
+        non_empty(&self.api_key)
+    }
+}
+
 /// The service behind the `web_search` tool.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WebSearchSettings {
@@ -121,6 +145,10 @@ pub struct ProviderSettings {
     /// OpenAI or compatible.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub openai_compat: Option<OpenAiCompatSettings>,
+    /// TypeSafe's Jev, the decision provider. Optional: without it the
+    /// `jev_*` functions fail with a clear message and nothing else changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub typesafe: Option<TypeSafeSettings>,
     /// Path of a router TOML (`KLEENE_ROUTER_TOML`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub router: Option<PathBuf>,
@@ -170,6 +198,11 @@ impl ProviderSettings {
             base_url: env("OPENAI_BASE_URL"),
             model: env("OPENAI_MODEL"),
         };
+        let typesafe = TypeSafeSettings {
+            api_key: env(crate::adapters::typesafe::API_KEY_ENV),
+            base_url: env(crate::adapters::typesafe::BASE_URL_ENV),
+            model: env(crate::adapters::typesafe::DEFAULT_MODEL_ENV),
+        };
         let web_search = WebSearchSettings {
             provider: env(WebSearchSettings::PROVIDER_ENV),
             api_key: env(WebSearchSettings::API_KEY_ENV),
@@ -178,6 +211,7 @@ impl ProviderSettings {
             anthropic: (anthropic != AnthropicSettings::default()).then_some(anthropic),
             openai_compat: (openai_compat != OpenAiCompatSettings::default())
                 .then_some(openai_compat),
+            typesafe: (typesafe != TypeSafeSettings::default()).then_some(typesafe),
             router: env(crate::env::ROUTER_TOML_ENV).map(PathBuf::from),
             web_search: (web_search != WebSearchSettings::default()).then_some(web_search),
         }
@@ -260,6 +294,13 @@ impl ProviderSettings {
             c.model = o.model.or(c.model);
             self.openai_compat = Some(c);
         }
+        if let Some(o) = other.typesafe {
+            let mut t = self.typesafe.take().unwrap_or_default();
+            t.api_key = o.api_key.or(t.api_key);
+            t.base_url = o.base_url.or(t.base_url);
+            t.model = o.model.or(t.model);
+            self.typesafe = Some(t);
+        }
         self.router = other.router.or(self.router);
         if let Some(o) = other.web_search {
             let mut w = self.web_search.take().unwrap_or_default();
@@ -270,6 +311,9 @@ impl ProviderSettings {
         self
     }
 
+    /// Whether at least one text provider can be built. The decision
+    /// provider does not count: it answers questions, it cannot run a
+    /// session.
     /// The web search service and key, when a key is set.
     pub fn web_search_configured(&self) -> Option<&WebSearchSettings> {
         self.web_search.as_ref().filter(|w| w.is_configured())
@@ -278,6 +322,13 @@ impl ProviderSettings {
     /// Whether at least one provider can be built.
     pub fn is_configured(&self) -> bool {
         self.configured().next().is_some()
+    }
+
+    /// Whether the decision provider (TypeSafe's Jev) can be built.
+    pub fn decisions_configured(&self) -> bool {
+        self.typesafe
+            .as_ref()
+            .is_some_and(TypeSafeSettings::is_configured)
     }
 
     /// Names of the providers that can be built, in registration order.
@@ -312,6 +363,11 @@ mod tests {
                 base_url: Some("http://localhost:11434/v1".into()),
                 model: Some("llama".into()),
             }),
+            typesafe: Some(TypeSafeSettings {
+                api_key: Some("ts-x".into()),
+                base_url: None,
+                model: None,
+            }),
             router: None,
             web_search: Some(WebSearchSettings {
                 provider: None,
@@ -320,6 +376,8 @@ mod tests {
         };
         let text = s.to_toml();
         assert!(text.contains("[anthropic]"), "{text}");
+        assert!(text.contains("[typesafe]"), "{text}");
+        assert!(s.decisions_configured());
         assert!(text.contains("[web_search]"), "{text}");
         assert_eq!(s.web_search_configured().unwrap().provider_name(), "brave");
         assert!(
@@ -380,6 +438,14 @@ mod tests {
         let s = ProviderSettings::parse("[openai_compat]\nbase_url = 'http://localhost:1/v1'\n")
             .unwrap();
         assert!(s.is_configured(), "a URL without a key is a local server");
+        let s = ProviderSettings::parse("[typesafe]\napi_key = 'ts'\n").unwrap();
+        assert!(
+            !s.is_configured(),
+            "a decision provider alone cannot run a session"
+        );
+        assert!(s.decisions_configured());
+        let s = ProviderSettings::parse("[typesafe]\nmodel = 'jev-latest'\n").unwrap();
+        assert!(!s.decisions_configured(), "a model alone is not a key");
     }
 
     #[test]

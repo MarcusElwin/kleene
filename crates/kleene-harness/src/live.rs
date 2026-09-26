@@ -8,7 +8,10 @@ use kleene_core::{
     FunctionReturn, ModelAlias, RunId, Schema, SessionId, StatementId, Value, Volatility,
 };
 use kleene_exec::{BatchStream, CallSink, ExecError};
-use kleene_llm::{CompletionRequest, CompletionResponse, Message, Provider, ProviderOptions};
+use kleene_llm::{
+    Answer, CompletionRequest, CompletionResponse, DecisionProvider, DecisionRequest,
+    DecisionResponse, Message, Provider, ProviderOptions, Question, DECISION_ALIAS,
+};
 use kleene_sql::{FunctionBody, Statement};
 use kleene_store::MemoEntry;
 use kleene_tools::{Tool, ToolContext, ToolRegistry};
@@ -151,6 +154,8 @@ pub struct BudgetState {
 pub struct LiveSink {
     store: StoreSink,
     provider: Option<Arc<dyn Provider>>,
+    /// The decision model (TypeSafe's Jev) behind `jev_*` and `MODEL 'jev'`.
+    decisions: RwLock<Option<Arc<dyn DecisionProvider>>>,
     tools: Arc<ToolRegistry>,
     tool_ctx: ToolContext,
     tracer: Option<Tracer>,
@@ -187,6 +192,7 @@ impl LiveSink {
         Self {
             store,
             provider,
+            decisions: RwLock::new(None),
             tools,
             tool_ctx,
             tracer,
@@ -207,6 +213,17 @@ impl LiveSink {
     /// Set (or clear) the observer that sees calls start, stream and finish.
     pub async fn set_observer(&self, observer: Option<Arc<dyn crate::Observer>>) {
         *self.observer.write().await = observer;
+    }
+
+    /// Set (or clear) the decision provider. Without one the `jev_*`
+    /// functions and `MODEL 'jev'` fail with a clear message.
+    pub async fn set_decisions(&self, decisions: Option<Arc<dyn DecisionProvider>>) {
+        *self.decisions.write().await = decisions;
+    }
+
+    /// The decision provider, if any.
+    pub async fn decisions(&self) -> Option<Arc<dyn DecisionProvider>> {
+        self.decisions.read().await.clone()
     }
 
     /// Stop the statement that is running (or the next one to start) at its
@@ -813,6 +830,205 @@ impl LiveSink {
         }
     }
 
+    /// Run one typed decision through memo, provider, budget and trace: the
+    /// same accounting as a model call, under the `jev` alias. A decision
+    /// takes one call slot and is charged its reported cost.
+    pub async fn decide(&self, req: DecisionRequest) -> Result<DecisionResponse, ExecError> {
+        self.check_cancelled()?;
+        let provider = self.decisions.read().await.clone().ok_or_else(|| {
+            ExecError::Call(
+                "no decision provider configured (set TYPESAFE_API_KEY, or [typesafe] in config.toml)"
+                    .into(),
+            )
+        })?;
+        let settings = self.settings().await;
+        let fingerprint = req.fingerprint();
+        let call_id = CallId::new();
+        let statement = self.statement.lock().await.unwrap_or_default();
+        let started = Instant::now();
+        if let Some(t) = &self.tracer {
+            t.emit(TraceEvent::CallStarted {
+                statement,
+                call: call_id,
+                alias: DECISION_ALIAS.into(),
+                model: req.model.clone(),
+                fingerprint: fingerprint.clone(),
+            });
+        }
+        let observer = self.observer.read().await.clone();
+        let meta = self.meta.read().await.clone();
+        if let Some(o) = &observer {
+            o.call_started(&meta, call_id, DECISION_ALIAS, false);
+        }
+        if !settings.no_memo {
+            if let Ok(Some(hit)) = self
+                .store
+                .store()
+                .memo_get(DECISION_ALIAS, &fingerprint)
+                .await
+            {
+                if let Ok(resp) = serde_json::from_value::<DecisionResponse>(hit.response) {
+                    self.budget.lock().await.memo_hits += 1;
+                    if let Some(t) = &self.tracer {
+                        t.emit(TraceEvent::CallFinished {
+                            call: call_id,
+                            input_tokens: 0,
+                            output_tokens: 0,
+                            cache_read_tokens: 0,
+                            cost_usd: 0.0,
+                            elapsed: started.elapsed(),
+                            memo_hit: true,
+                            error: None,
+                        });
+                    }
+                    if let Some(o) = &observer {
+                        o.call_finished(&meta, call_id, true, None);
+                    }
+                    return Ok(resp);
+                }
+            }
+        }
+        if let Err(e) = self.reserve_call().await {
+            if let Some(o) = &observer {
+                o.call_finished(&meta, call_id, false, Some(&e.to_string()));
+            }
+            return Err(e);
+        }
+        match provider.decide(req).await {
+            Ok(resp) => {
+                if let Some(o) = &observer {
+                    o.call_finished(&meta, call_id, false, None);
+                }
+                self.charge(&resp.usage).await?;
+                if let Some(t) = &self.tracer {
+                    t.emit(TraceEvent::CallFinished {
+                        call: call_id,
+                        input_tokens: resp.usage.input_tokens,
+                        output_tokens: resp.usage.output_tokens,
+                        cache_read_tokens: 0,
+                        cost_usd: resp.usage.cost_usd.unwrap_or(0.0),
+                        elapsed: started.elapsed(),
+                        memo_hit: false,
+                        error: None,
+                    });
+                }
+                if !settings.no_memo {
+                    let entry = MemoEntry {
+                        response: serde_json::to_value(&resp).unwrap_or_default(),
+                        input_tokens: resp.usage.input_tokens,
+                        output_tokens: resp.usage.output_tokens,
+                        cost_usd: resp.usage.cost_usd,
+                    };
+                    let _ = self
+                        .store
+                        .store()
+                        .memo_put(DECISION_ALIAS, &fingerprint, &entry)
+                        .await;
+                }
+                Ok(resp)
+            }
+            Err(e) => {
+                if let Some(t) = &self.tracer {
+                    t.emit(TraceEvent::CallFinished {
+                        call: call_id,
+                        input_tokens: 0,
+                        output_tokens: 0,
+                        cache_read_tokens: 0,
+                        cost_usd: 0.0,
+                        elapsed: started.elapsed(),
+                        memo_hit: false,
+                        error: Some(e.to_string()),
+                    });
+                }
+                if let Some(o) = &observer {
+                    o.call_finished(&meta, call_id, false, Some(&e.to_string()));
+                }
+                Err(ExecError::Call(format!("jev: {e}")))
+            }
+        }
+    }
+
+    /// One decision with a single question: its answer.
+    async fn decide_one(&self, state: serde_json::Value, q: Question) -> Result<Answer, ExecError> {
+        let resp = self.decide(DecisionRequest::single(state, q)).await?;
+        resp.single()
+            .cloned()
+            .map_err(|e| ExecError::Call(format!("jev: {e}")))
+    }
+
+    /// The state of a `jev_*` call: JSON text is sent as JSON, anything else
+    /// as a string, so a row rendered with `json_object` arrives structured.
+    fn decision_state(v: &Value) -> serde_json::Value {
+        match v {
+            Value::Json(j) => j.clone(),
+            Value::Text(t) => {
+                let trimmed = t.trim_start();
+                if trimmed.starts_with('{') || trimmed.starts_with('[') {
+                    serde_json::from_str(t).unwrap_or_else(|_| serde_json::Value::String(t.clone()))
+                } else {
+                    serde_json::Value::String(t.clone())
+                }
+            }
+            other => serde_json::Value::String(other.render()),
+        }
+    }
+
+    /// Labels or levels from a JSON array of strings or a comma-separated
+    /// list; at least one, none empty.
+    fn decision_labels(what: &str, text: &str) -> Result<Vec<String>, ExecError> {
+        let labels: Vec<String> = match serde_json::from_str::<serde_json::Value>(text) {
+            Ok(serde_json::Value::Array(a)) => a
+                .iter()
+                .map(|v| {
+                    v.as_str()
+                        .map(str::to_string)
+                        .unwrap_or_else(|| v.to_string())
+                })
+                .collect(),
+            _ => text
+                .split(',')
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty())
+                .collect(),
+        };
+        if labels.is_empty() {
+            return Err(ExecError::Call(format!(
+                "{what}: give at least one label, as a JSON array or a comma-separated list"
+            )));
+        }
+        Ok(labels)
+    }
+
+    /// A prompt-defined function on the `jev` alias: the template is the
+    /// question, the arguments are the state. `RETURNS BOOLEAN` is a noul at
+    /// the 0.5 threshold and `RETURNS DOUBLE` the yes probability itself,
+    /// which is what a `PROXY` needs.
+    async fn run_defined_jev(
+        &self,
+        name: &str,
+        def: &DefinedFunction,
+        template: &str,
+        args: &[Value],
+    ) -> Result<Value, ExecError> {
+        let state: serde_json::Map<String, serde_json::Value> = def
+            .arg_names
+            .iter()
+            .zip(args)
+            .map(|(n, v)| (n.clone(), Self::decision_state(v)))
+            .collect();
+        let answer = self
+            .decide_one(serde_json::Value::Object(state), Question::noul(template))
+            .await?;
+        let p = answer.as_f64();
+        match def.returns {
+            DataType::Bool => Ok(Value::Bool(p >= 0.5)),
+            DataType::Float => Ok(Value::Float(p)),
+            other => Err(ExecError::Call(format!(
+                "{name}: a MODEL 'jev' function returns BOOLEAN or DOUBLE, not {other}; for labels use jev_choice"
+            ))),
+        }
+    }
+
     /// One scalar model call: the response text, or an error if the model
     /// declined.
     async fn model_call(
@@ -888,6 +1104,9 @@ impl LiveSink {
             return Ok(Value::Null);
         }
         match &def.body {
+            FunctionBody::Prompt { template } if def.alias.as_ref().is_some_and(|a| a.is_jev()) => {
+                self.run_defined_jev(name, &def, template, args).await
+            }
             FunctionBody::Prompt { template } => {
                 let prompt = substitute(template, &def.arg_names, args);
                 let (schema, prompt) = match def.returns {
@@ -1041,6 +1260,54 @@ impl CallSink for LiveSink {
                     .await?;
                 coerce_text(&text, DataType::Json)
             }
+            "jev_noul" | "jev_choice" | "jev_score" => {
+                if args.iter().any(Value::is_null) {
+                    return Ok(Value::Null);
+                }
+                let arg = |i: usize, what: &str| {
+                    args.get(i)
+                        .and_then(|v| v.as_text())
+                        .map(str::to_string)
+                        .ok_or_else(|| ExecError::Call(format!("{lower}: {what} must be text")))
+                };
+                let state = args
+                    .first()
+                    .map(Self::decision_state)
+                    .ok_or_else(|| ExecError::Call(format!("{lower}: the state is missing")))?;
+                let question = arg(1, "the question")?;
+                match lower.as_str() {
+                    "jev_noul" => {
+                        let a = self.decide_one(state, Question::noul(question)).await?;
+                        Ok(Value::Float(a.as_f64()))
+                    }
+                    "jev_choice" => {
+                        let labels = Self::decision_labels(&lower, &arg(2, "the labels")?)?;
+                        let a = self
+                            .decide_one(state, Question::choice(question, labels))
+                            .await?;
+                        match a {
+                            Answer::Choice { choice, .. } => Ok(Value::Text(choice)),
+                            other => Err(ExecError::Call(format!(
+                                "jev_choice: expected a choice, got a {}",
+                                other.kind()
+                            ))),
+                        }
+                    }
+                    _ => {
+                        let levels = Self::decision_labels(&lower, &arg(2, "the levels")?)?;
+                        let a = self
+                            .decide_one(state, Question::score(question, levels))
+                            .await?;
+                        match a {
+                            Answer::Score { score, .. } => Ok(Value::Float(score)),
+                            other => Err(ExecError::Call(format!(
+                                "jev_score: expected a score, got a {}",
+                                other.kind()
+                            ))),
+                        }
+                    }
+                }
+            }
             other => Err(ExecError::Call(format!(
                 "no implementation for function {other}"
             ))),
@@ -1049,6 +1316,50 @@ impl CallSink for LiveSink {
 
     async fn table_call(&self, name: &str, args: &[Value]) -> Result<Batch, ExecError> {
         let lower = name.to_ascii_lowercase();
+        if lower == "jev_choices" {
+            let schema = Arc::new(Schema::new(vec![
+                Field::not_null("label", DataType::Text),
+                Field::not_null("probability", DataType::Float),
+            ]));
+            if args.len() != 3 {
+                return Err(ExecError::Call(format!(
+                    "jev_choices takes 3 arguments (state, question, labels), got {}",
+                    args.len()
+                )));
+            }
+            if args.iter().any(Value::is_null) {
+                return Ok(Batch::empty(schema));
+            }
+            let text = |i: usize, what: &str| {
+                args[i]
+                    .as_text()
+                    .map(str::to_string)
+                    .ok_or_else(|| ExecError::Call(format!("jev_choices: {what} must be text")))
+            };
+            let state = Self::decision_state(&args[0]);
+            let question = text(1, "the question")?;
+            let labels = Self::decision_labels("jev_choices", &text(2, "the labels")?)?;
+            let a = self
+                .decide_one(state, Question::choice(question, labels))
+                .await?;
+            let Answer::Choice { probabilities, .. } = &a else {
+                return Err(ExecError::Call(format!(
+                    "jev_choices: expected a choice, got a {}",
+                    a.kind()
+                )));
+            };
+            let mut rows: Vec<Vec<Value>> = probabilities
+                .iter()
+                .map(|(l, p)| vec![Value::Text(l.clone()), Value::Float(*p)])
+                .collect();
+            rows.sort_by(|a, b| {
+                b[1].as_f64()
+                    .partial_cmp(&a[1].as_f64())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| a[0].render().cmp(&b[0].render()))
+            });
+            return Ok(Batch { schema, rows });
+        }
         if lower == "rlm" || lower == "spawn" {
             let runner = self.runner.read().await.clone().ok_or_else(|| {
                 ExecError::Call(format!(

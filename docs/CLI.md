@@ -219,6 +219,18 @@ with no key. With only this configured, every alias resolves to
 `OPENAI_MODEL` (default `gpt-5.4-mini`) and nothing is priced, so dollar
 budgets and estimates read zero.
 
+**TypeSafe (Jev), for typed decisions**
+
+```bash
+export TYPESAFE_API_KEY=ts-...
+export TYPESAFE_DEFAULT_MODEL=jev-latest   # optional; TYPESAFE_BASE_URL overrides the endpoint
+```
+
+Optional and separate from the text providers: it powers `jev_noul`,
+`jev_choice`, `jev_score`, `jev_choices` and `MODEL 'jev'` functions, and
+nothing else. Without it those fail with a message naming the variable.
+See [`docs/JEV.md`](JEV.md).
+
 **Both, or your own routing**
 
 Write a router file and point at it (`kleene setup --router <path>`, or the

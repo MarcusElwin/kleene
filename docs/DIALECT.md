@@ -51,7 +51,13 @@ estimate exceeds the remaining budget is refused with its plan.
 Scalar builtins: `llm(prompt [, alias [, effort]]) -> TEXT`,
 `llm_bool(prompt) -> BOOLEAN`, `llm_json(prompt, schema) -> JSON`. Table
 builtins: `expand(text, n) -> TABLE(item TEXT)` (used as `CROSS JOIN LATERAL
-expand(h, 3) AS e`).
+expand(h, 3) AS e`). Typed decisions on TypeSafe's Jev (a probability, a
+label or a score, far cheaper than a model call): `jev_noul(state, question)
+-> DOUBLE`, `jev_choice(state, question, labels) -> TEXT`,
+`jev_score(state, question, levels) -> DOUBLE`, and
+`jev_choices(state, question, labels) -> TABLE(label TEXT, probability
+DOUBLE)`; `MODEL 'jev'` on a prompt-defined function makes it a noul. See
+[`JEV.md`](JEV.md).
 
 Prompt-defined functions:
 

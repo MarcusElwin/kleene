@@ -55,7 +55,8 @@ pub enum CallKind {
     },
 }
 
-/// A model tier name resolved by the router (`root`, `worker`, `proxy`, `judge`).
+/// A model tier name resolved by the router (`root`, `worker`, `proxy`,
+/// `judge`), or `jev` for the typed decision provider.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ModelAlias(pub String);
@@ -76,6 +77,16 @@ impl ModelAlias {
     /// The alias for rubric grading.
     pub fn judge() -> Self {
         Self("judge".into())
+    }
+    /// The alias for typed decisions (TypeSafe's Jev): a prompt-defined
+    /// function on this alias is answered by the decision provider as a
+    /// noul, choice or score rather than by a text model.
+    pub fn jev() -> Self {
+        Self("jev".into())
+    }
+    /// Whether this alias names the decision provider.
+    pub fn is_jev(&self) -> bool {
+        self.0.eq_ignore_ascii_case("jev")
     }
 }
 

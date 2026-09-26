@@ -190,11 +190,17 @@ fn render_catalog(out: &mut String, catalog: &Catalog) {
     }
     let mut funcs: Vec<&FunctionDef> = catalog.functions().collect();
     funcs.sort_by(|a, b| a.name.cmp(&b.name));
-    let groups: [(&str, Group); 5] = [
+    let groups: [(&str, Group); 6] = [
         ("### Model calls", |f| {
             matches!(
-                f.call_kind,
-                CallKind::LlmScalar { .. } | CallKind::LlmTable { .. }
+                &f.call_kind,
+                CallKind::LlmScalar { alias } | CallKind::LlmTable { alias } if !alias.is_jev()
+            )
+        }),
+        ("### Typed decisions (Jev: a probability, a label or a score, far cheaper than a model call)", |f| {
+            matches!(
+                &f.call_kind,
+                CallKind::LlmScalar { alias } | CallKind::LlmTable { alias } if alias.is_jev()
             )
         }),
         ("### Delegation", |f| {

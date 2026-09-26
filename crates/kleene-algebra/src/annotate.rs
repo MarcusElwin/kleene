@@ -55,7 +55,12 @@ impl Default for CostModel {
             usd_per_output_token: 1e-5,
             distinct_fraction: 1.0,
             call_selectivity: HashMap::new(),
-            alias_factor: HashMap::from([("proxy".to_string(), 0.1)]),
+            alias_factor: HashMap::from([
+                ("proxy".to_string(), 0.1),
+                // A typed decision (Jev) is priced on input only, at about a
+                // hundredth of a text call; cheap enough for a cascade to pay.
+                ("jev".to_string(), 0.01),
+            ]),
         }
     }
 }
