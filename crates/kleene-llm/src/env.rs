@@ -1,7 +1,8 @@
 //! Building the provider stack from the environment and the config file.
 
-use crate::adapters::{AnthropicProvider, OpenAiCompatProvider};
+use crate::adapters::{AnthropicProvider, OpenAiCompatProvider, TypeSafeProvider};
 use crate::config::ProviderSettings;
+use crate::decision::DecisionProvider;
 use crate::router::{RoutedProvider, RouterConfig};
 use crate::types::ProviderError;
 use crate::Provider;
@@ -89,10 +90,28 @@ pub fn provider_from_settings(
     Ok(Arc::new(RoutedProvider::new(config, providers)))
 }
 
+/// Build the decision provider (TypeSafe's Jev) from the file and the
+/// environment; see [`provider_from_env`] for the layering. `Ok(None)` when
+/// no key is configured: decisions are optional.
+pub fn decisions_from_env() -> Result<Option<Arc<dyn DecisionProvider>>, ProviderError> {
+    Ok(decisions_from_settings(&ProviderSettings::effective()?))
+}
+
+/// The decision provider from explicit settings, or `None` without a key.
+pub fn decisions_from_settings(settings: &ProviderSettings) -> Option<Arc<dyn DecisionProvider>> {
+    let t = settings.typesafe.as_ref().filter(|t| t.is_configured())?;
+    let key = t.api_key.clone()?;
+    Some(Arc::new(TypeSafeProvider::new(
+        key,
+        t.base_url.clone(),
+        t.model.clone(),
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{AnthropicSettings, OpenAiCompatSettings};
+    use crate::config::{AnthropicSettings, OpenAiCompatSettings, TypeSafeSettings};
 
     #[test]
     fn nothing_configured_is_a_clear_error() {
@@ -128,6 +147,21 @@ mod tests {
             ..Default::default()
         };
         provider_from_settings(&s).expect("an auth token is a credential");
+    }
+
+    #[test]
+    fn decisions_need_a_key() {
+        assert!(decisions_from_settings(&ProviderSettings::default()).is_none());
+        let s = ProviderSettings {
+            typesafe: Some(TypeSafeSettings {
+                api_key: Some("ts".into()),
+                base_url: Some("http://localhost:9/".into()),
+                model: None,
+            }),
+            ..Default::default()
+        };
+        let d = decisions_from_settings(&s).expect("a key is enough");
+        assert_eq!(d.name(), "typesafe");
     }
 
     #[test]

@@ -3,8 +3,12 @@
 //! [`RecordingProvider`] wraps a real provider and writes every response to a
 //! fixture directory keyed by the request fingerprint. [`ReplayProvider`] reads
 //! them back, so the whole task suite runs offline and a demo query costs
-//! nothing the second time.
+//! nothing the second time. The same directory holds decision fixtures:
+//! [`RecordingDecisions`] records a [`DecisionProvider`] and
+//! [`ReplayProvider`] replays those too (a decision fingerprint never
+//! collides with a completion's, they hash different prefixes).
 
+use crate::decision::{DecisionProvider, DecisionRequest, DecisionResponse};
 use crate::types::{Capabilities, CompletionRequest, CompletionResponse, ProviderError};
 use crate::Provider;
 use std::path::{Path, PathBuf};
@@ -56,6 +60,69 @@ impl Provider for ReplayProvider {
     }
 }
 
+#[async_trait::async_trait]
+impl DecisionProvider for ReplayProvider {
+    fn name(&self) -> &str {
+        "replay"
+    }
+
+    async fn decide(&self, req: DecisionRequest) -> Result<DecisionResponse, ProviderError> {
+        let fp = req.fingerprint();
+        let path = Self::path_for(&self.dir, &fp);
+        let bytes = tokio::fs::read(&path)
+            .await
+            .map_err(|_| ProviderError::NoFixture(fp.clone()))?;
+        serde_json::from_slice(&bytes).map_err(|e| ProviderError::Malformed(e.to_string()))
+    }
+}
+
+/// Wraps a decision provider and records every response as a fixture, next
+/// to the completions a [`RecordingProvider`] on the same directory writes.
+pub struct RecordingDecisions {
+    inner: Arc<dyn DecisionProvider>,
+    dir: PathBuf,
+}
+
+impl RecordingDecisions {
+    /// Record `inner`'s answers into `dir`.
+    pub fn new(inner: Arc<dyn DecisionProvider>, dir: impl Into<PathBuf>) -> Self {
+        Self {
+            inner,
+            dir: dir.into(),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl DecisionProvider for RecordingDecisions {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    async fn decide(&self, req: DecisionRequest) -> Result<DecisionResponse, ProviderError> {
+        let fp = req.fingerprint();
+        let resp = self.inner.decide(req).await?;
+        write_fixture(&self.dir, &fp, &resp).await?;
+        Ok(resp)
+    }
+}
+
+async fn write_fixture<T: serde::Serialize>(
+    dir: &Path,
+    fp: &str,
+    value: &T,
+) -> Result<(), ProviderError> {
+    tokio::fs::create_dir_all(dir)
+        .await
+        .map_err(|e| ProviderError::Other(e.to_string()))?;
+    let path = ReplayProvider::path_for(dir, fp);
+    let bytes =
+        serde_json::to_vec_pretty(value).map_err(|e| ProviderError::Other(e.to_string()))?;
+    tokio::fs::write(&path, bytes)
+        .await
+        .map_err(|e| ProviderError::Other(e.to_string()))
+}
+
 /// Wraps a provider and records every response as a fixture.
 pub struct RecordingProvider {
     inner: Arc<dyn Provider>,
@@ -85,15 +152,7 @@ impl Provider for RecordingProvider {
     async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse, ProviderError> {
         let fp = req.fingerprint();
         let resp = self.inner.complete(req).await?;
-        tokio::fs::create_dir_all(&self.dir)
-            .await
-            .map_err(|e| ProviderError::Other(e.to_string()))?;
-        let path = ReplayProvider::path_for(&self.dir, &fp);
-        let bytes =
-            serde_json::to_vec_pretty(&resp).map_err(|e| ProviderError::Other(e.to_string()))?;
-        tokio::fs::write(&path, bytes)
-            .await
-            .map_err(|e| ProviderError::Other(e.to_string()))?;
+        write_fixture(&self.dir, &fp, &resp).await?;
         Ok(resp)
     }
 }
@@ -151,6 +210,58 @@ mod tests {
         let second = replay.complete(req()).await.unwrap();
         assert_eq!(first, second);
         assert_eq!(second.text(), "canned answer");
+    }
+
+    struct CannedDecisions;
+
+    #[async_trait::async_trait]
+    impl DecisionProvider for CannedDecisions {
+        fn name(&self) -> &str {
+            "canned"
+        }
+        async fn decide(&self, req: DecisionRequest) -> Result<DecisionResponse, ProviderError> {
+            Ok(DecisionResponse {
+                model: "jev-test".into(),
+                answers: req
+                    .questions
+                    .keys()
+                    .map(|k| (k.clone(), crate::decision::Answer::Noul { noul: 0.75 }))
+                    .collect(),
+                usage: Usage::default(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn decisions_record_then_replay_beside_completions() {
+        let dir = tempfile::tempdir().unwrap();
+        let req = || {
+            DecisionRequest::single(
+                serde_json::json!("state"),
+                crate::decision::Question::noul("ok?"),
+            )
+        };
+        let rec = RecordingDecisions::new(Arc::new(CannedDecisions), dir.path());
+        let first = rec.decide(req()).await.unwrap();
+        RecordingProvider::new(Arc::new(Canned), dir.path())
+            .complete(self::req())
+            .await
+            .unwrap();
+        let replay = ReplayProvider::new(dir.path());
+        let second = DecisionProvider::decide(&replay, req()).await.unwrap();
+        assert_eq!(first, second);
+        assert_eq!(second.single().unwrap().as_f64(), 0.75);
+        assert!(matches!(
+            DecisionProvider::decide(
+                &replay,
+                DecisionRequest::single(
+                    serde_json::json!("other"),
+                    crate::decision::Question::noul("ok?")
+                )
+            )
+            .await,
+            Err(ProviderError::NoFixture(_))
+        ));
     }
 
     #[tokio::test]
