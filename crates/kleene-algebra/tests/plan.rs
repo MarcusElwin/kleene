@@ -621,3 +621,20 @@ fn sampled_selectivity_changes_estimates_and_cheap_first_orders_join_conditions(
         rows_default
     );
 }
+
+#[test]
+fn explain_labels_ordered_string_agg() {
+    let c = catalog();
+    let sql =
+        "SELECT kind, string_agg(text, '; ' ORDER BY text DESC) FROM counterexamples GROUP BY kind";
+    let cp = plan(&logical(sql, &c), &c, &CostModel::default());
+    let text = explain(&cp);
+    assert!(
+        text.contains("stringagg(text, '; ' order by text desc)"),
+        "{text}"
+    );
+    let sql = "SELECT kind, string_agg(text, '; ') FROM counterexamples GROUP BY kind";
+    let cp = plan(&logical(sql, &c), &c, &CostModel::default());
+    let text = explain(&cp);
+    assert!(text.contains("stringagg(text, '; ')"), "{text}");
+}

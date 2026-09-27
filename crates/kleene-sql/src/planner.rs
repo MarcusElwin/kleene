@@ -4,7 +4,7 @@
 //! position. Everything outside the subset is an [`SqlError`] with a hint.
 
 use crate::error::SqlError;
-use crate::expr::{AggregateFn, BinaryOp, Expr, Literal, UnaryOp};
+use crate::expr::{AggregateFn, AggregateOrder, BinaryOp, Expr, Literal, UnaryOp};
 use crate::plan::{JoinKind, LogicalPlan, SortKey};
 use crate::scope::{CteEnv, Scope, ScopeItem};
 use crate::similar::suggest;
@@ -2124,6 +2124,7 @@ impl<'c> Planner<'c> {
                 "CASE inside the aggregate",
             ));
         }
+        let mut order_keys: Vec<sp::OrderByExpr> = vec![];
         let (args, distinct, star) = match &f.args {
             sp::FunctionArguments::None => (vec![], false, false),
             sp::FunctionArguments::Subquery(_) => {
@@ -2133,11 +2134,26 @@ impl<'c> Planner<'c> {
                 ))
             }
             sp::FunctionArguments::List(list) => {
-                if !list.clauses.is_empty() {
-                    return Err(unsupported(
-                        "ORDER BY / LIMIT inside a function call",
-                        "plain arguments",
-                    ));
+                for clause in &list.clauses {
+                    match clause {
+                        sp::FunctionArgumentClause::OrderBy(keys)
+                            if aggregate_of(&name) == Some(AggregateFn::StringAgg) =>
+                        {
+                            order_keys = keys.clone();
+                        }
+                        sp::FunctionArgumentClause::OrderBy(_) => {
+                            return Err(unsupported(
+                                format!("ORDER BY inside {name}()"),
+                                "ORDER BY is only meaningful inside string_agg; sort in a subquery instead",
+                            ))
+                        }
+                        _ => {
+                            return Err(unsupported(
+                                "LIMIT / SEPARATOR / ON OVERFLOW inside a function call",
+                                "plain arguments",
+                            ))
+                        }
+                    }
                 }
                 let distinct = matches!(
                     list.duplicate_treatment,
@@ -2194,10 +2210,26 @@ impl<'c> Planner<'c> {
                     resolved.len()
                 )));
             }
+            let mut resolved = resolved;
+            let mut order = Vec::with_capacity(order_keys.len());
+            for key in &order_keys {
+                if key.with_fill.is_some() {
+                    return Err(unsupported("WITH FILL", "not part of CallSQL"));
+                }
+                let asc = key.options.asc.unwrap_or(true);
+                let nulls_first = key.options.nulls_first.unwrap_or(!asc);
+                let expr = self.resolve_expr(&key.expr, scope, false)?;
+                if contains_aggregate(&expr) {
+                    return Err(type_err("aggregate functions cannot be nested"));
+                }
+                resolved.push(expr);
+                order.push(AggregateOrder { asc, nulls_first });
+            }
             return Ok(Expr::Aggregate {
                 func: agg,
                 args: resolved,
                 distinct,
+                order,
             });
         }
         if star {

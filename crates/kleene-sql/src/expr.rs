@@ -73,12 +73,24 @@ pub enum AggregateFn {
     Max,
     /// `AVG`
     Avg,
-    /// `STRING_AGG(expr, sep)`
+    /// `STRING_AGG(expr, sep [ORDER BY ...])`
     StringAgg,
     /// `BOOL_AND`
     BoolAnd,
     /// `BOOL_OR`
     BoolOr,
+}
+
+/// Direction of one `ORDER BY` key inside an aggregate call, such as
+/// `STRING_AGG(text, ', ' ORDER BY ordinal)`. The key expressions themselves
+/// live at the end of the aggregate's `args`, one per entry here, so every
+/// pass that rewrites aggregate arguments rewrites the keys too.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct AggregateOrder {
+    /// Ascending order.
+    pub asc: bool,
+    /// `NULLS FIRST`.
+    pub nulls_first: bool,
 }
 
 /// A resolved expression. Column references are by position in the input
@@ -125,10 +137,15 @@ pub enum Expr {
     Aggregate {
         /// Which aggregate.
         func: AggregateFn,
-        /// Arguments (empty for `COUNT(*)`).
+        /// Arguments (empty for `COUNT(*)`), followed by one `ORDER BY` key
+        /// expression per entry of `order`.
         args: Vec<Expr>,
         /// `DISTINCT`.
         distinct: bool,
+        /// `ORDER BY` keys inside the call, in order; empty for every
+        /// aggregate but `STRING_AGG`. The key expressions are the last
+        /// `order.len()` entries of `args`.
+        order: Vec<AggregateOrder>,
     },
     /// `CAST(expr AS type)`.
     Cast {

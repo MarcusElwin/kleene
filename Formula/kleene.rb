@@ -19,7 +19,7 @@
 class Kleene < Formula
   desc "Relational algebra for recursive model calls: CallSQL engine, planner, harness and TUI"
   homepage "https://github.com/MarcusElwin/callgebra"
-  version "0.0.1"
+  version "0.1.0"
   license "MIT"
 
   head do
