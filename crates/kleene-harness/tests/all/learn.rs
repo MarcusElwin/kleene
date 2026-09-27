@@ -189,3 +189,77 @@ async fn refill_keeps_queues_fed_and_curriculum_prefers_even_odds() {
         .unwrap();
     assert_eq!(all.rows.len(), 2);
 }
+
+#[tokio::test]
+async fn functions_are_refined_through_the_gate_and_preloaded() {
+    let store = DuckDbStore::in_memory().unwrap();
+    // A model that rewrites the prompt when asked, answers the refined
+    // prompt, and solves the task by calling the learned function without
+    // defining it.
+    let provider = Arc::new(ScriptedProvider::new(
+        vec![
+            (
+                "Rewrite the prompt template",
+                "```sql\nCREATE OR REPLACE FUNCTION fine(x TEXT) RETURNS BOOLEAN AS PROMPT 'Is {x} fine? Answer yes or no.';\n```",
+            ),
+            ("Is thing fine? Answer yes or no.", r#"{"answer": true}"#),
+            ("Is thing ok?", r#"{"answer": false}"#),
+            (
+                "Is thing fine",
+                "```sql\nFINAL FROM (SELECT fine('thing') AS a)\n```",
+            ),
+        ],
+        "```sql\nFINAL FROM (SELECT 'no idea' AS answer)\n```",
+    ));
+    let l = learn(store.clone(), provider.clone(), 0).await;
+    let v1 = l
+        .function_add(
+            "CREATE FUNCTION fine(x TEXT) RETURNS BOOLEAN AS PROMPT 'Is {x} ok?'",
+            "test",
+        )
+        .await
+        .unwrap();
+    assert_eq!(v1, 1);
+    assert!(l.function_add("SELECT 1", "test").await.is_err());
+    let r = l.refine("fine", None).await.unwrap();
+    assert_eq!((r.baseline, r.candidate), (1, 2));
+    assert!(r.adopted, "{r:?}");
+    assert!(
+        r.definition.starts_with("CREATE OR REPLACE FUNCTION fine"),
+        "{}",
+        r.definition
+    );
+    let adopted = l.adopted_function("fine").await.unwrap().unwrap();
+    assert_eq!(adopted.version, 2);
+    assert!(
+        adopted.eval_note.contains("adopted without replay"),
+        "{adopted:?}"
+    );
+    assert!(!l.function_version(1).await.unwrap().adopted);
+
+    // A session defines the adopted version before its first turn: the
+    // task calls fine('thing') without a CREATE FUNCTION and gets the
+    // refined prompt's answer.
+    let id = l
+        .add_task(
+            "user",
+            "Is thing fine? Use the function.",
+            None,
+            Some(Verify::Exact {
+                rows: vec![vec!["true".into()]],
+            }),
+        )
+        .await
+        .unwrap();
+    let step = l.step(Some(&id), &[]).await.unwrap().unwrap();
+    assert!(step.solved, "{step:?}");
+
+    // Revert rolls back to the previous version of the name.
+    assert_eq!(l.revert_function(2).await.unwrap(), Some(1));
+    assert_eq!(
+        l.adopted_function("fine").await.unwrap().unwrap().version,
+        1
+    );
+    let ledger = l.functions().await.unwrap().render_table(50);
+    assert!(ledger.contains("reverted by hand"), "{ledger}");
+}

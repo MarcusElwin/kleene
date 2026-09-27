@@ -2,10 +2,10 @@
 
 use crate::agg::Accumulator;
 use crate::eval::eval_expr;
-use crate::{builtins, ExecContext, ExecError, RECURSION_HARD_CAP};
+use crate::{builtins, BatchStream, CallSink, ExecContext, ExecError, RECURSION_HARD_CAP};
 use async_recursion::async_recursion;
 use futures::{StreamExt, TryStreamExt};
-use kleene_core::{Row, Value};
+use kleene_core::{Batch, Row, Schema, Value};
 use kleene_sql::{AggregateOrder, Expr, JoinKind, LogicalPlan, SortKey};
 use std::cell::Cell;
 use std::cmp::Ordering;
@@ -90,7 +90,19 @@ async fn eval_all_rows(
     env: &Env,
     ctx: &ExecContext,
 ) -> Result<Vec<Row>, ExecError> {
-    if !may_call(exprs) || ctx.call_concurrency <= 1 {
+    if !may_call(exprs) {
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            out.push(eval_exprs(exprs, r, env, ctx).await?);
+        }
+        return Ok(out);
+    }
+    // Rule 3, batch: a call whose definition is batchable is answered for
+    // every distinct argument tuple up front, `batch` tuples per call, and
+    // the per-row evaluation below then finds those answers in a cache.
+    let batched = prebatch(exprs, rows, env, ctx).await?;
+    let ctx = batched.as_ref().unwrap_or(ctx);
+    if ctx.call_concurrency <= 1 {
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
             out.push(eval_exprs(exprs, r, env, ctx).await?);
@@ -109,6 +121,188 @@ async fn eval_all_rows(
         .buffered(concurrency)
         .try_collect()
         .await
+}
+
+/// Call nodes in `exprs` whose arguments are pure (no nested calls), the
+/// only shape that can be answered before the rows are evaluated.
+fn batchable_calls(exprs: &[Expr]) -> Vec<(String, Vec<Expr>)> {
+    fn walk(e: &Expr, out: &mut Vec<(String, Vec<Expr>)>) {
+        match e {
+            Expr::Function { name, args, .. } => {
+                if !builtins::is_builtin(name) && !may_call(args) {
+                    let key = (name.to_ascii_lowercase(), args.clone());
+                    if !out.contains(&key) {
+                        out.push(key);
+                    }
+                } else {
+                    args.iter().for_each(|a| walk(a, out));
+                }
+            }
+            Expr::Binary { left, right, .. } => {
+                walk(left, out);
+                walk(right, out);
+            }
+            Expr::Unary { operand, .. } | Expr::Cast { operand, .. } => walk(operand, out),
+            Expr::Aggregate { args, .. } => args.iter().for_each(|a| walk(a, out)),
+            Expr::Case {
+                branches,
+                otherwise,
+            } => {
+                for (c, r) in branches {
+                    walk(c, out);
+                    walk(r, out);
+                }
+                if let Some(o) = otherwise {
+                    walk(o, out);
+                }
+            }
+            Expr::InList { operand, list, .. } => {
+                walk(operand, out);
+                list.iter().for_each(|a| walk(a, out));
+            }
+            Expr::Exists { .. }
+            | Expr::InSubquery { .. }
+            | Expr::ScalarSubquery { .. }
+            | Expr::Column { .. }
+            | Expr::Literal(_)
+            | Expr::OuterColumn { .. } => {}
+        }
+    }
+    let mut out = vec![];
+    exprs.iter().for_each(|e| walk(e, &mut out));
+    out
+}
+
+/// Answer every batchable call in `exprs` over `rows` ahead of time. Returns
+/// a context whose sink serves those answers from a cache, or `None` when
+/// nothing in `exprs` is batchable.
+fn prebatch<'a>(
+    exprs: &'a [Expr],
+    rows: &'a [Row],
+    env: &'a Env,
+    ctx: &'a ExecContext,
+) -> futures::future::BoxFuture<'a, Result<Option<ExecContext>, ExecError>> {
+    // Boxed for the same reason `eval_all_rows` clones into `Arc`s: the
+    // recursive evaluator's future is only provably `Send` behind a box.
+    Box::pin(prebatch_inner(exprs, rows, env, ctx))
+}
+
+async fn prebatch_inner(
+    exprs: &[Expr],
+    rows: &[Row],
+    env: &Env,
+    ctx: &ExecContext,
+) -> Result<Option<ExecContext>, ExecError> {
+    let mut cache: HashMap<(String, Vec<Value>), Value> = HashMap::new();
+    let calls = batchable_calls(exprs);
+    if calls.is_empty() {
+        return Ok(None);
+    }
+    let env = Arc::new(env.clone());
+    let ctx_arc = Arc::new(ctx.clone());
+    for (name, args) in calls {
+        let Some(batch) = ctx.sink.batch_size(&name).await else {
+            continue;
+        };
+        let batch = batch.max(1);
+        let mut seen: HashSet<Vec<Value>> = HashSet::new();
+        let mut tuples: Vec<Vec<Value>> = vec![];
+        let args = Arc::new(args);
+        for r in rows {
+            let (env, ctx, args, row) = (env.clone(), ctx_arc.clone(), args.clone(), r.clone());
+            let t = async move { eval_exprs(&args, &row, &env, &ctx).await }.await?;
+            // Null arguments never reach the model; the sink answers them itself.
+            if t.iter().any(Value::is_null) || !seen.insert(t.clone()) {
+                continue;
+            }
+            tuples.push(t);
+        }
+        if tuples.len() <= 1 {
+            continue;
+        }
+        let sink = ctx.sink.clone();
+        let name_arc = Arc::new(name.clone());
+        let chunks: Vec<Vec<Vec<Value>>> = tuples.chunks(batch).map(<[_]>::to_vec).collect();
+        let answered: Vec<(Vec<Vec<Value>>, Vec<Value>)> = futures::stream::iter(chunks)
+            .map(move |chunk| {
+                let (sink, name) = (sink.clone(), name_arc.clone());
+                async move {
+                    let values = sink.scalar_call_batch(&name, &chunk).await?;
+                    if values.len() != chunk.len() {
+                        return Err(ExecError::Call(format!(
+                            "{name}: batched call returned {} values for {} tuples",
+                            values.len(),
+                            chunk.len()
+                        )));
+                    }
+                    Ok::<_, ExecError>((chunk, values))
+                }
+            })
+            .buffered(ctx.call_concurrency.max(1))
+            .try_collect()
+            .await?;
+        for (chunk, values) in answered {
+            for (t, v) in chunk.into_iter().zip(values) {
+                cache.insert((name.clone(), t), v);
+            }
+        }
+    }
+    if cache.is_empty() {
+        return Ok(None);
+    }
+    let mut out = ctx.clone();
+    out.sink = Arc::new(CachedSink {
+        inner: ctx.sink.clone(),
+        cache,
+    });
+    Ok(Some(out))
+}
+
+/// A sink that answers pre-batched calls from a cache and forwards
+/// everything else.
+struct CachedSink {
+    inner: Arc<dyn CallSink>,
+    cache: HashMap<(String, Vec<Value>), Value>,
+}
+
+#[async_trait::async_trait]
+impl CallSink for CachedSink {
+    async fn scalar_call(&self, name: &str, args: &[Value]) -> Result<Value, ExecError> {
+        if let Some(v) = self.cache.get(&(name.to_ascii_lowercase(), args.to_vec())) {
+            return Ok(v.clone());
+        }
+        self.inner.scalar_call(name, args).await
+    }
+    async fn batch_size(&self, name: &str) -> Option<usize> {
+        self.inner.batch_size(name).await
+    }
+    async fn scalar_call_batch(
+        &self,
+        name: &str,
+        tuples: &[Vec<Value>],
+    ) -> Result<Vec<Value>, ExecError> {
+        self.inner.scalar_call_batch(name, tuples).await
+    }
+    async fn table_call(&self, name: &str, args: &[Value]) -> Result<Batch, ExecError> {
+        self.inner.table_call(name, args).await
+    }
+    async fn scan(&self, table: &str) -> Result<BatchStream, ExecError> {
+        self.inner.scan(table).await
+    }
+    async fn create_table(
+        &self,
+        name: &str,
+        schema: Arc<Schema>,
+        if_not_exists: bool,
+    ) -> Result<bool, ExecError> {
+        self.inner.create_table(name, schema, if_not_exists).await
+    }
+    async fn insert(&self, name: &str, batch: Batch) -> Result<(), ExecError> {
+        self.inner.insert(name, batch).await
+    }
+    async fn drop_table(&self, name: &str, if_exists: bool) -> Result<(), ExecError> {
+        self.inner.drop_table(name, if_exists).await
+    }
 }
 
 async fn is_true(

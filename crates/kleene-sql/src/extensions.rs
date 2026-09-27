@@ -307,7 +307,13 @@ pub fn plan_create_function(text: &str) -> Result<Statement, SqlError> {
         let t = sc
             .quoted()
             .ok_or_else(|| parse_err("expected a quoted prompt template", HINT))?;
-        (FunctionBody::Prompt { template: t }, Volatility::Immutable)
+        (
+            FunctionBody::Prompt {
+                template: t,
+                batch: None,
+            },
+            Volatility::Immutable,
+        )
     } else if sc.eat_keyword("SQL") {
         let q = sc
             .parenthesised()
@@ -332,8 +338,25 @@ pub fn plan_create_function(text: &str) -> Result<Statement, SqlError> {
     let mut volatility = default_vol;
     let mut proxy = None;
     let mut model = None;
+    let mut batch = None;
     loop {
-        if sc.eat_keyword("MODEL") {
+        if sc.eat_keyword("BATCH") {
+            const BHINT: &str = "AS PROMPT '...' BATCH 20";
+            let n = sc
+                .ident()
+                .and_then(|t| t.parse::<usize>().ok())
+                .ok_or_else(|| parse_err("BATCH expects a number of items per call", BHINT))?;
+            if n < 2 {
+                return Err(parse_err("BATCH must be at least 2", BHINT));
+            }
+            if !matches!(body, FunctionBody::Prompt { .. }) {
+                return Err(parse_err(
+                    "BATCH only applies to AS PROMPT functions",
+                    BHINT,
+                ));
+            }
+            batch = Some(n);
+        } else if sc.eat_keyword("MODEL") {
             model = Some(sc.quoted().ok_or_else(|| {
                 parse_err("expected a quoted model alias after MODEL", "MODEL 'proxy'")
             })?);
@@ -383,8 +406,13 @@ pub fn plan_create_function(text: &str) -> Result<Statement, SqlError> {
             HINT,
         ));
     }
+    let body = match body {
+        FunctionBody::Prompt { template, .. } => FunctionBody::Prompt { template, batch },
+        other => other,
+    };
     // Placeholders must name declared arguments.
-    if let FunctionBody::Prompt { template } | FunctionBody::Shell { command: template } = &body {
+    if let FunctionBody::Prompt { template, .. } | FunctionBody::Shell { command: template } = &body
+    {
         for ph in placeholders(template) {
             if !args.iter().any(|(a, _)| a.eq_ignore_ascii_case(&ph)) {
                 return Err(parse_err(
@@ -569,7 +597,8 @@ mod tests {
         assert_eq!(
             body,
             FunctionBody::Prompt {
-                template: "Is {c} right? It's important.".into()
+                template: "Is {c} right? It's important.".into(),
+                batch: None,
             }
         );
         assert_eq!(volatility, Volatility::Immutable);
@@ -595,6 +624,29 @@ mod tests {
                 ..
             }
         ));
+        let s = plan_create_function(
+            "CREATE FUNCTION tag(x TEXT) RETURNS TEXT AS PROMPT 'Tag {x}' BATCH 20 MODEL 'proxy'",
+        )
+        .unwrap();
+        assert!(matches!(
+            s.kind,
+            StatementKind::CreateFunction {
+                body: FunctionBody::Prompt {
+                    batch: Some(20),
+                    ..
+                },
+                ..
+            }
+        ));
+        let e =
+            plan_create_function("CREATE FUNCTION f(x TEXT) RETURNS TEXT AS PROMPT '{x}' BATCH 1")
+                .unwrap_err();
+        assert!(e.to_string().contains("at least 2"), "{e}");
+        let e = plan_create_function(
+            "CREATE FUNCTION f(x TEXT) RETURNS TEXT AS SHELL 'echo {x}' BATCH 4",
+        )
+        .unwrap_err();
+        assert!(e.to_string().contains("AS PROMPT"), "{e}");
         let e =
             plan_create_function("CREATE FUNCTION f(x TEXT) RETURNS TEXT AS PROMPT 'hello {y}'")
                 .unwrap_err();

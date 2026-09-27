@@ -72,6 +72,31 @@ async fn terminal_pack_runs_shell_tasks_from_sql_and_shell_oracles_judge_them() 
     assert!(csv.starts_with("run,pack,mode,seq,task"));
     let curve = l.bench_curve(&report.run).await.unwrap();
     assert_eq!(curve.iter().filter(|(_, s)| *s).count(), 2);
+    // The plots draw from the same tables: the curve and the cost-parity
+    // chart have this run's points, and a chart with no data (this fixture
+    // has no tracer, so no statement estimates; no ratings either) says so
+    // instead of rendering nothing.
+    let plots = l.bench_plots().await.unwrap();
+    let names: Vec<&str> = plots.iter().map(|(n, _)| n.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "learning_curve.svg",
+            "cost_parity.svg",
+            "calls_vs_difficulty.svg",
+            "estimate_accuracy.svg",
+            "plan_space.svg"
+        ]
+    );
+    let by_name = |n: &str| &plots.iter().find(|(m, _)| m == n).unwrap().1;
+    assert!(
+        by_name("learning_curve.svg").contains("<polyline"),
+        "{}",
+        by_name("learning_curve.svg")
+    );
+    assert!(by_name("cost_parity.svg").contains("terminal frozen"));
+    assert!(by_name("estimate_accuracy.svg").contains("no data yet"));
+    assert!(by_name("calls_vs_difficulty.svg").contains("no data yet"));
 }
 
 #[tokio::test]

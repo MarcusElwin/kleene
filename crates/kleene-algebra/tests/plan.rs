@@ -35,6 +35,7 @@ fn catalog() -> Catalog {
         },
         call_kind: CallKind::LlmScalar {
             alias: kleene_core::ModelAlias::worker(),
+            batch: None,
         },
         volatility: Volatility::Immutable,
         description: String::new(),
@@ -297,6 +298,7 @@ fn join_catalog() -> Catalog {
         },
         call_kind: CallKind::LlmScalar {
             alias: kleene_core::ModelAlias(alias.into()),
+            batch: None,
         },
         volatility: Volatility::Immutable,
         description: String::new(),
@@ -316,6 +318,7 @@ fn join_catalog() -> Catalog {
         },
         call_kind: CallKind::LlmScalar {
             alias: kleene_core::ModelAlias::proxy(),
+            batch: None,
         },
         volatility: Volatility::Immutable,
         description: String::new(),
@@ -637,4 +640,20 @@ fn explain_labels_ordered_string_agg() {
     let cp = plan(&logical(sql, &c), &c, &CostModel::default());
     let text = explain(&cp);
     assert!(text.contains("stringagg(text, '; ')"), "{text}");
+}
+
+#[test]
+fn batchable_functions_are_estimated_per_batch() {
+    let kinds = [CallKind::LlmScalar {
+        alias: kleene_core::ModelAlias::worker(),
+        batch: Some(20),
+    }];
+    let cost = CostModel::default();
+    let est = cost.calls_for(&kinds, 41.0);
+    assert!((est.calls - 3.0).abs() < 1e-9, "{}", est.calls);
+    let plain = [CallKind::LlmScalar {
+        alias: kleene_core::ModelAlias::worker(),
+        batch: None,
+    }];
+    assert!((cost.calls_for(&plain, 41.0).calls - 41.0).abs() < 1e-9);
 }

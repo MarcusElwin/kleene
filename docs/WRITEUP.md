@@ -33,10 +33,11 @@ factor), ρ_d (`rlm` / `spawn`, the child's whole plan), and σ_llm / ⋈_llm
 (predicates containing calls). Cost is calls × per-alias tokens and dollars;
 selectivity comes from observed pass rates once a predicate has been seen.
 
-The eight rewrite rules of the plan are implemented except batching (rule 3):
-cheap-first over filters and join conditions, memo dedupe, cascade, semi-join,
-beam-limited recursion, join ordering with branch-and-bound over relation
-subsets, and volatility fences. Estimates mirror the executor's left-to-right
+The eight rewrite rules of the plan are implemented: cheap-first over filters
+and join conditions, memo dedupe, batching (`BATCH n` on a prompt function:
+one call answers up to n distinct tuples, priced as `ceil(rows / n)` calls),
+cascade, semi-join, beam-limited recursion, join ordering with
+branch-and-bound over relation subsets, and volatility fences. Estimates mirror the executor's left-to-right
 short-circuit evaluation, so cheap-first is visible in the numbers rather
 than assumed.
 
@@ -63,7 +64,10 @@ The measurement design from the plan is implemented in `kleene bench`:
 
 - **Learning curve**: a pack run in `learning` mode against the same pack in
   `frozen` mode (no playbook, nothing adopted); accuracy and cost per task
-  are rows in `evals`, the rolling mean is `bench curve`.
+  are rows in `evals`, the rolling mean is `bench curve`, and `bench plot`
+  draws it with the other four plots of the plan (accuracy at cost parity,
+  calls against difficulty, estimated against actual calls, plan-space size
+  against query shape) as SVG from the store.
 - **Cost parity**: `plain` mode runs the tool-calling agent on the same
   provider, tools and budgets; accuracy at equal spend is the comparison.
 - **Transfer**: learn on a prefix of a pack (`--limit`), then run the rest
@@ -84,10 +88,9 @@ CUAD, LAB) are not redistributed here.
 - No results against a real model: the sandbox that built this had no
   provider. Recording fixtures (`bench run --record`) makes the first real
   run replayable for everyone after.
-- Batching (rule 3) and threshold calibration from a sample are not built;
-  thresholds are declared.
-- Function refinement and the learned cost model persist only in-session
-  (sampled selectivity), not as versioned tables.
+- Threshold calibration from a sample is not built; thresholds are declared.
+- The learned cost model persists only in-session (sampled selectivity), not
+  as versioned tables.
 - The `plain` baseline parses JSON actions from text rather than native tool
   use, which keeps it provider-agnostic but is not identical to a vendor
   agent loop.

@@ -33,10 +33,17 @@ pub enum Volatility {
 pub enum CallKind {
     /// No external call: ordinary computation.
     Pure,
-    /// One model call per distinct argument tuple (`LLM`, `LLM_BOOL`, prompt-defined functions).
+    /// One model call per distinct argument tuple (`LLM`, `LLM_BOOL`, prompt-defined functions),
+    /// or one per `batch` tuples when the prompt is batchable.
     LlmScalar {
         /// Which model tier answers.
         alias: ModelAlias,
+        /// Tuples answered per call (`CREATE FUNCTION ... BATCH n`): the
+        /// executor folds that many distinct argument tuples into one prompt
+        /// and the planner estimates `ceil(rows / batch)` calls. `None` is
+        /// one call per tuple.
+        #[serde(default)]
+        batch: Option<usize>,
     },
     /// One model call per input tuple producing rows (`EXPAND`).
     LlmTable {
@@ -297,6 +304,7 @@ mod tests {
             },
             call_kind: CallKind::LlmScalar {
                 alias: ModelAlias::worker(),
+                batch: None,
             },
             volatility: Volatility::Immutable,
             description: "one model call".into(),

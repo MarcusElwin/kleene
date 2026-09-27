@@ -96,10 +96,15 @@ impl CostModel {
             let factor = match k {
                 CallKind::Pure => continue,
                 CallKind::Tool { .. } => 0.0,
-                CallKind::LlmScalar { alias } | CallKind::LlmTable { alias } => {
+                CallKind::LlmScalar { alias, .. } | CallKind::LlmTable { alias } => {
                     self.factor(&alias.0)
                 }
                 CallKind::Recursive { .. } => 1.0,
+            };
+            // A batchable prompt answers `batch` tuples per call.
+            let n = match k {
+                CallKind::LlmScalar { batch: Some(b), .. } if *b > 1 => (n / *b as f64).ceil(),
+                _ => n,
             };
             est = est.plus(self.calls_factor(n, factor));
         }

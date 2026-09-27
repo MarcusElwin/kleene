@@ -230,6 +230,13 @@ enum BenchAction {
     },
     /// Every eval row as CSV on stdout.
     Csv,
+    /// Write the write-up's plots as SVG files: learning curve, accuracy at
+    /// cost parity, calls against difficulty, estimated against actual
+    /// calls, and plan-space size against query shape.
+    Plot {
+        /// Output directory.
+        out: PathBuf,
+    },
 }
 
 async fn run_bench(cli: &Cli, action: &BenchAction) -> anyhow::Result<()> {
@@ -357,6 +364,14 @@ curve {}",
             }
         }
         BenchAction::Csv => print!("{}", learn.bench_csv().await?),
+        BenchAction::Plot { out } => {
+            std::fs::create_dir_all(out)?;
+            for (name, svg) in learn.bench_plots().await? {
+                let path = out.join(&name);
+                std::fs::write(&path, svg)?;
+                println!("{}", path.display());
+            }
+        }
         BenchAction::Build { .. }
         | BenchAction::Terminal { .. }
         | BenchAction::ImportLab { .. } => {}
@@ -430,10 +445,32 @@ enum LearnAction {
     Report,
     /// The playbook ledger.
     Playbook,
-    /// Withdraw a playbook version.
+    /// Withdraw a playbook version (or a learned function version with
+    /// `--function`, which re-adopts the previous version of that name).
     Revert {
         /// Version number.
         version: i64,
+        /// The version is a learned function, not a playbook entry.
+        #[arg(long)]
+        function: bool,
+    },
+    /// The learned function ledger: every version, which is adopted, and why.
+    Functions,
+    /// Add a `CREATE FUNCTION` definition (text, or `@path`) to the ledger as
+    /// the adopted baseline of its name.
+    AddFunction {
+        /// The statement.
+        definition: String,
+    },
+    /// Ask the model for a better prompt for a learned function, from its
+    /// adopted definition and recent failed attempts, and put the candidate
+    /// through the replay gate.
+    Refine {
+        /// Function name.
+        name: String,
+        /// Only use failures of, and replay, tasks of this kind.
+        #[arg(long)]
+        kind: Option<String>,
     },
 }
 
@@ -540,9 +577,38 @@ async fn run_learn(cli: &Cli, action: &LearnAction) -> anyhow::Result<()> {
         LearnAction::Board => print!("{}", learn.board().await?.render_table(100)),
         LearnAction::Report => print!("{}", learn.report().await?.render_table(100)),
         LearnAction::Playbook => print!("{}", learn.playbook().await?.render_table(100)),
-        LearnAction::Revert { version } => {
+        LearnAction::Revert {
+            version,
+            function: false,
+        } => {
             learn.revert(*version).await?;
             println!("reverted playbook v{version}");
+        }
+        LearnAction::Revert {
+            version,
+            function: true,
+        } => match learn.revert_function(*version).await? {
+            Some(prev) => println!("reverted function v{version}; v{prev} adopted again"),
+            None => println!("reverted function v{version}"),
+        },
+        LearnAction::Functions => print!("{}", learn.functions().await?.render_table(100)),
+        LearnAction::AddFunction { definition } => {
+            let v = learn
+                .function_add(&read_task(definition)?, "kleene learn add-function")
+                .await?;
+            println!("function v{v} adopted");
+        }
+        LearnAction::Refine { name, kind } => {
+            let r = learn.refine(name, kind.as_deref()).await?;
+            println!(
+                "{} v{} -> v{} {}: {}\n{}",
+                r.name,
+                r.baseline,
+                r.candidate,
+                if r.adopted { "adopted" } else { "rejected" },
+                r.note,
+                r.definition
+            );
         }
     }
     Ok(())

@@ -531,7 +531,10 @@ State lives in the store, so every command resumes where the last stopped.
 | `learn board` | Counts per generator and status, and each dial |
 | `learn report` | Solve rate, calls and depth by generator and difficulty (`trace_tasks`) |
 | `learn playbook` | The version ledger with eval notes and wins/tries |
-| `learn revert <version>` | Withdraw a playbook version |
+| `learn revert <version> [--function]` | Withdraw a playbook version, or with `--function` a learned function version (the previous version of that name is adopted again) |
+| `learn functions` | The learned function ledger: every version, whether it is adopted, and the replay note |
+| `learn add-function '<CREATE FUNCTION ...>'` | Put a prompt-defined function in the ledger as the adopted baseline of its name; solved runs seed the ledger with the functions they defined |
+| `learn refine <name> [--kind k]` | Ask the model for a better prompt from the adopted definition and recent failed attempts, then replay `--replay` tasks with and without it; adopted only when it solves at least as many at no more cost. Every session defines the adopted versions before its first turn |
 
 ```bash
 kleene learn run --tasks 50 --budget-dollars 5 --generators puzzle,corpus,graph   # overnight
@@ -552,6 +555,7 @@ every task in a fresh workspace, every result a row in `evals`.
 | `bench report` | Accuracy, calls and dollars per pack and mode |
 | `bench curve <run-id> [--window 5]` | The learning curve of one run as a sparkline and rolling mean |
 | `bench csv` | Every eval row as CSV on stdout |
+| `bench plot <out-dir>` | The write-up's plots as SVG files: `learning_curve`, `cost_parity`, `calls_vs_difficulty`, `estimate_accuracy` (the planner's estimated calls against actuals, from `trace_statements`) and `plan_space` (join orders against relations joined) |
 
 ```bash
 kleene bench run tasks/oolong-like --mode frozen --record fixtures/oolong

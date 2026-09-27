@@ -202,7 +202,11 @@ fn expr_label(e: &Expr) -> String {
 fn kind_label(k: &CallKind) -> String {
     match k {
         CallKind::Pure => "pure".into(),
-        CallKind::LlmScalar { alias } => format!("λ {}", alias.0),
+        CallKind::LlmScalar { alias, batch: None } => format!("λ {}", alias.0),
+        CallKind::LlmScalar {
+            alias,
+            batch: Some(b),
+        } => format!("λ {} ×{b}", alias.0),
         CallKind::LlmTable { alias } => format!("κ {}", alias.0),
         CallKind::Tool { tool } => format!("tool {tool}"),
         CallKind::Recursive { role } => format!("ρ {role}"),

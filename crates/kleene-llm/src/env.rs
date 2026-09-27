@@ -26,12 +26,16 @@ pub const NOT_CONFIGURED: &str = "no model provider configured: run `kleene setu
 /// file ([`ProviderSettings::effective`]).
 ///
 /// Registers the Anthropic adapter when a key or auth token is present, and
-/// the OpenAI-compatible adapter when a key or base URL is. Routing comes
+/// the OpenAI-compatible adapter when a key or base URL is; with the
+/// `gateway` feature, also the Open Responses adapter when
+/// `OPEN_RESPONSES_API_KEY` or `OPEN_RESPONSES_BASE_URL` is. Routing comes
 /// from the router TOML if one is named, otherwise
 /// [`RouterConfig::default_for_anthropic`], or, with only an OpenAI-compatible
 /// endpoint, [`RouterConfig::default_for_openai_compat`] on the configured
-/// model (default `gpt-5.4-mini`). Errors with [`ProviderError::Other`] and
-/// [`NOT_CONFIGURED`] when no backend is configured.
+/// model (default `gpt-5.4-mini`); with only a gateway, every alias resolves
+/// to `OPEN_RESPONSES_MODEL` (same default) on it. Errors with
+/// [`ProviderError::Other`] and [`NOT_CONFIGURED`] when no backend is
+/// configured.
 pub fn provider_from_env() -> Result<Arc<dyn Provider>, ProviderError> {
     provider_from_settings(&ProviderSettings::effective()?)
 }
@@ -67,6 +71,21 @@ pub fn provider_from_settings(
         );
         providers.insert(p.name().to_string(), Arc::new(p));
     }
+    #[cfg(feature = "gateway")]
+    let gateway = settings
+        .open_responses
+        .as_ref()
+        .filter(|g| g.is_configured());
+    #[cfg(feature = "gateway")]
+    if let Some(g) = gateway {
+        let p = crate::adapters::OpenResponsesProvider::new(
+            g.api_key.clone(),
+            g.base_url
+                .clone()
+                .unwrap_or_else(|| crate::adapters::open_responses::DEFAULT_BASE_URL.to_string()),
+        );
+        providers.insert(p.name().to_string(), Arc::new(p));
+    }
     if providers.is_empty() {
         return Err(ProviderError::Other(NOT_CONFIGURED.into()));
     }
@@ -78,6 +97,14 @@ pub fn provider_from_settings(
             RouterConfig::from_toml(&text)?
         }
         None if anthropic.is_some() => RouterConfig::default_for_anthropic(),
+        #[cfg(feature = "gateway")]
+        None if openai.is_none() => {
+            let model = gateway
+                .and_then(|g| g.model.clone())
+                .filter(|m| !m.trim().is_empty())
+                .unwrap_or_else(|| DEFAULT_OPENAI_MODEL.to_string());
+            RouterConfig::default_for_open_responses(&model)
+        }
         None => {
             let model = openai
                 .and_then(|o| o.model.clone())
@@ -128,6 +155,29 @@ mod tests {
             ..Default::default()
         };
         provider_from_settings(&s).expect("an auth token is a credential");
+    }
+
+    #[cfg(feature = "gateway")]
+    #[test]
+    fn a_gateway_alone_routes_every_alias_to_it() {
+        use crate::config::OpenResponsesSettings;
+        let s = ProviderSettings {
+            open_responses: Some(OpenResponsesSettings {
+                api_key: None,
+                base_url: Some("https://aura.example/v1".into()),
+                model: Some("gw-model".into()),
+            }),
+            ..Default::default()
+        };
+        let p = provider_from_settings(&s).expect("a gateway URL needs no key");
+        assert!(p.capabilities().cost_reported, "{:?}", p.capabilities());
+        let cfg = RouterConfig::default_for_open_responses("gw-model");
+        for alias in ["root", "worker", "proxy", "judge"] {
+            let c = &cfg.aliases[alias].candidates;
+            assert_eq!(c.len(), 1);
+            assert_eq!(c[0].provider, "open_responses");
+            assert_eq!(c[0].model, "gw-model");
+        }
     }
 
     #[test]

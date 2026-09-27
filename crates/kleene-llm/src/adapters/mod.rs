@@ -2,9 +2,13 @@
 //! to one vendor's HTTP API over `reqwest` and back; no vendor SDKs.
 
 pub mod anthropic;
+#[cfg(feature = "gateway")]
+pub mod open_responses;
 pub mod openai_compat;
 
 pub use anthropic::AnthropicProvider;
+#[cfg(feature = "gateway")]
+pub use open_responses::OpenResponsesProvider;
 pub use openai_compat::OpenAiCompatProvider;
 
 /// An `f32` option as a JSON number with its shortest decimal form, so a

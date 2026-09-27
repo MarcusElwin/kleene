@@ -21,6 +21,11 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 bytes = "1"
 toml = "0.8"
 
+[features]
+# The Open Responses gateway adapter (`OpenResponsesProvider`): Aura or any
+# other gateway speaking `POST /responses`. Off by default.
+gateway = []
+
 [dev-dependencies]
 tempfile = "3"
 
