@@ -297,3 +297,46 @@ async fn planner_cascade_refusal_and_sampled_selectivity_in_the_repl() {
     assert!(out[0].text.contains("total:"), "{}", out[0].text);
     drop(f.dir);
 }
+
+#[tokio::test]
+async fn batch_functions_answer_many_rows_in_one_call() {
+    let p = Arc::new(ScriptedProvider::new(
+        vec![
+            ("each of the 3 items", r#"["fruit", "vegetable", "fruit"]"#),
+            ("Classify pear", "fruit"),
+        ],
+        "unknown",
+    ));
+    let f = repl(p.clone()).await;
+    let r = &f.repl;
+    let out = r
+        .submit(
+            "CREATE TABLE t (x TEXT); INSERT INTO t VALUES ('apple'), ('leek'), ('apple'), ('plum'); \
+             CREATE FUNCTION kind(x TEXT) RETURNS TEXT AS PROMPT 'Classify {x} as fruit or vegetable.' BATCH 10",
+        )
+        .await;
+    assert!(out.iter().all(|o| !o.is_error), "{}", text(&out));
+    // EXPLAIN prices the batch: three distinct rows in one call.
+    let out = r.submit("EXPLAIN SELECT x, kind(x) FROM t").await;
+    assert!(out[0].text.contains("×10"), "{}", out[0].text);
+    assert!(out[0].text.contains("~1 call"), "{}", out[0].text);
+    let out = r.submit("SELECT x, kind(x) AS k FROM t ORDER BY x").await;
+    assert!(!out[0].is_error, "{}", out[0].text);
+    assert!(out[0].text.contains("vegetable"), "{}", out[0].text);
+    assert_eq!(p.calls(), 1, "one batched call for three distinct rows");
+    // A malformed batch answer falls back to one call per tuple.
+    let p2 = Arc::new(ScriptedProvider::new(vec![("Classify", "fruit")], "[]"));
+    let f2 = repl(p2.clone()).await;
+    let out = f2
+        .repl
+        .submit(
+            "CREATE TABLE t (x TEXT); INSERT INTO t VALUES ('apple'), ('pear'); \
+             CREATE FUNCTION kind(x TEXT) RETURNS TEXT AS PROMPT 'Classify {x}.' BATCH 10; \
+             SELECT kind(x) FROM t",
+        )
+        .await;
+    assert!(out.iter().all(|o| !o.is_error), "{}", text(&out));
+    assert_eq!(p2.calls(), 3, "one failed batch, then one call per tuple");
+    drop(f.dir);
+    drop(f2.dir);
+}

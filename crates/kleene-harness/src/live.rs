@@ -68,11 +68,22 @@ pub struct DefinedFunction {
     pub alias: Option<ModelAlias>,
 }
 
+impl DefinedFunction {
+    /// Tuples per call for a batchable prompt body (`BATCH n`).
+    pub fn batch(&self) -> Option<usize> {
+        match &self.body {
+            FunctionBody::Prompt { batch, .. } => batch.filter(|b| *b > 1),
+            _ => None,
+        }
+    }
+}
+
 /// The catalog entry for a defined function.
 pub fn function_entry(name: &str, def: &DefinedFunction) -> FunctionDef {
     let call_kind = match def.body {
         FunctionBody::Prompt { .. } => CallKind::LlmScalar {
             alias: def.alias.clone().unwrap_or_else(ModelAlias::worker),
+            batch: def.batch(),
         },
         FunctionBody::Sql { .. } => CallKind::Pure,
         FunctionBody::Shell { .. } => CallKind::Tool {
@@ -89,7 +100,7 @@ pub fn function_entry(name: &str, def: &DefinedFunction) -> FunctionDef {
         call_kind,
         volatility: def.volatility,
         description: match &def.body {
-            FunctionBody::Prompt { template } => format!("prompt: {}", first_line(template)),
+            FunctionBody::Prompt { template, .. } => format!("prompt: {}", first_line(template)),
             FunctionBody::Sql { query } => format!("sql: {}", first_line(query)),
             FunctionBody::Shell { command } => format!("shell: {}", first_line(command)),
         },
@@ -888,7 +899,7 @@ impl LiveSink {
             return Ok(Value::Null);
         }
         match &def.body {
-            FunctionBody::Prompt { template } => {
+            FunctionBody::Prompt { template, .. } => {
                 let prompt = substitute(template, &def.arg_names, args);
                 let (schema, prompt) = match def.returns {
                     DataType::Bool => (
@@ -942,6 +953,108 @@ impl LiveSink {
     }
 }
 
+impl LiveSink {
+    /// Answer `tuples` of a batchable prompt-defined function in one call:
+    /// the template is shown once, the items are numbered, and the model
+    /// returns a JSON array with one answer per item. Anything that does not
+    /// come back as exactly that many answers falls back to one call per
+    /// tuple, so a batch can never change a result, only its cost.
+    async fn run_defined_batch(
+        &self,
+        name: &str,
+        def: &DefinedFunction,
+        tuples: &[Vec<Value>],
+    ) -> Result<Vec<Value>, ExecError> {
+        let FunctionBody::Prompt { template, .. } = &def.body else {
+            return Err(ExecError::Call(format!("{name} is not a prompt function")));
+        };
+        let n = tuples.len();
+        let (kind, item_type) = match def.returns {
+            DataType::Bool => ("true or false", "boolean"),
+            DataType::Int => ("an integer", "integer"),
+            DataType::Float => ("a number", "number"),
+            DataType::Json => ("a JSON value", "object"),
+            _ => ("a string", "string"),
+        };
+        let mut prompt = format!(
+            "Answer the same question for each of the {n} items below.\n\nQuestion template (placeholders in braces are filled in per item):\n{template}\n\nItems:\n"
+        );
+        for (i, t) in tuples.iter().enumerate() {
+            let fields: Vec<String> = def
+                .arg_names
+                .iter()
+                .zip(t)
+                .map(|(a, v)| format!("{a} = {}", v.render()))
+                .collect();
+            prompt.push_str(&format!("{}. {}\n", i + 1, fields.join("; ")));
+        }
+        prompt.push_str(&format!(
+            "\nReturn a JSON array with exactly {n} elements and nothing else: element i is the answer for item i, as {kind}."
+        ));
+        let schema = serde_json::json!({
+            "type": "array",
+            "items": {"type": item_type},
+            "minItems": n,
+            "maxItems": n
+        });
+        let alias = def
+            .alias
+            .clone()
+            .unwrap_or(self.settings().await.default_alias);
+        let text = self.model_call(alias, prompt, Some(schema), None).await?;
+        let parsed = serde_json::from_str::<serde_json::Value>(&text).ok();
+        let items: Option<Vec<serde_json::Value>> = match parsed {
+            Some(serde_json::Value::Array(a)) => Some(a),
+            Some(serde_json::Value::Object(o)) => o.into_iter().find_map(|(_, v)| match v {
+                serde_json::Value::Array(a) => Some(a),
+                _ => None,
+            }),
+            _ => None,
+        };
+        let items = match items {
+            Some(a) if a.len() == n => a,
+            _ => {
+                tracing::warn!(
+                    function = name,
+                    items = n,
+                    "batched answer did not have one element per item; retrying one call per tuple"
+                );
+                let mut out = Vec::with_capacity(n);
+                for t in tuples {
+                    out.push(self.run_defined(name, def.clone(), t).await?);
+                }
+                return Ok(out);
+            }
+        };
+        let mut out = Vec::with_capacity(n);
+        for (item, t) in items.into_iter().zip(tuples) {
+            let v = match coerce_json(item, def.returns) {
+                Ok(v) => v,
+                Err(_) => self.run_defined(name, def.clone(), t).await?,
+            };
+            out.push(v);
+        }
+        Ok(out)
+    }
+}
+
+/// One element of a batched answer as a value of the function's return type.
+fn coerce_json(item: serde_json::Value, to: DataType) -> Result<Value, ExecError> {
+    use serde_json::Value as J;
+    Ok(match (to, item) {
+        (DataType::Bool, J::Bool(b)) => Value::Bool(b),
+        (DataType::Int, J::Number(n)) if n.is_i64() => Value::Int(n.as_i64().unwrap_or(0)),
+        (DataType::Float, J::Number(n)) => Value::Float(n.as_f64().unwrap_or(0.0)),
+        (DataType::Int, J::Number(n)) => Value::Int(n.as_f64().unwrap_or(0.0) as i64),
+        (DataType::Json, v) => Value::Json(v),
+        (DataType::Text | DataType::Any, J::String(s)) => Value::Text(s),
+        (DataType::Text | DataType::Any, v) => Value::Text(v.to_string()),
+        (_, J::Null) => Value::Null,
+        (to, J::String(s)) => coerce_text(&s, to)?,
+        (to, v) => return Err(ExecError::Call(format!("expected {to:?}, got {v}"))),
+    })
+}
+
 fn first_line(s: &str) -> String {
     let l = s.lines().next().unwrap_or_default();
     if l.chars().count() > 60 {
@@ -983,6 +1096,38 @@ fn coerce_text(text: &str, to: DataType) -> Result<Value, ExecError> {
 
 #[async_trait::async_trait]
 impl CallSink for LiveSink {
+    async fn batch_size(&self, name: &str) -> Option<usize> {
+        self.functions
+            .read()
+            .await
+            .get(&name.to_ascii_lowercase())
+            .and_then(DefinedFunction::batch)
+    }
+
+    async fn scalar_call_batch(
+        &self,
+        name: &str,
+        tuples: &[Vec<Value>],
+    ) -> Result<Vec<Value>, ExecError> {
+        let lower = name.to_ascii_lowercase();
+        let Some(def) = self.functions.read().await.get(&lower).cloned() else {
+            return Err(ExecError::Call(format!(
+                "no implementation for function {name}"
+            )));
+        };
+        if tuples.iter().any(|t| t.len() != def.arg_names.len()) {
+            return Err(ExecError::Call(format!(
+                "{name} takes {} arguments",
+                def.arg_names.len()
+            )));
+        }
+        let out = self.run_defined_batch(&lower, &def, tuples).await?;
+        for v in &out {
+            self.record_stat(&lower, v).await;
+        }
+        Ok(out)
+    }
+
     async fn scalar_call(&self, name: &str, args: &[Value]) -> Result<Value, ExecError> {
         let lower = name.to_ascii_lowercase();
         if let Some(def) = self.functions.read().await.get(&lower).cloned() {

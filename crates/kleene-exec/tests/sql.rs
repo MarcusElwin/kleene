@@ -504,3 +504,165 @@ async fn values_and_empty_from() {
         .await;
     assert_eq!(r, vec![vec![v(2), t("b")], vec![v(1), t("a")]]);
 }
+
+/// A sink that answers `tag(x)` in batches and counts how it was asked.
+struct BatchSink {
+    inner: MemorySink,
+    batch: Option<usize>,
+    single_calls: std::sync::atomic::AtomicUsize,
+    batch_calls: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl kleene_exec::CallSink for BatchSink {
+    async fn scalar_call(&self, name: &str, args: &[Value]) -> Result<Value, ExecError> {
+        self.single_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(Value::Text(format!("{name}:{}", args[0].render())))
+    }
+    async fn batch_size(&self, name: &str) -> Option<usize> {
+        (name == "tag").then_some(self.batch?)
+    }
+    async fn scalar_call_batch(
+        &self,
+        name: &str,
+        tuples: &[Vec<Value>],
+    ) -> Result<Vec<Value>, ExecError> {
+        self.batch_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(tuples
+            .iter()
+            .map(|t| Value::Text(format!("{name}:{}", t[0].render())))
+            .collect())
+    }
+    async fn table_call(
+        &self,
+        name: &str,
+        args: &[Value],
+    ) -> Result<kleene_core::Batch, ExecError> {
+        self.inner.table_call(name, args).await
+    }
+    async fn scan(&self, table: &str) -> Result<kleene_exec::BatchStream, ExecError> {
+        self.inner.scan(table).await
+    }
+    async fn create_table(
+        &self,
+        name: &str,
+        schema: Arc<Schema>,
+        if_not_exists: bool,
+    ) -> Result<bool, ExecError> {
+        self.inner.create_table(name, schema, if_not_exists).await
+    }
+    async fn insert(&self, name: &str, batch: kleene_core::Batch) -> Result<(), ExecError> {
+        self.inner.insert(name, batch).await
+    }
+    async fn drop_table(&self, name: &str, if_exists: bool) -> Result<(), ExecError> {
+        self.inner.drop_table(name, if_exists).await
+    }
+}
+
+async fn batch_world(batch: Option<usize>) -> (Catalog, Arc<BatchSink>) {
+    let mut catalog = standard_catalog();
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int),
+        Field::new("name", DataType::Text),
+    ]));
+    catalog.add_table(TableDef {
+        name: "items".into(),
+        schema: (*schema).clone(),
+        source: TableSource::Stored,
+        volatility: Volatility::Stable,
+        description: String::new(),
+    });
+    catalog.add_function(kleene_core::FunctionDef {
+        name: "tag".into(),
+        args: vec![DataType::Text],
+        variadic: false,
+        returns: kleene_core::FunctionReturn::Scalar {
+            data_type: DataType::Text,
+        },
+        call_kind: kleene_core::CallKind::LlmScalar {
+            alias: kleene_core::ModelAlias::worker(),
+            batch,
+        },
+        volatility: Volatility::Immutable,
+        description: String::new(),
+    });
+    let inner = MemorySink::new();
+    inner
+        .load(
+            "items",
+            schema,
+            vec![
+                vec![v(1), t("a")],
+                vec![v(2), t("b")],
+                vec![v(3), t("a")],
+                vec![v(4), N],
+                vec![v(5), t("c")],
+            ],
+        )
+        .await;
+    (
+        catalog,
+        Arc::new(BatchSink {
+            inner,
+            batch,
+            single_calls: Default::default(),
+            batch_calls: Default::default(),
+        }),
+    )
+}
+
+async fn batch_rows(catalog: &Catalog, sink: Arc<BatchSink>, sql: &str) -> Vec<Vec<Value>> {
+    let stmts = plan_sql(sql, catalog).unwrap();
+    match execute_statement(&stmts[0], ExecContext::new(sink))
+        .await
+        .unwrap()
+    {
+        StatementResult::Rows(b) => b.rows,
+        other => panic!("{other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn batchable_calls_are_folded_per_distinct_tuple() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let sql = "SELECT id, tag(name) FROM items ORDER BY id";
+    let expect = vec![
+        vec![v(1), t("tag:a")],
+        vec![v(2), t("tag:b")],
+        vec![v(3), t("tag:a")],
+        vec![v(4), t("tag:NULL")],
+        vec![v(5), t("tag:c")],
+    ];
+    // Batch of 2 over three distinct non-null names: two batched calls, and
+    // the null row still goes through the ordinary path.
+    let (catalog, sink) = batch_world(Some(2)).await;
+    assert_eq!(batch_rows(&catalog, sink.clone(), sql).await, expect);
+    assert_eq!(sink.batch_calls.load(SeqCst), 2);
+    assert_eq!(sink.single_calls.load(SeqCst), 1);
+    // Without a batch size nothing changes: one call per row.
+    let (catalog, sink) = batch_world(None).await;
+    assert_eq!(batch_rows(&catalog, sink.clone(), sql).await, expect);
+    assert_eq!(sink.batch_calls.load(SeqCst), 0);
+    assert_eq!(sink.single_calls.load(SeqCst), 5);
+    // A predicate is batched the same way, and a call nested inside a call
+    // argument is left alone.
+    let (catalog, sink) = batch_world(Some(10)).await;
+    let r = batch_rows(
+        &catalog,
+        sink.clone(),
+        "SELECT id FROM items WHERE tag(name) = 'tag:a' ORDER BY id",
+    )
+    .await;
+    assert_eq!(r, vec![vec![v(1)], vec![v(3)]]);
+    assert_eq!(sink.batch_calls.load(SeqCst), 1);
+    let (catalog, sink) = batch_world(Some(10)).await;
+    batch_rows(&catalog, sink.clone(), "SELECT tag(tag(name)) FROM items").await;
+    assert_eq!(sink.batch_calls.load(SeqCst), 1, "inner call batched");
+    assert_eq!(
+        sink.single_calls.load(SeqCst),
+        6,
+        "outer call per row, plus the inner call on the null name"
+    );
+}
