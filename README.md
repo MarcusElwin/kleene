@@ -128,6 +128,70 @@ Every example below is in [`demos/`](demos/README.md) or
 [`tasks/`](tasks/README.md). They need a provider unless noted; a second run
 of the same demo costs nothing because every call is memoised.
 
+**Just `kleene`.** No flags. The first open shows a welcome card and a
+prompt; the first thing worth typing is `/setup` if no key is configured
+yet. Then describe a task and press Enter. The model's reply streams in,
+each `sql` fence runs as it lands, every statement shows its rows and its
+cost, and the answer arrives as a relation. A task typed here has no
+`--context`; the model reads files through the workspace tools (`read`,
+`chunks`, `grep`) rooted at the current directory.
+
+```text
+$ kleene
+> Which project consumed the most hours in total? The notes are in demos/oolong/corpus.txt
+
+── turn 1 ─────────────────────────────────────────────────────── 0 calls · $0.0000
+No context table was given, so the notes come in through the workspace tools.
+CREATE TABLE ctx AS
+SELECT c.ordinal, c.text FROM read('demos/oolong/corpus.txt') r CROSS JOIN LATERAL chunks(r.text, 200) c;
+SELECT COUNT(*), MIN(ordinal), MAX(ordinal) FROM ctx;
+  60 | 0 | 59
+  1 row
+
+── turn 2 ────────────────────────────────────────────────────── 67 calls · $0.1100
+Only some notes mention hours. A cheap proxy filters those, then a worker extracts project and hours as JSON.
+CREATE TABLE hours AS
+SELECT ordinal, llm_json('Extract project and hours from: ' || text, '{"project":"string","hours":"number"}') AS h
+FROM ctx WHERE mentions_hours(text);
+  28 rows
+
+  ↳ worker cc3970  d1  Resolve which project 'the migration' refers to in notes 14, 22 and 41
+  │ ── turn 1 ──────────────────────────────────────────────────── 0 calls · $0.0000
+  │ SELECT ordinal, text FROM ctx WHERE ordinal IN (14, 22, 41);
+  │ FINAL FROM (SELECT 'Osprey' AS project);
+  │ ■ final · 1 turns · 2 calls · 3100 tok · $0.0040
+
+── turn 3 ──────────────────────────────────────────────────────────────── writing
+The hours table has 28 rows across six projects. Summing per project and picking the top one:
+FINAL FROM (SELECT h.project, SUM(h.hours) AS total_hours FROM hours GROUP BY 1 ORDER BY 2 DESC LIMIT 1);
+```
+
+Child sessions nest under the turn that opened them, with their own turns
+and a footer. Afterwards the same prompt queries what just happened:
+
+```text
+> /trace SELECT depth, role, outcome, turns, calls, dollars FROM trace_sessions
+> /sql   SELECT COUNT(*) FROM hours
+> /plans
+```
+
+The commands the popup lists:
+
+| Command | Does |
+|---|---|
+| `/sql <statement>` | run one CallSQL statement yourself in an interactive session |
+| `/trace <sql>` | query the store: `trace_*`, `memo`, `tasks`, `evals` |
+| `/board` | the continual loop's task board |
+| `/runs`, `/follow <run>`, `/cancel` | live runs on this daemon; show one by (the tail of) its id; cancel the one being followed |
+| `/plans` | show or hide `EXPLAIN` plans under statements (also `Ctrl-P`) |
+| `/theme [flavour]` | next Catppuccin flavour, or `mocha`, `macchiato`, `frappé`, `latte` (also `Ctrl-T`) |
+| `/setup` | add or change API keys: model providers and web search; the daemon reloads them |
+| `/clear`, `/quit` | clear the stream (`Ctrl-L`); detach, the daemon and its runs keep going (`Ctrl-C`) |
+
+`Tab` completes a command, `Up`/`Down` walk the input history, `PageUp`/`PageDown`
+scroll the stream. Runs started from a shell against the same daemon appear in
+the stream too.
+
 **Long context: partition and map.** Sixty dated meeting notes about six
 projects. The root peeks at `ctx`, partitions it, maps `rlm` over the
 partitions and aggregates the children's answers.
