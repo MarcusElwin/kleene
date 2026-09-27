@@ -528,7 +528,7 @@ impl Provider for AnthropicProvider {
         let text = resp
             .text()
             .await
-            .map_err(|e| ProviderError::Network(e.to_string()))?;
+            .map_err(|e| ProviderError::Network(http::describe(&e)))?;
         Self::parse_response(&text)
     }
 

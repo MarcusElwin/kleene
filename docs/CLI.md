@@ -203,7 +203,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 `ANTHROPIC_AUTH_TOKEN` is accepted instead of the key, and
 `ANTHROPIC_BASE_URL` overrides the endpoint. With only Anthropic configured
-the default routing is: `root` on Opus 5 at high effort, `worker` and `judge`
+the default routing is: `root` on Opus 5.5 at high effort, `worker` and `judge`
 on Sonnet 5, `proxy` on Haiku 4.5 at low effort, prompt prefix cached
 everywhere, priced from the first-party rate card.
 
@@ -230,7 +230,7 @@ export KLEENE_ROUTER_TOML=~/.config/kleene/router.toml
 
 ```toml
 [aliases.root]
-candidates = [{ provider = "anthropic", model = "claude-opus-5" }]
+candidates = [{ provider = "anthropic", model = "claude-opus-5-5" }]
 options = { effort = "high", cache_prefix = true }
 
 [aliases.worker]
@@ -246,11 +246,11 @@ candidates = [{ provider = "anthropic", model = "claude-haiku-4-5" }]
 [aliases.judge]
 candidates = [{ provider = "anthropic", model = "claude-sonnet-5" }]
 
-[pricing."claude-opus-5"]
-input_per_mtok = 5.0
-output_per_mtok = 25.0
-cache_read_per_mtok = 0.5
-cache_write_per_mtok = 6.25
+[pricing."claude-opus-5-5"]
+input_per_mtok = 4.0
+output_per_mtok = 20.0
+cache_read_per_mtok = 0.4
+cache_write_per_mtok = 5.0
 ```
 
 **Web search**
