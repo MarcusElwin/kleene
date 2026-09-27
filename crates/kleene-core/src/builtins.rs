@@ -179,6 +179,7 @@ pub fn call_functions() -> Vec<FunctionDef> {
     use DataType::*;
     let worker = || CallKind::LlmScalar {
         alias: ModelAlias::worker(),
+        batch: None,
     };
     vec![
         FunctionDef {

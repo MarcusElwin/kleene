@@ -64,6 +64,27 @@ pub trait CallSink: Send + Sync {
     /// Evaluate a scalar call function on one argument tuple. Standard
     /// builtins never reach here; the executor evaluates them itself.
     async fn scalar_call(&self, name: &str, args: &[Value]) -> Result<Value, ExecError>;
+    /// How many argument tuples `name` can answer in one call, when its
+    /// definition is batchable (`CREATE FUNCTION ... BATCH n`). `None`, the
+    /// default, means one call per tuple and the executor never batches.
+    async fn batch_size(&self, _name: &str) -> Option<usize> {
+        None
+    }
+    /// Evaluate a scalar call function on many argument tuples at once,
+    /// returning one value per tuple in order. The executor calls this with
+    /// at most `batch_size(name)` distinct, null-free tuples; the default
+    /// falls back to one `scalar_call` per tuple.
+    async fn scalar_call_batch(
+        &self,
+        name: &str,
+        tuples: &[Vec<Value>],
+    ) -> Result<Vec<Value>, ExecError> {
+        let mut out = Vec::with_capacity(tuples.len());
+        for t in tuples {
+            out.push(self.scalar_call(name, t).await?);
+        }
+        Ok(out)
+    }
     /// Evaluate a table function on one argument tuple (`generate_series`
     /// is evaluated natively and never reaches here).
     async fn table_call(&self, name: &str, args: &[Value]) -> Result<Batch, ExecError>;

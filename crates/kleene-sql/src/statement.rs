@@ -22,6 +22,11 @@ pub enum FunctionBody {
     Prompt {
         /// Template text.
         template: String,
+        /// `BATCH n`: the function may answer up to `n` argument tuples in
+        /// one call; the executor folds distinct tuples into one prompt that
+        /// asks for a JSON array of answers.
+        #[serde(default)]
+        batch: Option<usize>,
     },
     /// `AS SQL (...)`: a query over the arguments.
     Sql {
