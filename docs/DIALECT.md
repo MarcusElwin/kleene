@@ -17,6 +17,10 @@ Types: `BOOLEAN`, `BIGINT`, `DOUBLE`, `TEXT`, `JSON`, `VECTOR`. Three-valued
 logic with `AND` / `OR` short-circuiting left to right, which the planner
 relies on (cheap conjuncts first).
 
+String literals are single-quoted with `''` for a quote, or dollar-quoted:
+`$$...$$` takes any text verbatim, quotes and newlines included, which is how
+a whole program goes into `CALL write_file(path, $$...$$)`.
+
 Recursive CTEs run by semi-naive evaluation: the recursive term sees only the
 previous round's delta. `UNION` (set) terminates when a round adds nothing new;
 `UNION ALL` (bag) runs until the term yields no rows or the round cap
@@ -80,7 +84,8 @@ Pure table functions usable in `FROM`: `files(glob)`, `lines(path)`,
 `env(name)`, `git_log([n])`, `git_diff([ref])`, `git_blame(path)`. Volatile
 tools run as statements: `CALL shell('cmd' [, cwd, timeout_ms]) [FROM query]`,
 `CALL write_file(path, text)`, `CALL append_file(path, text)`,
-`CALL patch(path, old, new)`, `CALL mkdir(path)`, `CALL remove(path)`,
+`CALL patch(path, old, new)` (one exact occurrence, after the file was read
+in this session), `CALL mkdir(path)`, `CALL remove(path)`,
 `CALL web_fetch(url)`, `CALL web_search(q [, n])`. A tool's output relation is
 rendered back to the model; the full table with columns and volatility is
 in `kleene-tools`'s crate docs. Roles restrict which tools a session may use.

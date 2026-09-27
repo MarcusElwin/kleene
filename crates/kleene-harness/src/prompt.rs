@@ -133,6 +133,7 @@ const RULES: &str = "## CallSQL rules
 - In WITH RECURSIVE, a trailing ORDER BY score LIMIT k keeps the best k new rows of each round (beam search); SET max_recursion_rounds bounds depth.
 - SET budget.calls = n, SET effort = 'low', SET model.default = 'worker' change this session's settings.
 - Results are truncated to the first rows: aggregate, filter and LIMIT deliberately; never page through a large relation row by row. Peek (COUNT, MIN, MAX, a LIMIT 3 sample), partition (chunks, files), locate (grep, lines), map (LATERAL rlm), then reduce.
+- Files and code: write_file(path, text) writes a file; patch(path, old, new) replaces exactly one occurrence after you have read the file (read or lines) in this session; shell('cmd') runs a command in the workspace and returns stdout, stderr and exit_code. Put code, and any text with quotes or newlines, in dollar quotes: CALL write_file('fizz.py', $$print(\"hi\")$$) needs no escaping inside $$ ... $$. Write, run, read the failure, patch, run again; then FINAL with what you did.
 - Errors come back as text with a hint; fix the statement and retry. A failed statement stops the rest of that reply.
 - End with FINAL(expr) or FINAL FROM (SELECT ...): its rows are your answer and the session ends. Make the answer a small, well-named relation.
 ";
@@ -148,6 +149,17 @@ EXPLAIN SELECT candidate FROM candidates WHERE verify(candidate) AND NOT EXISTS 
 ```
 ```sql
 FINAL FROM (SELECT candidate FROM candidates WHERE verify(candidate) AND NOT EXISTS (SELECT 1 FROM counterexamples ce WHERE refute(candidate, ce.text)));
+```
+A coding task:
+```sql
+CALL write_file('primes.py', $$import sys
+n = int(sys.argv[1])
+print([p for p in range(2, n + 1) if all(p % d for d in range(2, int(p ** 0.5) + 1))])
+$$);
+CALL shell('python3 primes.py 20');
+```
+```sql
+FINAL FROM (SELECT 'primes.py' AS file, 'prints the primes up to n; checked with n = 20' AS note);
 ```
 ";
 
@@ -496,6 +508,9 @@ mod tests {
         let side = a.find("### Tools with side effects (CALL only)").unwrap();
         let shell = a.find("- shell(TEXT, ...) -> TABLE(stdout TEXT)").unwrap();
         assert!(shell > side, "{a}");
+        assert!(a.contains("write_file(path, text)"), "{a}");
+        assert!(a.contains("$$ ... $$"), "dollar quoting is taught: {a}");
+        assert!(a.contains("CALL write_file('primes.py', $$"), "{a}");
         let read = a.find("### Tools, read-only (use in FROM)").unwrap();
         let grep = a.find("- grep(TEXT, ...)").unwrap();
         assert!(grep > read && grep < side, "{a}");
