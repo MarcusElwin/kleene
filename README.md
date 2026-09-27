@@ -479,7 +479,7 @@ Not yet, in the order they are planned:
   and the one-call tool-calling baseline is cheapest wherever the context
   fits in a prompt. The table and the reading are in
   [the write-up](docs/WRITEUP.md#4-what-the-benchmarks-measured); the
-  recorded replies are under `fixtures/` and the plots under `plots/`.
+  per-task rows, the report and the plots are under `plots/`.
 - **Engine gaps** listed in [the write-up](docs/WRITEUP.md#5-honest-gaps):
   proxy thresholds calibrated from a sample instead of declared, and the
   learned cost model persisted as versioned tables rather than sampled per

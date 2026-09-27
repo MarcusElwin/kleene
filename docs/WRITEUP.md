@@ -3,8 +3,8 @@
 *Status: engineering write-up for the M0–M7 implementation. Section 3 is
 the deterministic test suite (scripted providers, code oracles, replay
 fixtures). Section 4 is the first run of the four shipped packs against a
-real model (Claude Opus 5.5, 27 September 2026), recorded under
-`fixtures/`.*
+real model (Claude Opus 5.5, 27 September 2026); the per-task rows are
+`plots/evals.csv`.*
 
 ## 1. Claim
 
@@ -65,9 +65,11 @@ The four shipped packs ran once each under the three modes of
 [`docs/BENCHMARKS.md`](BENCHMARKS.md) on 27 September 2026, with the default
 routing: `root` on `claude-opus-5-5` at high effort, `worker` and `judge` on
 `claude-sonnet-5`, `proxy` on `claude-haiku-4-5`, priced at the list rates
-in the router. Every model reply is recorded under `fixtures/<pack>`,
-`fixtures/<pack>-learning` and `fixtures/<pack>-plain`. The table is
-`kleene bench report` over the store those runs left; `dollars` is the
+in the router. The per-task rows (`kleene bench csv`) are `plots/evals.csv`
+and the table is `kleene bench report` (`plots/report.txt`) over the store
+those runs left; the model replies were recorded but are not checked in,
+because the catalog issue below means they cannot replay the runs yet.
+`dollars` is the
 pack total, `calls` and `tokens` are per task, and the learning column
 excludes the gate replays (below).
 
@@ -178,7 +180,7 @@ cargo run -- bench report
 cargo run -- bench plot plots/
 ```
 
-The runs of section 4 are `fixtures/<pack>`, `fixtures/<pack>-learning` and
-`fixtures/<pack>-plain`; `bench run --replay <dir>` serves them, subject to
-the catalog caveat in section 5. `plots/` holds the SVGs `bench plot` drew
-from those runs.
+The runs of section 4 are `plots/evals.csv` and `plots/report.txt`, with
+the SVGs `bench plot` drew from the same store beside them. `fixtures/` is
+ignored by git: record your own with `--record`, and replay with `--replay`
+once the catalog caveat in section 5 is fixed.
