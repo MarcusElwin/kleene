@@ -58,14 +58,18 @@ Prompt-defined functions:
 ```sql
 CREATE [OR REPLACE] FUNCTION name(arg TYPE, ...) RETURNS TYPE
   AS PROMPT 'template with {arg} placeholders'
-  [MODEL 'alias'] [IMMUTABLE | STABLE | VOLATILE]
+  [MODEL 'alias'] [BATCH n] [IMMUTABLE | STABLE | VOLATILE]
   [PROXY score_fn THRESHOLDS (low, high)];
 CREATE FUNCTION name(...) RETURNS TYPE AS SQL (SELECT ...);
 CREATE FUNCTION name(...) RETURNS BOOLEAN AS SHELL 'command {arg}';
 ```
 
 `MODEL` picks the tier (`root`, `worker`, `proxy`, `judge`, or any alias the
-router knows). `PROXY` declares a cheap scorer (`RETURNS DOUBLE` in `[0, 1]`)
+router knows). `BATCH n` marks the prompt batchable: the executor answers up
+to `n` distinct argument tuples per call (the template shown once, the items
+numbered, a JSON array of answers back) and `EXPLAIN` prices `ceil(rows / n)`
+calls; an answer without exactly one element per item falls back to one call
+per tuple. `PROXY` declares a cheap scorer (`RETURNS DOUBLE` in `[0, 1]`)
 the planner may cascade the predicate through. Volatility defaults: prompt
 functions `IMMUTABLE`, SQL bodies `STABLE`, shell bodies `VOLATILE`.
 

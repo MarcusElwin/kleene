@@ -475,9 +475,9 @@ Not yet, in the order they are planned:
   the deterministic suite; the first real runs are one
   `bench run --record` away from being replayable by everyone after.
 - **Engine gaps** listed in [the write-up](docs/WRITEUP.md#5-honest-gaps):
-  call batching (rule 3 of the plan), proxy thresholds calibrated from a
-  sample instead of declared, and the learned cost model persisted as
-  versioned tables rather than sampled per session.
+  proxy thresholds calibrated from a sample instead of declared, and the
+  learned cost model persisted as versioned tables rather than sampled per
+  session.
 
 ## Developing
 

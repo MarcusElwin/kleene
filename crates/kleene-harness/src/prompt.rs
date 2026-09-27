@@ -124,7 +124,7 @@ This session runs at depth {} of {}; you have at most {} turns.\n",
 
 const RULES: &str = "## CallSQL rules
 - PostgreSQL-flavoured subset: SELECT, JOIN ... ON, WHERE, GROUP BY/HAVING, ORDER BY, LIMIT, subqueries, EXISTS, IN, WITH and WITH RECURSIVE; CREATE TABLE t AS SELECT ...; INSERT INTO t SELECT ...; DROP TABLE t.
-- Define judgement functions once, then use them in predicates: CREATE FUNCTION verify(x TEXT) RETURNS BOOLEAN AS PROMPT 'Is {x} ...? ' (also AS SQL (SELECT ...) and AS SHELL 'cmd {x}').
+- Define judgement functions once, then use them in predicates: CREATE FUNCTION verify(x TEXT) RETURNS BOOLEAN AS PROMPT 'Is {x} ...? ' (also AS SQL (SELECT ...) and AS SHELL 'cmd {x}'). Add BATCH 20 to a prompt function whose items are short and independent: one call then answers up to 20 rows.
 - Model functions: llm(prompt), llm_bool(prompt), llm_json(prompt, schema), expand(prompt, n) as a table. Each distinct argument tuple costs one call; repeated calls are memoised, so express work as sets, not loops.
 - Tools marked read-only are table functions you use in FROM (files, grep, lines, read, chunks, git_log, ...). Tools with side effects run only as statements: CALL tool(args) or CALL tool(args) FROM query (one call per row, in order); they cannot appear inside expressions.
 - Delegate with rlm(question, context) in CROSS JOIN LATERAL to run a child session over each partition, or spawn(agent, task, context) to run a declared agent (CREATE AGENT name MODEL 'worker' EFFORT 'low' TOOLS (files, grep) BUDGET (calls 40) PROMPT '...'). A child sees its context as table ctx(text) and returns answer (first column of its FINAL) and detail (its FINAL row as JSON). Children are refused at the maximum depth.
