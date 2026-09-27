@@ -2,7 +2,8 @@
 
 Both demos run the M3 harness end to end: the model writes CallSQL, the
 harness executes it, and children run for `rlm(...)` and `spawn(...)`.
-They need a provider: set `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` (or a
+They need a provider: run `kleene setup`, or set `ANTHROPIC_API_KEY` or
+`OPENAI_API_KEY` (or `OPENAI_BASE_URL` alone for a local server, or a
 `KLEENE_ROUTER_TOML`). Every model call is memoised in the store, so a
 second run of the same demo costs nothing.
 
@@ -36,15 +37,17 @@ kleene trace "SELECT s.role, st.sql, st.calls FROM trace_statements st JOIN trac
 ## Watching live in the TUI
 
 `kleene tui` attaches to the engine daemon (starting one in the
-background if none is listening) and shows the call tree, transcript and plan
-of every run as events arrive. `--run` starts a task on connect:
+background if none is listening) and shows every run as one stream: each
+turn with its calls and cost, the reply as it streams, every statement's
+result, child sessions one level in, and the answer as a `FINAL` block. `--run` starts a task on connect:
 
 ```bash
 kleene tui --run @demos/oolong/task.txt --context demos/oolong/corpus.txt
 ```
 
-Keys: `j`/`k` move, `f` fold, `x` cancel the selected statement, `3` opens
-the trace explorer (SQL over the store), `d` detaches while the run continues.
+`Ctrl-P` shows each statement's `EXPLAIN` under it, `Ctrl-X` cancels the run
+being followed, `/trace <sql>` queries the store from the prompt, and
+`Ctrl-C` or `/quit` detaches while the run continues.
 `kleene attach` is the headless twin: it prints every event as a JSON
 line, and with `--run` exits when that run finishes. `kleene daemon` runs
 the engine in the foreground; a client that reconnects resumes from its last
@@ -58,7 +61,8 @@ beam-limited recursion: see [`planner/README.md`](planner/README.md).
 ## Continual loop
 
 `kleene learn` keeps a `tasks` table fed by generators (`sat3`, `graph`,
-`puzzle`, `corpus`, `repo`), each with a code oracle, plus tasks you add and
+`puzzle`, `corpus`, `repo`, `statements`, `contracts`), each with a code
+oracle, plus tasks you add and
 tasks the model proposes (judged by a separate `judge` call). Every attempt
 moves a Bradley-Terry rating for the task and for the solver configuration;
 the curriculum picks the pending task nearest even odds and steps a
@@ -76,7 +80,7 @@ kleene learn board          # pending / running / solved / failed / review per g
 kleene learn report         # SELECT generator, difficulty, AVG(solved), AVG(calls), AVG(depth) FROM trace_tasks GROUP BY 1, 2
 kleene learn playbook       # the version ledger with eval notes
 kleene learn revert 3       # withdraw a playbook version
-kleene tui                  # view 4 is the live board
+kleene tui                  # /board is the live board
 ```
 
 ## Benchmarks

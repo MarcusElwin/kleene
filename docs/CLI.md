@@ -334,6 +334,8 @@ flag-driven otherwise.
 | `--openai-base-url <url>` | OpenAI-compatible endpoint; a local server needs only this |
 | `--openai-model <model>` | The model every alias resolves to without a router |
 | `--router <path>` | Router TOML with aliases, failover and pricing |
+| `--web-search-provider <name>` | Service behind the `web_search` tool: `brave` (default), `tavily`, `exa` or `linkup` |
+| `--web-search-key <key>` | API key for the web search service |
 | `--show` | Print the effective settings with keys masked and stop |
 
 Flags merge into the existing file; providers not mentioned are kept.
@@ -453,8 +455,9 @@ on the daemon. The run appears in the stream as it happens: each turn under
 a rule with its calls and cost, the model's reply streaming in with the SQL
 highlighted, every statement's result, child sessions one level in, and the
 answer as a FINAL block. `Ctrl-P` unfolds each statement's `EXPLAIN` under
-it. Runs started from a shell with `kleene run` against the same daemon
-appear in the same stream.
+it. Runs started against the same daemon from another client (`kleene tui
+--run`, `kleene attach --run`) appear in the same stream; `kleene run` is
+in-process and does not go through the daemon.
 
 ![The command popup](screenshots/commands.png)
 
@@ -487,6 +490,8 @@ Keys:
 | `Ctrl-T` | next Catppuccin flavour; `KLEENE_THEME=latte` picks the starting one |
 | `Ctrl-X` | cancel the run being followed |
 | `Ctrl-U` | clear the input |
+| `Esc` | clear the input and close the command popup |
+| `Ctrl-L` | clear the stream |
 | `Ctrl-C` | detach; the daemon and its runs keep going |
 
 ### `kleene attach`
@@ -505,7 +510,8 @@ Run the engine in the foreground on a Unix socket (`--socket`, default
 `.kleene/daemon.sock`). Clients speak newline-delimited JSON: `Subscribe`
 with a cursor for replay, `StartRun`, `Submit` (REPL statements in a
 client-owned session), `Query` (SQL over the store), `Cancel`, `CancelRun`,
-`ListRuns`, `Detach`. Two clients see the same event stream; a client that
+`ListRuns`, `Reload` (re-read the keys; `/setup` sends it after saving),
+`Detach`. Two clients see the same event stream; a client that
 reconnects resumes from its last cursor. See
 [`ARCHITECTURE.md`](ARCHITECTURE.md#processes).
 
@@ -559,7 +565,7 @@ Shipped packs are described in [`tasks/README.md`](../tasks/README.md).
 ## Working from source
 
 ```bash
-git clone https://github.com/MarcusElwin/callgebra && cd kleene
+git clone https://github.com/MarcusElwin/callgebra && cd callgebra
 cargo build --release                       # first build compiles DuckDB: ~10 min, ~4 GB
 ./target/release/kleene --help
 cargo run -- repl -c "SELECT 42 AS answer"   # debug build, same engine

@@ -88,7 +88,6 @@ CUAD, LAB) are not redistributed here.
   thresholds are declared.
 - Function refinement and the learned cost model persist only in-session
   (sampled selectivity), not as versioned tables.
-- Streaming to the TUI's live pane is in the protocol but not emitted.
 - The `plain` baseline parses JSON actions from text rather than native tool
   use, which keeps it provider-agnostic but is not identical to a vendor
   agent loop.
