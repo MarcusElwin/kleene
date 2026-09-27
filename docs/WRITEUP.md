@@ -86,8 +86,8 @@ CUAD, LAB) are not redistributed here.
   provider. Recording fixtures (`bench run --record`) makes the first real
   run replayable for everyone after.
 - Threshold calibration from a sample is not built; thresholds are declared.
-- Function refinement and the learned cost model persist only in-session
-  (sampled selectivity), not as versioned tables.
+- The learned cost model persists only in-session (sampled selectivity), not
+  as versioned tables.
 - The `plain` baseline parses JSON actions from text rather than native tool
   use, which keeps it provider-agnostic but is not identical to a vendor
   agent loop.

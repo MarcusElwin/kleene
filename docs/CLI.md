@@ -531,7 +531,10 @@ State lives in the store, so every command resumes where the last stopped.
 | `learn board` | Counts per generator and status, and each dial |
 | `learn report` | Solve rate, calls and depth by generator and difficulty (`trace_tasks`) |
 | `learn playbook` | The version ledger with eval notes and wins/tries |
-| `learn revert <version>` | Withdraw a playbook version |
+| `learn revert <version> [--function]` | Withdraw a playbook version, or with `--function` a learned function version (the previous version of that name is adopted again) |
+| `learn functions` | The learned function ledger: every version, whether it is adopted, and the replay note |
+| `learn add-function '<CREATE FUNCTION ...>'` | Put a prompt-defined function in the ledger as the adopted baseline of its name; solved runs seed the ledger with the functions they defined |
+| `learn refine <name> [--kind k]` | Ask the model for a better prompt from the adopted definition and recent failed attempts, then replay `--replay` tasks with and without it; adopted only when it solves at least as many at no more cost. Every session defines the adopted versions before its first turn |
 
 ```bash
 kleene learn run --tasks 50 --budget-dollars 5 --generators puzzle,corpus,graph   # overnight

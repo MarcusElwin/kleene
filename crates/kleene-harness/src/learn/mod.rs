@@ -10,6 +10,7 @@
 //! morning report is a query.
 
 pub mod bench;
+pub mod functions;
 pub mod generators;
 pub mod packs;
 pub mod plain;
@@ -180,7 +181,7 @@ impl Learn {
         harness_cfg: HarnessConfig,
         cfg: LearnConfig,
     ) -> Result<Self, HarnessError> {
-        for ddl in DDL {
+        for ddl in DDL.iter().chain(functions::DDL) {
             store.execute(ddl).await?;
         }
         let solver = format!(
@@ -497,8 +498,28 @@ Aim for a task the agent solves about half the time. Reply with JSON only: {{\"t
         replay: bool,
         workspace: Option<&std::path::Path>,
     ) -> Result<RunReport, HarnessError> {
+        self.run_task_with(task, playbook, replay, workspace, None)
+            .await
+    }
+
+    /// The learning knobs.
+    pub(crate) fn cfg(&self) -> &LearnConfig {
+        &self.cfg
+    }
+
+    /// [`Learn::run_task_in`] with an explicit set of learned function
+    /// definitions (`None` defines the ledger's adopted versions).
+    pub(crate) async fn run_task_with(
+        &self,
+        task: &Task,
+        playbook: Vec<PlaybookExample>,
+        replay: bool,
+        workspace: Option<&std::path::Path>,
+        functions: Option<Vec<String>>,
+    ) -> Result<RunReport, HarnessError> {
         let mut cfg = self.harness_cfg.clone();
         cfg.playbook = playbook;
+        cfg.functions = functions;
         // Replays bypass the memo so both arms pay for every call and the
         // cost comparison is honest.
         cfg.no_memo = replay;
@@ -612,6 +633,7 @@ Aim for a task the agent solves about half the time. Reply with JSON only: {{\"t
         let mut adopted = None;
         if verdict.pass {
             if let Some(sql) = winning_sql(&report) {
+                self.seed_functions(&sql, &report.run.to_string()).await?;
                 let v = self.record_candidate(&task, &sql, &report).await?;
                 candidate = Some(v);
                 adopted = Some(self.gate(&task.kind, v).await?);

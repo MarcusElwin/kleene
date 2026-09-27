@@ -69,6 +69,35 @@ pub struct DefinedFunction {
 }
 
 impl DefinedFunction {
+    /// The definition a `CREATE FUNCTION` statement declares, with its
+    /// lower-case name. Proxy declarations are not part of the definition
+    /// (they are catalog annotations that need the proxy to exist).
+    pub fn from_statement(stmt: &Statement) -> Result<(String, Self), ExecError> {
+        let kleene_sql::StatementKind::CreateFunction {
+            name,
+            args,
+            returns,
+            body,
+            volatility,
+            model,
+            ..
+        } = &stmt.kind
+        else {
+            return Err(ExecError::Eval("not a CREATE FUNCTION".into()));
+        };
+        Ok((
+            name.to_ascii_lowercase(),
+            Self {
+                arg_names: args.iter().map(|(n, _)| n.clone()).collect(),
+                arg_types: args.iter().map(|(_, t)| *t).collect(),
+                returns: *returns,
+                body: body.clone(),
+                volatility: *volatility,
+                alias: model.as_ref().map(|m| ModelAlias(m.clone())),
+            },
+        ))
+    }
+
     /// Tuples per call for a batchable prompt body (`BATCH n`).
     pub fn batch(&self) -> Option<usize> {
         match &self.body {

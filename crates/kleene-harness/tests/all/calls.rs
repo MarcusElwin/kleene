@@ -311,7 +311,7 @@ async fn batch_functions_answer_many_rows_in_one_call() {
     let r = &f.repl;
     let out = r
         .submit(
-            "CREATE TABLE t (x TEXT); INSERT INTO t VALUES ('apple'), ('leek'), ('apple'), ('plum'); \
+            "CREATE TABLE t AS SELECT 'apple' AS x UNION ALL SELECT 'leek' UNION ALL SELECT 'apple' UNION ALL SELECT 'plum'; \
              CREATE FUNCTION kind(x TEXT) RETURNS TEXT AS PROMPT 'Classify {x} as fruit or vegetable.' BATCH 10",
         )
         .await;
@@ -330,7 +330,7 @@ async fn batch_functions_answer_many_rows_in_one_call() {
     let out = f2
         .repl
         .submit(
-            "CREATE TABLE t (x TEXT); INSERT INTO t VALUES ('apple'), ('pear'); \
+            "CREATE TABLE t AS SELECT 'apple' AS x UNION ALL SELECT 'pear'; \
              CREATE FUNCTION kind(x TEXT) RETURNS TEXT AS PROMPT 'Classify {x}.' BATCH 10; \
              SELECT kind(x) FROM t",
         )

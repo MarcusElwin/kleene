@@ -81,6 +81,11 @@ pub struct HarnessConfig {
     pub observer: Option<Arc<dyn Observer>>,
     /// Learned playbook entries rendered into the prompt as examples.
     pub playbook: Vec<crate::PlaybookExample>,
+    /// `CREATE FUNCTION` statements defined before the first turn. `None`
+    /// defines the adopted versions of the learned function ledger
+    /// (`kleene learn functions`), so a refined `verify` is what every
+    /// session calls; `Some` defines exactly these (the replay gate's arms).
+    pub functions: Option<Vec<String>>,
     /// Skip the memo so every call is real (replay evals compare true cost).
     pub no_memo: bool,
     /// The service behind `web_search`; `None` makes every search fail.
@@ -102,6 +107,7 @@ impl Default for HarnessConfig {
             max_tokens: 4096,
             observer: None,
             playbook: vec![],
+            functions: None,
             no_memo: false,
             web_search: None,
         }
@@ -328,13 +334,27 @@ impl Harness {
             depth: 0,
             role: role.clone(),
         };
+        let mut base_catalog = self.root_catalog();
+        let mut functions = HashMap::new();
+        let learned = match &self.cfg.functions {
+            Some(list) => list.clone(),
+            None => crate::learn::functions::adopted_definitions(&self.store).await?,
+        };
+        for sql in &learned {
+            let stmt = kleene_sql::plan_create_function(sql)
+                .map_err(|e| HarnessError::Config(format!("learned function: {e}")))?;
+            let (name, def) = crate::live::DefinedFunction::from_statement(&stmt)
+                .map_err(|e| HarnessError::Config(format!("learned function: {e}")))?;
+            base_catalog.add_function(crate::live::function_entry(&name, &def));
+            functions.insert(name, def);
+        }
         let record = SessionRecord {
             role,
             context,
             budget: self.cfg.budget.clone(),
             usage: BudgetUsage::default(),
             agents: HashMap::new(),
-            functions: HashMap::new(),
+            functions,
             settings: ModelSettings {
                 no_memo: self.cfg.no_memo,
                 ..ModelSettings::default()
@@ -348,7 +368,7 @@ impl Harness {
             parent: None,
             task: task.to_string(),
             record,
-            base_catalog: self.root_catalog(),
+            base_catalog,
         };
         let root = self.run_session(spec).await?;
         Ok(RunReport { run, root })
