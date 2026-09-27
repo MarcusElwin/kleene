@@ -1333,7 +1333,7 @@ dependencies = [
 
 [[package]]
 name = "kleene"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1359,7 +1359,7 @@ dependencies = [
 
 [[package]]
 name = "kleene-algebra"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "kleene-core",
@@ -1373,7 +1373,7 @@ dependencies = [
 
 [[package]]
 name = "kleene-core"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1383,7 +1383,7 @@ dependencies = [
 
 [[package]]
 name = "kleene-daemon"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "futures",
  "kleene-core",
@@ -1402,7 +1402,7 @@ dependencies = [
 
 [[package]]
 name = "kleene-difftest"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "kleene-core",
  "kleene-exec",
@@ -1414,7 +1414,7 @@ dependencies = [
 
 [[package]]
 name = "kleene-exec"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "async-recursion",
  "async-trait",
@@ -1430,7 +1430,7 @@ dependencies = [
 
 [[package]]
 name = "kleene-harness"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -1454,7 +1454,7 @@ dependencies = [
 
 [[package]]
 name = "kleene-llm"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1473,7 +1473,7 @@ dependencies = [
 
 [[package]]
 name = "kleene-sql"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "kleene-core",
  "serde",
@@ -1484,7 +1484,7 @@ dependencies = [
 
 [[package]]
 name = "kleene-store"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "duckdb",
@@ -1500,7 +1500,7 @@ dependencies = [
 
 [[package]]
 name = "kleene-tools"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1518,7 +1518,7 @@ dependencies = [
 
 [[package]]
 name = "kleene-trace"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "kleene-core",
  "serde",
@@ -1529,7 +1529,7 @@ dependencies = [
 
 [[package]]
 name = "kleene-tui"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "crossterm",
  "futures",
