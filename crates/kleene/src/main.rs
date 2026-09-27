@@ -296,6 +296,11 @@ async fn run_bench(cli: &Cli, action: &BenchAction) -> anyhow::Result<()> {
     }
     let store = open_store(cli)?;
     let mut cfg = daemon_config(cli).await?;
+    // Trace every statement so `bench plot` can draw the planner's
+    // estimates against actual calls and the plan-space sizes.
+    cfg.tracer = Some(kleene_trace::Tracer::new(std::sync::Arc::new(
+        store.trace_sink(),
+    )));
     if let BenchAction::Run { record, replay, .. } = action {
         if let Some(dir) = replay {
             cfg.provider = Some(Arc::new(kleene_llm::ReplayProvider::new(dir.clone())));
@@ -495,7 +500,10 @@ async fn run_learn(cli: &Cli, action: &LearnAction) -> anyhow::Result<()> {
     use kleene_harness::learn::verify::Verify;
     use kleene_harness::learn::{Learn, LearnConfig, RunLimits};
     let store = open_store(cli)?;
-    let cfg = daemon_config(cli).await?;
+    let mut cfg = daemon_config(cli).await?;
+    cfg.tracer = Some(kleene_trace::Tracer::new(std::sync::Arc::new(
+        store.trace_sink(),
+    )));
     let replay = match action {
         LearnAction::Run { replay, .. } => *replay,
         _ => 3,

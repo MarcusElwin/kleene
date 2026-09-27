@@ -236,6 +236,19 @@ impl Learn {
                     s(&id)
                 ))
                 .await?;
+            // The attempt row is what the calls-against-difficulty plot and
+            // the trace_tasks view read; a pack task is an attempt like any
+            // other, with the mode as its solver.
+            self.store()
+                .execute(&format!(
+                    "INSERT INTO attempts VALUES ({}, {}, {}, {}, {}, {calls}, {dollars}, {depth}, NULL, now())",
+                    s(&id),
+                    s(&run),
+                    s(&format!("bench:{}", mode.label())),
+                    verdict.pass,
+                    s(&verdict.detail)
+                ))
+                .await?;
             self.store()
                 .execute(&format!(
                     "INSERT INTO evals VALUES ({}, {}, {}, {seq}, {}, {}, {}, {}, {calls}, {tokens}, {dollars}, {depth}, {turns}, {wall_ms}, now())",

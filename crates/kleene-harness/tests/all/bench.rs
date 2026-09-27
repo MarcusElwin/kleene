@@ -96,7 +96,18 @@ async fn terminal_pack_runs_shell_tasks_from_sql_and_shell_oracles_judge_them() 
     );
     assert!(by_name("cost_parity.svg").contains("terminal frozen"));
     assert!(by_name("estimate_accuracy.svg").contains("no data yet"));
-    assert!(by_name("calls_vs_difficulty.svg").contains("no data yet"));
+    // A pack task is an attempt, so the difficulty plot has its points.
+    assert!(
+        by_name("calls_vs_difficulty.svg").contains("<circle"),
+        "{}",
+        by_name("calls_vs_difficulty.svg")
+    );
+    let attempts = store
+        .query("SELECT solver, COUNT(*) FROM attempts GROUP BY solver")
+        .await
+        .unwrap();
+    assert_eq!(attempts.rows[0][0].render(), "bench:frozen");
+    assert_eq!(attempts.rows[0][1].render(), "3");
 }
 
 #[tokio::test]

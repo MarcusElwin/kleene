@@ -550,7 +550,7 @@ modes, oracles, report columns and plots measure is in
 
 | Command | What it does |
 |---|---|
-| `bench run <pack-dir> [--mode learning\|frozen\|plain] [--limit N] [--record <dir>] [--replay <dir>]` | Run a pack. `learning` shows and adopts the playbook; `frozen` is the control; `plain` is a tool-calling agent on the same provider, tools and budget. `--record` saves every model reply as fixtures; `--replay` serves them offline |
+| `bench run <pack-dir> [--mode learning\|frozen\|plain] [--limit N] [--record <dir>] [--replay <dir>] [--resume <run-id>]` | Run a pack. `learning` shows and adopts the playbook; `frozen` is the control; `plain` is a tool-calling agent on the same provider, tools and budget. `--record` saves every model reply as fixtures; `--replay` serves them offline. A task that ends without a token spent (no credit, a bad key) stops the run with the reason in `bench_runs.note`; `--resume` continues that run at the first task without a row |
 | `bench build <out-dir> --from <generator> [--count 20] [--dial 0.5] [--seed 1]` | Freeze generator output into a pack; same seeds, same tasks |
 | `bench terminal <out-dir>` | Write the built-in Terminal-Bench-style pack |
 | `bench import-lab <lab-root> <out-dir>` | Import a Harvey LAB checkout into a pack |
