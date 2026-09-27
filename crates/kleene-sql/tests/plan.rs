@@ -482,6 +482,8 @@ fn unsupported_constructs_have_hints() {
         ("SELECT row_number() OVER () FROM nodes", "window"),
         ("SELECT * FROM edges NATURAL JOIN nodes", "ON"),
         ("UPDATE nodes SET name = 'x'", "append-only"),
+        ("SELECT count(id ORDER BY id) FROM nodes", "string_agg"),
+        ("SELECT string_agg(name, ',' LIMIT 2) FROM nodes", "LIMIT"),
     ] {
         let e = err(sql);
         let rendered = render_error(&e);

@@ -726,12 +726,29 @@ impl ChildRunner for Arc<Harness> {
                 )));
             }
         }
+        let remaining = pbudget.remaining(&pused);
         let budget = intersect(
-            &pbudget
-                .remaining(&pused)
-                .slice(self.cfg.child_budget_fraction),
+            &remaining.slice(self.cfg.child_budget_fraction),
             &role.budget,
         );
+        // A child that starts with nothing to spend fails on its first call
+        // with a bare "call budget exceeded: 1 > 0". Refuse it here instead,
+        // naming what the parent has left and how the slice is computed, so
+        // the model can raise the budget or answer in this session.
+        let what = if agent.is_some() { "spawn" } else { "rlm" };
+        let pct = (self.cfg.child_budget_fraction * 100.0).round() as u64;
+        if let (Some(0), Some(limit)) = (budget.calls, pbudget.calls) {
+            return Err(ExecError::Call(format!(
+                "{what} refused: a child gets {pct}% of this session's remaining calls, rounded down, and {} of budget.calls {limit} remain, so it would get none; SET budget.calls higher or answer here",
+                remaining.calls.unwrap_or(0)
+            )));
+        }
+        if let (Some(0), Some(limit)) = (budget.tokens, pbudget.tokens) {
+            return Err(ExecError::Call(format!(
+                "{what} refused: a child gets {pct}% of this session's remaining tokens, rounded down, and {} of budget.tokens {limit} remain, so it would get none; SET budget.tokens higher or answer here",
+                remaining.tokens.unwrap_or(0)
+            )));
+        }
         // The child's view: the parent's functions, tools restricted to the
         // role's list, none of the parent's tables.
         let mut base = parent.catalog().read().await.clone();

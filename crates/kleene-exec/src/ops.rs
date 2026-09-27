@@ -6,7 +6,7 @@ use crate::{builtins, ExecContext, ExecError, RECURSION_HARD_CAP};
 use async_recursion::async_recursion;
 use futures::{StreamExt, TryStreamExt};
 use kleene_core::{Row, Value};
-use kleene_sql::{Expr, JoinKind, LogicalPlan, SortKey};
+use kleene_sql::{AggregateOrder, Expr, JoinKind, LogicalPlan, SortKey};
 use std::cell::Cell;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
@@ -278,19 +278,21 @@ pub(crate) async fn eval_plan(
             ..
         } => {
             let rows = eval_plan(input, env, ctx).await?;
-            let specs: Vec<(kleene_sql::AggregateFn, bool, &Vec<Expr>)> = aggregates
-                .iter()
-                .map(|a| match a {
-                    Expr::Aggregate {
-                        func,
-                        args,
-                        distinct,
-                    } => Ok((*func, *distinct, args)),
-                    other => Err(ExecError::Eval(format!(
-                        "non-aggregate in aggregate list: {other:?}"
-                    ))),
-                })
-                .collect::<Result<_, _>>()?;
+            let specs: Vec<(kleene_sql::AggregateFn, bool, &Vec<Expr>, &[AggregateOrder])> =
+                aggregates
+                    .iter()
+                    .map(|a| match a {
+                        Expr::Aggregate {
+                            func,
+                            args,
+                            distinct,
+                            order,
+                        } => Ok((*func, *distinct, args, order.as_slice())),
+                        other => Err(ExecError::Eval(format!(
+                            "non-aggregate in aggregate list: {other:?}"
+                        ))),
+                    })
+                    .collect::<Result<_, _>>()?;
             let mut order: Vec<Row> = vec![];
             let mut groups: HashMap<Row, Vec<Accumulator>> = HashMap::new();
             for r in &rows {
@@ -302,12 +304,12 @@ pub(crate) async fn eval_plan(
                         groups.entry(key).or_insert_with(|| {
                             specs
                                 .iter()
-                                .map(|(f, d, _)| Accumulator::new(*f, *d))
+                                .map(|(f, d, _, o)| Accumulator::new(*f, *d, o.to_vec()))
                                 .collect()
                         })
                     }
                 };
-                for (acc, (_, _, args)) in accs.iter_mut().zip(&specs) {
+                for (acc, (_, _, args, _)) in accs.iter_mut().zip(&specs) {
                     let vals = eval_exprs(args, r, env, ctx).await?;
                     acc.push(&vals)?;
                 }
@@ -315,15 +317,20 @@ pub(crate) async fn eval_plan(
             if groups.is_empty() && group_by.is_empty() {
                 let accs: Vec<Accumulator> = specs
                     .iter()
-                    .map(|(f, d, _)| Accumulator::new(*f, *d))
+                    .map(|(f, d, _, o)| Accumulator::new(*f, *d, o.to_vec()))
                     .collect();
-                return Ok(vec![accs.into_iter().map(Accumulator::finish).collect()]);
+                return Ok(vec![accs
+                    .into_iter()
+                    .map(Accumulator::finish)
+                    .collect::<Result<_, _>>()?]);
             }
             let mut out = Vec::with_capacity(order.len());
             for key in order {
                 let accs = groups.remove(&key).expect("group present");
                 let mut row = key;
-                row.extend(accs.into_iter().map(Accumulator::finish));
+                for acc in accs {
+                    row.push(acc.finish()?);
+                }
                 out.push(row);
             }
             Ok(out)

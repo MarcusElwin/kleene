@@ -145,17 +145,31 @@ fn expr_label(e: &Expr) -> String {
             func,
             args,
             distinct,
-        } => format!(
-            "{:?}({}{})",
-            func,
-            if *distinct { "DISTINCT " } else { "" },
-            if args.is_empty() {
-                "*".to_string()
-            } else {
-                args.iter().map(expr_label).collect::<Vec<_>>().join(", ")
-            }
-        )
-        .to_lowercase(),
+            order,
+        } => {
+            let (plain, keys) = args.split_at(args.len() - order.len());
+            let keys: Vec<String> = keys
+                .iter()
+                .zip(order)
+                .map(|(k, o)| format!("{}{}", expr_label(k), if o.asc { "" } else { " desc" }))
+                .collect();
+            format!(
+                "{:?}({}{}{})",
+                func,
+                if *distinct { "DISTINCT " } else { "" },
+                if plain.is_empty() {
+                    "*".to_string()
+                } else {
+                    plain.iter().map(expr_label).collect::<Vec<_>>().join(", ")
+                },
+                if keys.is_empty() {
+                    String::new()
+                } else {
+                    format!(" order by {}", keys.join(", "))
+                }
+            )
+            .to_lowercase()
+        }
         Expr::Cast { operand, to } => format!("cast({} as {to})", expr_label(operand)),
         Expr::Case { .. } => "case".into(),
         Expr::Exists { negated, .. } => if *negated {

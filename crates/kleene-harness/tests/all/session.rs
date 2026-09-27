@@ -308,6 +308,30 @@ async fn depth_and_budgets_are_enforced() {
     assert_eq!(report.root.turns, 2);
     assert_eq!(f.provider.calls(), 1);
 
+    // A child that would get zero calls is refused up front, with the
+    // parent's remaining budget in the message, instead of dying on its
+    // first call.
+    let try_rlm = sql("SELECT * FROM rlm('q', 'c')");
+    let fin = sql("FINAL(0)");
+    let f = fixture(
+        vec![
+            ("Statement failed", fin.as_str()),
+            ("# Task", try_rlm.as_str()),
+        ],
+        |c| {
+            c.budget = Budget {
+                calls: Some(2),
+                ..Budget::unbounded()
+            }
+        },
+    )
+    .await;
+    let report = f.harness.run("Delegate.", None).await.unwrap();
+    let text = &report.root.transcript[0].results[0].text;
+    assert!(text.contains("rlm refused"), "{text}");
+    assert!(text.contains("1 of budget.calls 2 remain"), "{text}");
+    assert!(text.contains("SET budget.calls"), "{text}");
+
     // A child's slice is bounded by the role budget and rolls up.
     let declare = sql("CREATE AGENT tiny BUDGET (calls 1) PROMPT 'x';\nCREATE TABLE r AS SELECT answer, detail FROM spawn('tiny', 'Do the tiny job.') s;\nSELECT answer, detail FROM r");
     let fin = sql("FINAL FROM (SELECT detail FROM r)");

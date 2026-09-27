@@ -17,7 +17,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.0.1"
+version = "0.1.0"
 edition = "2021"
 rust-version = "1.88"
 license = "MIT"
@@ -67,3 +67,10 @@ debug = 1
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+# DuckDB's C++ objects carry `-g` whenever the profile has any debug info,
+# which is most of what makes every test binary that links the store ~700 MB
+# and every link slow. Nobody steps through DuckDB in gdb from here; keep
+# line tables for our own crates and none for the amalgamation.
+[profile.dev.package.libduckdb-sys]
+debug = false

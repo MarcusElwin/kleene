@@ -2,7 +2,8 @@
 
 use crate::ExecError;
 use kleene_core::Value;
-use kleene_sql::AggregateFn;
+use kleene_sql::{AggregateFn, AggregateOrder};
+use std::cmp::Ordering;
 use std::collections::HashSet;
 
 enum Sum {
@@ -19,14 +20,16 @@ pub(crate) struct Accumulator {
     count: i64,
     sum: Sum,
     extreme: Option<Value>,
-    texts: Vec<String>,
+    /// `STRING_AGG` pieces with their `ORDER BY` key values.
+    texts: Vec<(Vec<Value>, String)>,
     sep: Option<String>,
+    order: Vec<AggregateOrder>,
     all: Option<bool>,
     any: Option<bool>,
 }
 
 impl Accumulator {
-    pub fn new(func: AggregateFn, distinct: bool) -> Self {
+    pub fn new(func: AggregateFn, distinct: bool, order: Vec<AggregateOrder>) -> Self {
         Self {
             func,
             distinct,
@@ -36,12 +39,14 @@ impl Accumulator {
             extreme: None,
             texts: vec![],
             sep: None,
+            order,
             all: None,
             any: None,
         }
     }
 
-    /// Feed one row's argument values.
+    /// Feed one row's argument values. The last `order.len()` values are the
+    /// `ORDER BY` keys of a `STRING_AGG`.
     pub fn push(&mut self, args: &[Value]) -> Result<(), ExecError> {
         if self.func == AggregateFn::Count && args.is_empty() {
             self.count += 1;
@@ -108,7 +113,8 @@ impl Accumulator {
                         Some(other) => other.render(),
                     });
                 }
-                self.texts.push(v.render());
+                let keys = args[args.len().saturating_sub(self.order.len())..].to_vec();
+                self.texts.push((keys, v.render()));
             }
             AggregateFn::BoolAnd | AggregateFn::BoolOr => {
                 let b = v.as_bool().ok_or_else(|| {
@@ -122,8 +128,8 @@ impl Accumulator {
     }
 
     /// The aggregate value.
-    pub fn finish(self) -> Value {
-        match self.func {
+    pub fn finish(self) -> Result<Value, ExecError> {
+        Ok(match self.func {
             AggregateFn::Count => Value::Int(self.count),
             AggregateFn::Sum => match self.sum {
                 Sum::Empty => Value::Null,
@@ -140,11 +146,80 @@ impl Accumulator {
                 if self.texts.is_empty() {
                     Value::Null
                 } else {
-                    Value::Text(self.texts.join(self.sep.as_deref().unwrap_or("")))
+                    let mut texts = self.texts;
+                    if !self.order.is_empty() {
+                        let mut error = None;
+                        // Stable, so ties keep input order.
+                        texts.sort_by(|(a, _), (b, _)| compare_keys(a, b, &self.order, &mut error));
+                        if let Some(e) = error {
+                            return Err(e);
+                        }
+                    }
+                    let sep = self.sep.as_deref().unwrap_or("");
+                    Value::Text(
+                        texts
+                            .into_iter()
+                            .map(|(_, t)| t)
+                            .collect::<Vec<_>>()
+                            .join(sep),
+                    )
                 }
             }
             AggregateFn::BoolAnd => self.all.map(Value::Bool).unwrap_or(Value::Null),
             AggregateFn::BoolOr => self.any.map(Value::Bool).unwrap_or(Value::Null),
+        })
+    }
+}
+
+/// Compare two key tuples under the aggregate's `ORDER BY` directions, with
+/// the same NULL placement as a top-level `ORDER BY`.
+fn compare_keys(
+    a: &[Value],
+    b: &[Value],
+    order: &[AggregateOrder],
+    error: &mut Option<ExecError>,
+) -> Ordering {
+    for (i, o) in order.iter().enumerate() {
+        let (x, y) = (&a[i], &b[i]);
+        let ord = match (x.is_null(), y.is_null()) {
+            (true, true) => Ordering::Equal,
+            (true, false) => {
+                if o.nulls_first {
+                    Ordering::Less
+                } else {
+                    Ordering::Greater
+                }
+            }
+            (false, true) => {
+                if o.nulls_first {
+                    Ordering::Greater
+                } else {
+                    Ordering::Less
+                }
+            }
+            (false, false) => match x.sql_cmp(y) {
+                Some(c) => {
+                    if o.asc {
+                        c
+                    } else {
+                        c.reverse()
+                    }
+                }
+                None => {
+                    if error.is_none() {
+                        *error = Some(ExecError::Eval(format!(
+                            "string_agg ORDER BY: incomparable types {} and {}",
+                            x.data_type(),
+                            y.data_type()
+                        )));
+                    }
+                    Ordering::Equal
+                }
+            },
+        };
+        if ord != Ordering::Equal {
+            return ord;
         }
     }
+    Ordering::Equal
 }

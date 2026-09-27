@@ -953,10 +953,12 @@ fn remap_columns(e: &Expr, f: &dyn Fn(usize) -> usize) -> Expr {
             func,
             args,
             distinct,
+            order,
         } => Expr::Aggregate {
             func: *func,
             args: args.iter().map(|a| remap_columns(a, f)).collect(),
             distinct: *distinct,
+            order: order.clone(),
         },
         Expr::Case {
             branches,
