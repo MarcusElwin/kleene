@@ -17,6 +17,10 @@ Types: `BOOLEAN`, `BIGINT`, `DOUBLE`, `TEXT`, `JSON`, `VECTOR`. Three-valued
 logic with `AND` / `OR` short-circuiting left to right, which the planner
 relies on (cheap conjuncts first).
 
+String literals are single-quoted with `''` for a quote, or dollar-quoted:
+`$$...$$` takes any text verbatim, quotes and newlines included, which is how
+a whole program goes into `CALL write_file(path, $$...$$)`.
+
 Recursive CTEs run by semi-naive evaluation: the recursive term sees only the
 previous round's delta. `UNION` (set) terminates when a round adds nothing new;
 `UNION ALL` (bag) runs until the term yields no rows or the round cap
@@ -77,8 +81,9 @@ schema_hash, output, usage)`) across sessions and runs.
 Pure table functions usable in `FROM`: `files(glob)`, `lines(path)`,
 `read(path)`, `grep(pattern, glob)`, `chunks(path, size)`. Volatile tools run
 as statements: `CALL shell('cmd') [FROM query]`, `CALL write_file(path, text)`,
-`CALL patch(path, diff)`. A tool's output relation is rendered back to the
-model. Roles restrict which tools a session may use.
+`CALL patch(path, old, new)` (one exact occurrence, after the file was read
+in this session). A tool's output relation is rendered back to the model.
+Roles restrict which tools a session may use.
 
 ## Delegation
 
