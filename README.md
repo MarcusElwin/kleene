@@ -455,12 +455,12 @@ on `main`; the repository is private and no version has been tagged yet.
 |---|---|
 | M0 scaffold | workspace, CI, `kleene --version` |
 | M1 relational core | CallSQL parser and executor, recursive CTEs by semi-naive evaluation, DuckDB store, differential tests against DuckDB |
-| M2 call algebra | `llm_*` and prompt-defined functions, `expand`, `CALL` tools with volatility fences, memo, budgets, `EXPLAIN`, Anthropic and OpenAI-compatible adapters, router, record and replay |
+| M2 call algebra | `llm_*` and prompt-defined functions, `expand`, `CALL` tools with volatility fences, memo, batching (`BATCH n`), budgets, `EXPLAIN`, Anthropic, OpenAI-compatible and (feature `gateway`) Open Responses adapters, router, record and replay |
 | M3 RLM harness | the session loop, `rlm`, `spawn`, `CREATE AGENT`, persistence and `resume` |
 | M4 daemon and TUI | JSONL protocol with cursors, cancel, detach and reattach, headless `attach` |
 | M5 planner | join ordering over call predicates, cascades, beam recursion, sampled selectivity, budget refusal |
-| M6 continual loop | tasks, generators, oracles, ratings, curriculum, replay-gated playbook |
-| M7 benchmarks | task packs, `bench` in learning, frozen and plain-agent modes, LAB import, [the write-up](docs/WRITEUP.md) |
+| M6 continual loop | tasks, generators, oracles, ratings, curriculum, replay-gated playbook and function refinement (`learn refine`) |
+| M7 benchmarks | task packs, `bench` in learning, frozen and plain-agent modes, LAB import, `bench plot`, [the write-up](docs/WRITEUP.md) |
 
 Since M7: the rename to Kleene, `kleene setup` and the config file, streamed
 replies, the one-stream Catppuccin TUI with slash commands and `/setup`,
