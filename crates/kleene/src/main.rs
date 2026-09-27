@@ -197,7 +197,7 @@ enum BenchAction {
     Build {
         /// Output directory, e.g. tasks/oolong-like.
         out: PathBuf,
-        /// Generator: sat3, graph, puzzle, corpus, repo, statements, contracts.
+        /// Generator: sat3, graph, puzzle, corpus, repo, statements, contracts, logbook, memo.
         #[arg(long)]
         from: String,
         /// How many tasks.
@@ -209,6 +209,10 @@ enum BenchAction {
         /// First seed.
         #[arg(long, default_value_t = 1)]
         seed: u64,
+        /// Store generator references instead of the generated text, and
+        /// regenerate on load (keeps packs with long contexts small).
+        #[arg(long)]
+        lazy: bool,
     },
     /// Write the built-in Terminal-Bench-style pack to a directory.
     Terminal {
@@ -254,6 +258,7 @@ async fn run_bench(cli: &Cli, action: &BenchAction) -> anyhow::Result<()> {
             count,
             dial,
             seed,
+            lazy,
         } => {
             let ws = cli
                 .workspace
@@ -263,7 +268,7 @@ async fn run_bench(cli: &Cli, action: &BenchAction) -> anyhow::Result<()> {
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| from.clone());
-            let pack = Pack::from_generator(&name, from, *count, *dial, *seed, &ws)?;
+            let pack = Pack::from_generator(&name, from, *count, *dial, *seed, &ws, *lazy)?;
             pack.save(out)?;
             println!(
                 "wrote {} tasks to {}",
@@ -301,6 +306,10 @@ async fn run_bench(cli: &Cli, action: &BenchAction) -> anyhow::Result<()> {
     cfg.tracer = Some(kleene_trace::Tracer::new(std::sync::Arc::new(
         store.trace_sink(),
     )));
+    // Every bench session drops its ctx and scratch tables on the way out,
+    // so a run's prompts do not grow with every session before it and a
+    // recorded run replays from its own fixtures.
+    cfg.drop_session_tables = true;
     if let BenchAction::Run { record, replay, .. } = action {
         if let Some(dir) = replay {
             cfg.provider = Some(Arc::new(kleene_llm::ReplayProvider::new(dir.clone())));

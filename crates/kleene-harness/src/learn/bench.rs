@@ -4,7 +4,7 @@
 //! playbook, nothing adopted: the control), `plain` (the tool-calling agent
 //! baseline on the same provider and budgets).
 
-use super::packs::{prepare_workspace, Pack};
+use super::packs::{prepare_workspace, run_setup, Pack, PackTask, Workspace};
 use super::plain::{self, PlainConfig};
 use super::verify::Verdict;
 use super::{Learn, Task};
@@ -12,6 +12,7 @@ use crate::{HarnessError, PlaybookExample};
 use kleene_core::{Batch, Value};
 use kleene_store::duckdb::literal;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::Path;
 
 const DDL: &[&str] = &[
@@ -157,6 +158,14 @@ impl Learn {
     /// its recorded rows are kept and the pack picks up at the first task
     /// after them. The run must be of the same pack and mode.
     ///
+    /// A task that `continues` another runs in the workspace that task left
+    /// (an episode: several steps over one checkout), so the workspaces of
+    /// tasks a later task continues are kept until that task has run. After
+    /// a resume the earlier steps' workspaces are gone, so the chain is
+    /// rebuilt from the root's `workspace_from` and every step's `setup` in
+    /// order; a pack whose steps can repair a missing predecessor in their
+    /// setup resumes cleanly.
+    ///
     /// A task that ends without a single token spent means the provider
     /// never answered (no credit, a bad key, a dead endpoint); the run stops
     /// there with the reason in `bench_runs.note` rather than recording the
@@ -187,11 +196,14 @@ impl Learn {
         };
         let n = limit.unwrap_or(pack.tasks.len()).min(pack.tasks.len());
         let first = rows.len();
+        // Workspaces a later task continues, by the id of the task that left them.
+        let mut held: HashMap<String, Workspace> = HashMap::new();
         for (seq, pt) in pack.tasks.iter().enumerate().take(n).skip(first) {
             let generated = pack.to_generated(pack_dir, pt)?;
             // Every pack task runs in its own fresh workspace, so tasks and
-            // concurrent runs cannot see each other's files.
-            let ws = prepare_workspace(pack_dir, pt).await?;
+            // concurrent runs cannot see each other's files; a step of an
+            // episode inherits the workspace its predecessor left.
+            let ws = episode_workspace(pack_dir, pack, pt, &mut held).await?;
             let workspace = ws.path().to_path_buf();
             let id = self
                 .add_generated(&generated, &format!("pack:{}", pack.name))
@@ -271,6 +283,15 @@ impl Learn {
                 dollars,
                 turns,
             });
+            if pack
+                .tasks
+                .iter()
+                .take(n)
+                .skip(seq + 1)
+                .any(|t| t.continues.as_deref() == Some(pt.id.as_str()))
+            {
+                held.insert(pt.id.clone(), ws);
+            }
         }
         let report = BenchReport {
             run: run.clone(),
@@ -502,6 +523,32 @@ impl Learn {
         }
         Ok(out)
     }
+}
+
+/// The workspace a task runs in: a fresh one, or the one left by the task
+/// it continues (taken out of `held`), or, when that was not kept (a
+/// resumed run, a `--limit` that skipped it), one rebuilt from the chain's
+/// root and every step's setup in order.
+async fn episode_workspace(
+    pack_dir: &Path,
+    pack: &Pack,
+    pt: &PackTask,
+    held: &mut HashMap<String, Workspace>,
+) -> Result<Workspace, HarnessError> {
+    let Some(prev) = &pt.continues else {
+        return prepare_workspace(pack_dir, pt).await;
+    };
+    if let Some(ws) = held.remove(prev) {
+        run_setup(&ws, pt).await?;
+        return Ok(ws);
+    }
+    let chain = pack.lineage(pt);
+    let root = chain.first().copied().unwrap_or(pt);
+    let ws = prepare_workspace(pack_dir, root).await?;
+    for step in chain.iter().skip(1) {
+        run_setup(&ws, step).await?;
+    }
+    Ok(ws)
 }
 
 /// Render a curve as a sparkline of block characters.
