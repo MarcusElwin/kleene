@@ -448,15 +448,36 @@ Every flag: `kleene <command> --help`, or [`docs/CLI.md`](docs/CLI.md#commands).
 
 ## Status
 
-M0 through M7 of the plan are merged: the CallSQL frontend, executor and
-DuckDB store checked differentially against DuckDB; model and prompt-defined
-functions, `CALL` tools, memo, budgets and `EXPLAIN`; the session loop with
-`rlm`, `spawn`, `CREATE AGENT` and resume; the daemon and TUI; the planner
-(join ordering over call predicates, cascades, beam recursion, sampled
-selectivity, budget refusal); the continual loop; and the benchmark runner
-with shipped packs. Every number in the write-up comes from the deterministic
-suite; the first real-model runs are one `bench run --record` away from being
-replayable.
+Pre-release. Every milestone of [the plan](docs/PLAN.md#6-milestones) is
+on `main`; the repository is private and no version has been tagged yet.
+
+| Milestone | Shipped |
+|---|---|
+| M0 scaffold | workspace, CI, `kleene --version` |
+| M1 relational core | CallSQL parser and executor, recursive CTEs by semi-naive evaluation, DuckDB store, differential tests against DuckDB |
+| M2 call algebra | `llm_*` and prompt-defined functions, `expand`, `CALL` tools with volatility fences, memo, budgets, `EXPLAIN`, Anthropic and OpenAI-compatible adapters, router, record and replay |
+| M3 RLM harness | the session loop, `rlm`, `spawn`, `CREATE AGENT`, persistence and `resume` |
+| M4 daemon and TUI | JSONL protocol with cursors, cancel, detach and reattach, headless `attach` |
+| M5 planner | join ordering over call predicates, cascades, beam recursion, sampled selectivity, budget refusal |
+| M6 continual loop | tasks, generators, oracles, ratings, curriculum, replay-gated playbook |
+| M7 benchmarks | task packs, `bench` in learning, frozen and plain-agent modes, LAB import, [the write-up](docs/WRITEUP.md) |
+
+Since M7: the rename to Kleene, `kleene setup` and the config file, streamed
+replies, the one-stream Catppuccin TUI with slash commands and `/setup`,
+`web_search` over Brave, Tavily, Exa or Linkup, the curl installer, the
+Homebrew formula and the release workflow.
+
+Not yet, in the order they are planned:
+
+- **A first release.** Tag `v0.1.0`, publish the binaries, make the
+  repository public so the install lines above work for everyone.
+- **Numbers against a real model.** Every figure in the write-up comes from
+  the deterministic suite; the first real runs are one
+  `bench run --record` away from being replayable by everyone after.
+- **Engine gaps** listed in [the write-up](docs/WRITEUP.md#5-honest-gaps):
+  call batching (rule 3 of the plan), proxy thresholds calibrated from a
+  sample instead of declared, and the learned cost model persisted as
+  versioned tables rather than sampled per session.
 
 ## Developing
 
@@ -476,22 +497,54 @@ and no gateway required, MIT licensed.
 
 ## Why "Kleene"
 
-Stephen Cole Kleene gave computation two of its load-bearing ideas. The
-**Kleene star** turns "one step" into "any number of steps": `a*` is the
-closure of `a` under repetition, and it is exactly what a recursive CTE
-computes when it runs a term to its fixpoint. The **Kleene fixed-point
-theorem** says how to reach that closure: start from nothing and apply the
-step until nothing changes, which is the semi-naive evaluation the executor
-runs. His **recursion theorem** shows a program can refer to itself without
-paradox, which is what a session does when it opens a child session with
-`rlm(...)`.
+Stephen Cole Kleene (1909–1994) gave computation three of its load-bearing
+ideas, and this project leans on all three.
+
+- **The Kleene star** turns "one step" into "any number of steps". Kleene
+  introduced `a*` in 1951 to describe the "regular events" a McCulloch–Pitts
+  nerve net can recognise [[1]](#refs); it is the closure of `a` under
+  repetition, and it is exactly what a recursive CTE computes when it runs a
+  term to its fixpoint. Aho and Ullman later showed that relational algebra
+  needs precisely such a least-fixpoint operator to express transitive
+  closure at all [[4]](#refs), which is why CallSQL has `WITH RECURSIVE`.
+- **The Kleene fixed-point theorem** says how to reach that closure: start
+  from nothing and apply the step until nothing changes. The construction
+  is the "first recursion theorem" of *Introduction to Metamathematics*
+  [[2]](#refs), and in its database form it is semi-naive evaluation
+  [[5]](#refs): each round sees only the previous round's delta, which is
+  how the executor runs a recursive term and where a `LIMIT k` inside it
+  becomes a beam.
+- **The recursion theorem** shows a program can refer to itself without
+  paradox. Kleene proved it in 1938 as a lemma about ordinal notations
+  [[3]](#refs); it is what a session does when it opens a child session with
+  `rlm(...)`, the same loop one level deeper with a slice of the budget.
 
 That is this project in three theorems. A model call is a step; SQL gives
 it joins, predicates and aggregation; recursion with a beam gives it search;
 the planner prices the closure before it is computed. The engine is named
 for the mathematician who showed that closure is a thing you can compute,
 and the dialect keeps its own name, CallSQL, because the SQL is where the
-calls are.
+calls are. (The name `kleene` is taken on npm by an unrelated JavaScript
+library and free on crates.io; see [`docs/RESEARCH.md`](docs/RESEARCH.md#naming).)
+
+<a name="refs"></a>
+
+1. S. C. Kleene, "Representation of Events in Nerve Nets and Finite
+   Automata", RAND RM-704 (1951); in *Automata Studies*, Princeton
+   University Press, 1956, pp. 3–41.
+2. S. C. Kleene, *Introduction to Metamathematics*, North-Holland, 1952,
+   §66 (the first recursion theorem; the least-fixed-point construction).
+3. S. C. Kleene, "On Notation for Ordinal Numbers", *Journal of Symbolic
+   Logic* 3(4), 1938, pp. 150–155 (the second recursion theorem).
+4. A. V. Aho and J. D. Ullman, "Universality of Data Retrieval Languages",
+   *POPL '79*, pp. 110–119 (relational algebra plus a least fixpoint).
+5. F. Bancilhon and R. Ramakrishnan, "An Amateur's Introduction to
+   Recursive Query Processing Strategies", *SIGMOD '86*, pp. 16–52
+   (semi-naive evaluation).
+
+The research the design draws on beyond Kleene, from recursive language
+models to SQL as a model interface and the complexity results the planner
+relies on, is collected in [`docs/RESEARCH.md`](docs/RESEARCH.md).
 
 <!-- Badge and repository links. If the repository is renamed, update the
      owner/repo below (and the install URLs above) in one place. -->
