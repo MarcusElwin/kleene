@@ -188,6 +188,10 @@ enum BenchAction {
         /// Serve model responses from fixtures under this directory (offline).
         #[arg(long)]
         replay: Option<PathBuf>,
+        /// Continue an earlier run (its id from `bench run` or `bench_runs`) at
+        /// the first task it has no row for; its recorded rows are kept.
+        #[arg(long)]
+        resume: Option<String>,
     },
     /// Freeze tasks from a generator into a pack directory.
     Build {
@@ -307,12 +311,18 @@ async fn run_bench(cli: &Cli, action: &BenchAction) -> anyhow::Result<()> {
     let learn = Learn::new(store, cfg, LearnConfig::default()).await?;
     match action {
         BenchAction::Run {
-            pack, mode, limit, ..
+            pack,
+            mode,
+            limit,
+            resume,
+            ..
         } => {
             let mode = Mode::parse(mode)
                 .ok_or_else(|| anyhow::anyhow!("mode must be learning, frozen or plain"))?;
             let p = Pack::load(pack)?;
-            let report = learn.bench(pack, &p, mode, *limit).await?;
+            let report = learn
+                .bench_from(pack, &p, mode, *limit, resume.as_deref())
+                .await?;
             for r in &report.rows {
                 println!(
                     "{} {:>3} {:<24} {} calls ${:.4} {}",

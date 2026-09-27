@@ -150,19 +150,44 @@ impl Learn {
         mode: Mode,
         limit: Option<usize>,
     ) -> Result<BenchReport, HarnessError> {
+        self.bench_from(pack_dir, pack, mode, limit, None).await
+    }
+
+    /// [`Learn::bench`], continuing an earlier run when `resume` names one:
+    /// its recorded rows are kept and the pack picks up at the first task
+    /// after them. The run must be of the same pack and mode.
+    ///
+    /// A task that ends without a single token spent means the provider
+    /// never answered (no credit, a bad key, a dead endpoint); the run stops
+    /// there with the reason in `bench_runs.note` rather than recording the
+    /// rest of the pack as failures, so it can be resumed.
+    pub async fn bench_from(
+        &self,
+        pack_dir: &Path,
+        pack: &Pack,
+        mode: Mode,
+        limit: Option<usize>,
+        resume: Option<&str>,
+    ) -> Result<BenchReport, HarnessError> {
         self.init_bench().await?;
-        let run = kleene_core::RunId::new().to_string();
-        self.store()
-            .execute(&format!(
-                "INSERT INTO bench_runs VALUES ({}, {}, {}, 0, 0, 0.0, now(), NULL, NULL)",
-                s(&run),
-                s(&pack.name),
-                s(mode.label())
-            ))
-            .await?;
-        let mut rows = vec![];
+        let (run, mut rows) = match resume {
+            Some(run) => (run.to_string(), self.bench_rows(run, pack, mode).await?),
+            None => {
+                let run = kleene_core::RunId::new().to_string();
+                self.store()
+                    .execute(&format!(
+                        "INSERT INTO bench_runs VALUES ({}, {}, {}, 0, 0, 0.0, now(), NULL, NULL)",
+                        s(&run),
+                        s(&pack.name),
+                        s(mode.label())
+                    ))
+                    .await?;
+                (run, vec![])
+            }
+        };
         let n = limit.unwrap_or(pack.tasks.len()).min(pack.tasks.len());
-        for (seq, pt) in pack.tasks.iter().take(n).enumerate() {
+        let first = rows.len();
+        for (seq, pt) in pack.tasks.iter().enumerate().take(n).skip(first) {
             let generated = pack.to_generated(pack_dir, pt)?;
             // Every pack task runs in its own fresh workspace, so tasks and
             // concurrent runs cannot see each other's files.
@@ -182,6 +207,27 @@ impl Learn {
                         .await?
                 }
             };
+            if tokens == 0 && !verdict.pass && verdict.detail.contains("error") {
+                let note = format!(
+                    "aborted at task {} ({}): {}",
+                    seq + 1,
+                    pt.id,
+                    verdict.detail
+                );
+                self.store()
+                    .execute(&format!(
+                        "UPDATE bench_runs SET tasks = {}, solved = {}, dollars = {}, note = {} WHERE run = {}",
+                        rows.len(),
+                        rows.iter().filter(|r| r.solved).count(),
+                        rows.iter().map(|r| r.dollars).sum::<f64>(),
+                        s(&note),
+                        s(&run)
+                    ))
+                    .await?;
+                return Err(HarnessError::Config(format!(
+                    "run {run} {note}; fix the provider and continue with --resume {run}"
+                )));
+            }
             self.store()
                 .execute(&format!(
                     "UPDATE tasks SET status = {}, attempts = attempts + 1, last_detail = {}, updated_at = now() WHERE id = {}",
@@ -229,6 +275,68 @@ impl Learn {
             ))
             .await?;
         Ok(report)
+    }
+
+    /// The rows an earlier run recorded, in task order, checked against the
+    /// pack and mode being resumed.
+    async fn bench_rows(
+        &self,
+        run: &str,
+        pack: &Pack,
+        mode: Mode,
+    ) -> Result<Vec<EvalRow>, HarnessError> {
+        let head = self
+            .store()
+            .query(&format!(
+                "SELECT pack, mode, note FROM bench_runs WHERE run = {}",
+                s(run)
+            ))
+            .await?;
+        if head.rows.is_empty() {
+            return Err(HarnessError::Config(format!("no bench run {run}")));
+        }
+        let (p, m) = (text_at(&head, 0, 0), text_at(&head, 0, 1));
+        if p != pack.name || m != mode.label() {
+            return Err(HarnessError::Config(format!(
+                "run {run} is {p} in {m} mode, not {} in {} mode",
+                pack.name,
+                mode.label()
+            )));
+        }
+        let b = self
+            .store()
+            .query(&format!(
+                "SELECT seq, task, solved, detail, calls, tokens, dollars, turns FROM evals WHERE run = {} ORDER BY seq",
+                s(run)
+            ))
+            .await?;
+        let rows: Vec<EvalRow> = (0..b.rows.len())
+            .map(|i| EvalRow {
+                seq: text_at(&b, i, 0).parse().unwrap_or(0),
+                task: text_at(&b, i, 1),
+                solved: text_at(&b, i, 2) == "true",
+                detail: text_at(&b, i, 3),
+                calls: text_at(&b, i, 4).parse().unwrap_or(0),
+                tokens: text_at(&b, i, 5).parse().unwrap_or(0),
+                dollars: text_at(&b, i, 6).parse().unwrap_or(0.0),
+                turns: text_at(&b, i, 7).parse().unwrap_or(0),
+            })
+            .collect();
+        for (i, r) in rows.iter().enumerate() {
+            if r.seq != i {
+                return Err(HarnessError::Config(format!(
+                    "run {run} has a gap before task {}; it cannot be resumed",
+                    i + 1
+                )));
+            }
+        }
+        self.store()
+            .execute(&format!(
+                "UPDATE bench_runs SET note = NULL, finished_at = NULL WHERE run = {}",
+                s(run)
+            ))
+            .await?;
+        Ok(rows)
     }
 
     async fn bench_kleene(
