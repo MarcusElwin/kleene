@@ -132,9 +132,10 @@ What the numbers say, read with the caveats of
   flat. Two things grow the prompt: the adopted playbook entries, and the
   scratch tables every session creates in the shared store, which the
   catalog lists to every later session (287 such tables after these runs).
-  The second is a bug: it also changes the prompt fingerprint from task to
-  task, so a recorded run cannot be replayed from its own fixtures until
-  session tables are scoped or dropped.
+  The second was a bug: it also changed the prompt fingerprint from task to
+  task, so a recorded run could not be replayed from its own fixtures. Bench
+  sessions now drop their tables when they finish, so later runs do not
+  carry it.
 
 The other measurements of the design are in place but not yet exercised by
 these runs: transfer (learn on a prefix with `--limit`, then run the rest

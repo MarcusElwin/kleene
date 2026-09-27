@@ -1,0 +1,3 @@
+The quick brown fox jumps over the lazy dog. The dog, well-known in the
+neighbourhood, doesn't mind: it's used to foxes.
+In 2026 the fox jumped 3 times.
