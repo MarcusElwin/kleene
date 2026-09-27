@@ -189,6 +189,27 @@ async fn aggregates() {
     assert_eq!(r, vec![vec![v(2)], vec![v(3)]]);
     let r = w.rows("SELECT STRING_AGG(name, ',') FROM (SELECT name FROM nodes WHERE name IS NOT NULL ORDER BY name) s").await;
     assert_eq!(r, vec![vec![t("a,b,c,g")]]);
+    // ORDER BY inside the call, the way a model writes it.
+    let r = w
+        .rows("SELECT STRING_AGG(name, ',' ORDER BY id DESC) FROM nodes")
+        .await;
+    assert_eq!(r, vec![vec![t("g,c,b,a")]]);
+    let r = w
+        .rows("SELECT src, STRING_AGG(CAST(dst AS TEXT), '>' ORDER BY w DESC NULLS LAST) FROM edges GROUP BY src ORDER BY src")
+        .await;
+    assert_eq!(
+        r,
+        vec![
+            vec![v(1), t("2")],
+            vec![v(2), t("3")],
+            vec![v(3), t("4>1")],
+            vec![v(5), t("6")],
+        ]
+    );
+    let r = w
+        .rows("SELECT STRING_AGG(DISTINCT name, ',' ORDER BY name) FROM nodes")
+        .await;
+    assert_eq!(r, vec![vec![t("a,b,c,g")]]);
     let r = w
         .rows("SELECT BOOL_AND(id > 0), BOOL_OR(id > 6) FROM nodes")
         .await;
