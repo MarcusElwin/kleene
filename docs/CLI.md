@@ -544,7 +544,9 @@ kleene learn report                                                             
 ### `kleene bench`
 
 Benchmarks over task packs (`tasks/<pack>/pack.json`) in one of three modes,
-every task in a fresh workspace, every result a row in `evals`.
+every task in a fresh workspace, every result a row in `evals`. What the
+modes, oracles, report columns and plots measure is in
+[`docs/BENCHMARKS.md`](BENCHMARKS.md).
 
 | Command | What it does |
 |---|---|

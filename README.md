@@ -439,6 +439,7 @@ Every flag: `kleene <command> --help`, or [`docs/CLI.md`](docs/CLI.md#commands).
 | [`docs/DIALECT.md`](docs/DIALECT.md) | the CallSQL language: the [relational core](docs/DIALECT.md#relational-core), [sessions](docs/DIALECT.md#sessions), [model calls](docs/DIALECT.md#model-calls), [tools](docs/DIALECT.md#tools), [delegation](docs/DIALECT.md#delegation), [planner rules](docs/DIALECT.md#planner-rules) |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | the crates, [the path of a statement](docs/ARCHITECTURE.md#the-path-of-one-statement), [sessions](docs/ARCHITECTURE.md#sessions-and-delegation), [the store and trace tables](docs/ARCHITECTURE.md#store-and-trace), [the daemon protocol](docs/ARCHITECTURE.md#processes), [the planner](docs/ARCHITECTURE.md#planner), [testing](docs/ARCHITECTURE.md#testing-strategy) |
 | [`docs/PLAN.md`](docs/PLAN.md) | the design and its rationale, milestone by milestone |
+| [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) | the benchmark harness: the four packs, the learning / frozen / plain modes, the oracles, what `bench report` and the five plots measure |
 | [`docs/WRITEUP.md`](docs/WRITEUP.md) | the claim, the algebra, [what has been measured](docs/WRITEUP.md#3-what-was-measured-deterministically) and [how to reproduce it](docs/WRITEUP.md#6-reproduce) |
 | [`docs/RESEARCH.md`](docs/RESEARCH.md) | the sources: recursive language models, SQL as an LLM interface, complexity results, benchmarks |
 | [`demos/`](demos/README.md) | runnable demos: long context, reviewer agents, the planner, the continual loop, benchmarks |
