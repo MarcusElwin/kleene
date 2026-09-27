@@ -6,6 +6,8 @@ context (inline or a file), optional setup commands and source directory for
 a fresh workspace, an oracle (`exact`, `number`, `sat`, `shell`, `judge`,
 `human`) and a difficulty prior. `kleene bench run <dir> --mode
 learning|frozen|plain` runs one; `kleene bench report` summarises every run.
+What the modes, oracles, report columns and plots mean is in
+[`docs/BENCHMARKS.md`](../docs/BENCHMARKS.md).
 
 | Pack | What it is | Oracle |
 |---|---|---|
