@@ -1,0 +1,18 @@
+{
+  "id": "resp_3",
+  "object": "response",
+  "status": "completed",
+  "model": "gpt-5.4-mini",
+  "output": [
+    {
+      "type": "message",
+      "id": "msg_3",
+      "status": "completed",
+      "role": "assistant",
+      "content": [{"type": "refusal", "refusal": "I can't help with that."}]
+    }
+  ],
+  "incomplete_details": null,
+  "error": null,
+  "usage": {"input_tokens": 9, "output_tokens": 7, "total_tokens": 16}
+}

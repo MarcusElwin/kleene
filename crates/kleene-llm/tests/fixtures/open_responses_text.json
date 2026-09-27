@@ -1,0 +1,27 @@
+{
+  "id": "resp_1",
+  "object": "response",
+  "created_at": 1700000000,
+  "status": "completed",
+  "model": "gpt-5.4-mini",
+  "output": [
+    {
+      "type": "message",
+      "id": "msg_1",
+      "status": "completed",
+      "role": "assistant",
+      "content": [{"type": "output_text", "text": "Hello there.", "annotations": []}]
+    }
+  ],
+  "incomplete_details": null,
+  "error": null,
+  "usage": {
+    "input_tokens": 100,
+    "output_tokens": 5,
+    "total_tokens": 105,
+    "input_tokens_details": {"cached_tokens": 80},
+    "output_tokens_details": {"reasoning_tokens": 0},
+    "cost_usd": 0.000125
+  },
+  "metadata": {"provider": "openai", "latency_ms": 412}
+}

@@ -204,7 +204,10 @@ listening.
 
 `Provider` is one trait (`complete`, streaming optional). Two adapters speak
 the wire formats directly over `reqwest`: the Anthropic Messages API and the
-OpenAI-compatible chat API (OpenAI, local servers, gateways). `RoutedProvider`
+OpenAI-compatible chat API (OpenAI, local servers, gateways). A third,
+`OpenResponsesProvider`, is compiled in with the `gateway` feature of
+`kleene-llm` and speaks the Open Responses API (`POST /responses`) of Aura or
+any other such gateway, taking cost from `usage.cost_usd`. `RoutedProvider`
 resolves an **alias** (`root`, `worker`, `proxy`, `judge`, or your own) to an
 ordered list of `(provider, model)` candidates with default options, skips
 candidates whose circuit breaker is open, prices usage from a `Pricing`

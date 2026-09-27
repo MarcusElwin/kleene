@@ -18,6 +18,11 @@
 //! base_url = "https://api.openai.com/v1"
 //! model = "gpt-5.4-mini"
 //!
+//! [open_responses]          # feature "gateway" only
+//! base_url = "https://aura.example/v1"
+//! api_key = "..."
+//! model = "gpt-5.4-mini"
+//!
 //! [web_search]
 //! provider = "brave"        # or "tavily", "exa", "linkup"
 //! api_key = "BSA..."
@@ -75,6 +80,30 @@ impl OpenAiCompatSettings {
     }
 }
 
+/// Open Responses gateway settings (feature `gateway`).
+#[cfg(feature = "gateway")]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OpenResponsesSettings {
+    /// `OPEN_RESPONSES_API_KEY`; a gateway on a private network may need none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+    /// `OPEN_RESPONSES_BASE_URL`, the root under which `/responses` lives.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    /// `OPEN_RESPONSES_MODEL`: the model every alias resolves to without a router.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
+#[cfg(feature = "gateway")]
+impl OpenResponsesSettings {
+    /// Whether the endpoint is usable: a key (OpenAI's own Responses API)
+    /// or a URL (a gateway).
+    pub fn is_configured(&self) -> bool {
+        non_empty(&self.api_key) || non_empty(&self.base_url)
+    }
+}
+
 /// The service behind the `web_search` tool.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WebSearchSettings {
@@ -121,6 +150,10 @@ pub struct ProviderSettings {
     /// OpenAI or compatible.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub openai_compat: Option<OpenAiCompatSettings>,
+    /// An Open Responses gateway (feature `gateway`).
+    #[cfg(feature = "gateway")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub open_responses: Option<OpenResponsesSettings>,
     /// Path of a router TOML (`KLEENE_ROUTER_TOML`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub router: Option<PathBuf>,
@@ -174,10 +207,19 @@ impl ProviderSettings {
             provider: env(WebSearchSettings::PROVIDER_ENV),
             api_key: env(WebSearchSettings::API_KEY_ENV),
         };
+        #[cfg(feature = "gateway")]
+        let open_responses = OpenResponsesSettings {
+            api_key: env("OPEN_RESPONSES_API_KEY"),
+            base_url: env("OPEN_RESPONSES_BASE_URL"),
+            model: env("OPEN_RESPONSES_MODEL"),
+        };
         Self {
             anthropic: (anthropic != AnthropicSettings::default()).then_some(anthropic),
             openai_compat: (openai_compat != OpenAiCompatSettings::default())
                 .then_some(openai_compat),
+            #[cfg(feature = "gateway")]
+            open_responses: (open_responses != OpenResponsesSettings::default())
+                .then_some(open_responses),
             router: env(crate::env::ROUTER_TOML_ENV).map(PathBuf::from),
             web_search: (web_search != WebSearchSettings::default()).then_some(web_search),
         }
@@ -260,6 +302,14 @@ impl ProviderSettings {
             c.model = o.model.or(c.model);
             self.openai_compat = Some(c);
         }
+        #[cfg(feature = "gateway")]
+        if let Some(o) = other.open_responses {
+            let mut g = self.open_responses.take().unwrap_or_default();
+            g.api_key = o.api_key.or(g.api_key);
+            g.base_url = o.base_url.or(g.base_url);
+            g.model = o.model.or(g.model);
+            self.open_responses = Some(g);
+        }
         self.router = other.router.or(self.router);
         if let Some(o) = other.web_search {
             let mut w = self.web_search.take().unwrap_or_default();
@@ -292,7 +342,15 @@ impl ProviderSettings {
             .as_ref()
             .is_some_and(OpenAiCompatSettings::is_configured)
             .then_some("openai_compat");
-        a.into_iter().chain(o)
+        #[cfg(feature = "gateway")]
+        let g = self
+            .open_responses
+            .as_ref()
+            .is_some_and(OpenResponsesSettings::is_configured)
+            .then_some("open_responses");
+        #[cfg(not(feature = "gateway"))]
+        let g = None;
+        a.into_iter().chain(o).chain(g)
     }
 }
 
@@ -312,6 +370,8 @@ mod tests {
                 base_url: Some("http://localhost:11434/v1".into()),
                 model: Some("llama".into()),
             }),
+            #[cfg(feature = "gateway")]
+            open_responses: None,
             router: None,
             web_search: Some(WebSearchSettings {
                 provider: None,
@@ -380,6 +440,39 @@ mod tests {
         let s = ProviderSettings::parse("[openai_compat]\nbase_url = 'http://localhost:1/v1'\n")
             .unwrap();
         assert!(s.is_configured(), "a URL without a key is a local server");
+    }
+
+    #[cfg(feature = "gateway")]
+    #[test]
+    fn open_responses_section_round_trips_and_overlays() {
+        let s = ProviderSettings {
+            open_responses: Some(OpenResponsesSettings {
+                api_key: None,
+                base_url: Some("https://aura.example/v1".into()),
+                model: Some("gpt-5.4-mini".into()),
+            }),
+            ..Default::default()
+        };
+        let text = s.to_toml();
+        assert!(text.contains("[open_responses]"), "{text}");
+        assert_eq!(ProviderSettings::parse(&text).unwrap(), s);
+        assert_eq!(s.configured().collect::<Vec<_>>(), vec!["open_responses"]);
+        let env = ProviderSettings {
+            open_responses: Some(OpenResponsesSettings {
+                api_key: Some("env-key".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let g = s.overlaid(env).open_responses.unwrap();
+        assert_eq!(g.api_key.as_deref(), Some("env-key"));
+        assert_eq!(
+            g.base_url.as_deref(),
+            Some("https://aura.example/v1"),
+            "kept from the file"
+        );
+        let s = ProviderSettings::parse("[open_responses]\nmodel = 'x'\n").unwrap();
+        assert!(!s.is_configured(), "a model alone is not an endpoint");
     }
 
     #[test]

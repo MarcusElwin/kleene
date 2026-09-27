@@ -5,7 +5,10 @@
 //! JSON schema for the output, streaming and usage. Adapters map it to each
 //! vendor's wire format over `reqwest`, no SDKs: [`AnthropicProvider`] speaks
 //! the Messages API and [`OpenAiCompatProvider`] the chat-completions API that
-//! everyone else exposes. [`RoutedProvider`] resolves model aliases to ordered
+//! everyone else exposes; with the `gateway` feature, `OpenResponsesProvider`
+//! speaks the Open Responses API (`POST /responses`) of Aura or any other
+//! gateway and reports the gateway's `usage.cost_usd`. [`RoutedProvider`]
+//! resolves model aliases to ordered
 //! `(provider, model)` candidates with failover, circuit breaking and a
 //! [`Pricing`] table. [`ReplayProvider`] serves recorded fixtures so tests and
 //! re-runs cost nothing. [`provider_from_env`] assembles the stack from the
@@ -22,7 +25,11 @@ pub mod router;
 pub mod sse;
 pub mod types;
 
+#[cfg(feature = "gateway")]
+pub use adapters::OpenResponsesProvider;
 pub use adapters::{AnthropicProvider, OpenAiCompatProvider};
+#[cfg(feature = "gateway")]
+pub use config::OpenResponsesSettings;
 pub use config::{AnthropicSettings, OpenAiCompatSettings, ProviderSettings, WebSearchSettings};
 pub use env::{provider_from_env, provider_from_settings, NOT_CONFIGURED};
 pub use replay::{RecordingProvider, ReplayProvider};

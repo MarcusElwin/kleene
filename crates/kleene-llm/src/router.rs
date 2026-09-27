@@ -239,6 +239,22 @@ impl RouterConfig {
         }
         cfg
     }
+
+    /// Single-model defaults for an Open Responses gateway: every alias
+    /// resolves to `model` on the `open_responses` provider. No pricing; the
+    /// gateway reports cost itself.
+    #[cfg(feature = "gateway")]
+    pub fn default_for_open_responses(model: &str) -> Self {
+        let mut cfg = Self::default();
+        for alias in ["root", "worker", "proxy", "judge"] {
+            cfg = cfg.with_alias(
+                alias,
+                vec![Candidate::new("open_responses", model)],
+                ProviderOptions::default(),
+            );
+        }
+        cfg
+    }
 }
 
 /// Resolves aliases to candidates and default options.
