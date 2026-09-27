@@ -230,6 +230,13 @@ enum BenchAction {
     },
     /// Every eval row as CSV on stdout.
     Csv,
+    /// Write the write-up's plots as SVG files: learning curve, accuracy at
+    /// cost parity, calls against difficulty, estimated against actual
+    /// calls, and plan-space size against query shape.
+    Plot {
+        /// Output directory.
+        out: PathBuf,
+    },
 }
 
 async fn run_bench(cli: &Cli, action: &BenchAction) -> anyhow::Result<()> {
@@ -357,6 +364,14 @@ curve {}",
             }
         }
         BenchAction::Csv => print!("{}", learn.bench_csv().await?),
+        BenchAction::Plot { out } => {
+            std::fs::create_dir_all(out)?;
+            for (name, svg) in learn.bench_plots().await? {
+                let path = out.join(&name);
+                std::fs::write(&path, svg)?;
+                println!("{}", path.display());
+            }
+        }
         BenchAction::Build { .. }
         | BenchAction::Terminal { .. }
         | BenchAction::ImportLab { .. } => {}

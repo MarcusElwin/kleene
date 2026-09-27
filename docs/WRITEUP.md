@@ -64,7 +64,10 @@ The measurement design from the plan is implemented in `kleene bench`:
 
 - **Learning curve**: a pack run in `learning` mode against the same pack in
   `frozen` mode (no playbook, nothing adopted); accuracy and cost per task
-  are rows in `evals`, the rolling mean is `bench curve`.
+  are rows in `evals`, the rolling mean is `bench curve`, and `bench plot`
+  draws it with the other four plots of the plan (accuracy at cost parity,
+  calls against difficulty, estimated against actual calls, plan-space size
+  against query shape) as SVG from the store.
 - **Cost parity**: `plain` mode runs the tool-calling agent on the same
   provider, tools and budgets; accuracy at equal spend is the comparison.
 - **Transfer**: learn on a prefix of a pack (`--limit`), then run the rest

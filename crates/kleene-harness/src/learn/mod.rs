@@ -14,6 +14,7 @@ pub mod functions;
 pub mod generators;
 pub mod packs;
 pub mod plain;
+pub mod plots;
 pub mod ratings;
 pub mod verify;
 

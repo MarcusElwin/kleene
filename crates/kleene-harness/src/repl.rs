@@ -428,6 +428,24 @@ impl Repl {
                             kleene_algebra::explain(cp)
                         ));
                     }
+                    // The estimate beside the actuals `StatementFinished`
+                    // records: `bench plot` draws estimate accuracy and the
+                    // plan space from these.
+                    if let Some(t) = &self.tracer {
+                        t.emit(TraceEvent::StatementPlanned {
+                            statement: id,
+                            explain: kleene_algebra::explain(cp),
+                            estimate: serde_json::json!({
+                                "rows": cp.total.rows,
+                                "calls": cp.total.calls,
+                                "tokens": cp.total.tokens,
+                                "dollars": cp.total.dollars,
+                                "depth": cp.total.depth,
+                                "relations": cp.plan_space.as_ref().map(|p| p.relations),
+                                "join_orders": cp.plan_space.as_ref().map(|p| p.orders),
+                            }),
+                        });
+                    }
                 }
                 let mut ctx = ExecContext::new(self.sink.clone());
                 ctx.max_recursion_rounds = self.sink.settings().await.max_recursion_rounds;

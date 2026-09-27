@@ -555,6 +555,7 @@ every task in a fresh workspace, every result a row in `evals`.
 | `bench report` | Accuracy, calls and dollars per pack and mode |
 | `bench curve <run-id> [--window 5]` | The learning curve of one run as a sparkline and rolling mean |
 | `bench csv` | Every eval row as CSV on stdout |
+| `bench plot <out-dir>` | The write-up's plots as SVG files: `learning_curve`, `cost_parity`, `calls_vs_difficulty`, `estimate_accuracy` (the planner's estimated calls against actuals, from `trace_statements`) and `plan_space` (join orders against relations joined) |
 
 ```bash
 kleene bench run tasks/oolong-like --mode frozen --record fixtures/oolong

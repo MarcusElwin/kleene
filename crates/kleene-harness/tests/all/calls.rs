@@ -110,6 +110,19 @@ async fn verify_and_refute_pitch_query_with_explain_analyze() {
         .await
         .unwrap();
     assert!(stmts.rows[0][0].as_int().unwrap() >= 1);
+    // Every planned statement records its estimate beside the actuals, so
+    // `bench plot` can draw estimated against actual calls.
+    let planned = store
+        .query(
+            "SELECT COUNT(*) FROM trace_statements WHERE calls > 0 AND estimate LIKE '%\"calls\"%'",
+        )
+        .await
+        .unwrap();
+    assert!(
+        planned.rows[0][0].as_int().unwrap() >= 1,
+        "{:?}",
+        planned.rows
+    );
 }
 
 #[tokio::test]
