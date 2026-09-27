@@ -24,7 +24,8 @@ tempfile = "3"
 [features]
 default = ["duckdb"]
 # DuckDB-backed store (the production store). Building it compiles DuckDB from
-# source once, about ten minutes on four cores.
+# source once per profile variant, about six minutes on four cores; see the
+# DuckDB section of CLAUDE.md for the variants and for sccache.
 duckdb = ["dep:duckdb"]
 
 [lints]

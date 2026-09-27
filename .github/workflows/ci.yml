@@ -6,7 +6,25 @@ on:
   # save the same rust-cache key.
   push:
     branches: ["main"]
+    paths-ignore:
+      # Nothing under these is read by a build or a test; a docs-only push
+      # skips the DuckDB build entirely. If a check here ever becomes
+      # required by branch protection, a skipped run counts as missing, so
+      # drop this filter at the same time.
+      - "**.md"
+      - "docs/**"
+      - "LICENSE"
+      - "Formula/**"
+      - "install.sh"
+      - "ci/**"
   pull_request:
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "LICENSE"
+      - "Formula/**"
+      - "install.sh"
+      - "ci/**"
 
 # A new push supersedes the run it replaces. At ~30 min a job that matters.
 concurrency:
@@ -19,20 +37,43 @@ env:
   # runner has ~14 GB. Line tables are enough for a backtrace in CI.
   CARGO_PROFILE_DEV_DEBUG: "0"
   CARGO_PROFILE_TEST_DEBUG: "0"
+  # Two caches, two jobs:
+  #
+  # rust-cache saves target/ under a key derived from Cargo.lock and the
+  # manifests. A dependency bump misses it, and the fallback to an older key
+  # only helps until the old entries are evicted (10 GB per repository).
+  #
+  # sccache is content-addressed per compilation unit and is what makes the
+  # DuckDB build survive that: the `cc` crate sees RUSTC_WRAPPER=sccache and
+  # routes the amalgamation's C++ through it too, so every object of the
+  # bundled DuckDB is a cache hit whenever the source, flags and compiler are
+  # the same, whichever key rust-cache missed on and whichever job asks.
+  RUSTC_WRAPPER: sccache
+  SCCACHE_GHA_ENABLED: "true"
 
 jobs:
-  check:
-    name: fmt, clippy, test
+  fmt:
+    name: fmt
     runs-on: ubuntu-latest
-    # Cold, clippy alone is ~15 min (bundled DuckDB under the check profile)
-    # and the test profile builds a second variant.
-    timeout-minutes: 90
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: clippy, doc
+    runs-on: ubuntu-latest
+    # Cold, clippy alone is ~15 min (bundled DuckDB under the check profile).
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
-      # DuckDB builds three profile variants at ~4 GB each and every test
-      # binary that links the store carries it. Without this, lld dies with
-      # SIGBUS part-way through linking callgebra-difftest.
+      # DuckDB builds at ~4 GB per profile variant and every test binary
+      # that links the store carries it. Without this, lld dies with SIGBUS
+      # part-way through linking callgebra-difftest.
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
@@ -42,26 +83,52 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
+          components: clippy
+      - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: Swatinem/rust-cache@v2
         with:
+          shared-key: clippy
           # Default is false: a red run discards the entire DuckDB build and
           # the next run starts cold again.
           cache-on-failure: true
 
-      - name: Format
-        run: cargo fmt --all -- --check
       - name: Clippy
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-      - name: Disk after clippy
-        if: always()
-        run: df -h /
-      - name: Test
-        run: cargo test --workspace --all-features
-      - name: Disk after test
-        if: always()
-        run: df -h /
       - name: Doc
         run: cargo doc --workspace --no-deps
         env:
           RUSTDOCFLAGS: "-D warnings"
+      - name: Cache stats
+        if: always()
+        run: |
+          sccache --show-stats
+          df -h /
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost /usr/local/.ghcup \
+                      "${AGENT_TOOLSDIRECTORY:-/opt/hostedtoolcache}"
+          df -h /
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: test
+          cache-on-failure: true
+
+      - name: Test
+        run: cargo test --workspace --all-features
+      - name: Cache stats
+        if: always()
+        run: |
+          sccache --show-stats
+          df -h /
