@@ -2,6 +2,12 @@
 
 **Kleene — relational algebra for recursive model calls.**
 
+[![CI][ci-badge]][ci-link]
+[![Release][release-badge]][release-link]
+[![Rust 1.88+][msrv-badge]][msrv-link]
+[![DuckDB inside][duckdb-badge]][duckdb-link]
+[![License: MIT][license-badge]][license-link]
+
 Write declarative SQL. Compile joins, recursion, predicates and aggregation
 into an execution graph of language-model calls, recursive sub-sessions and
 tool calls. Plan and cost that graph, run it, and query the trace with the
@@ -21,7 +27,24 @@ WHERE VERIFY(candidate)
 anti-semi-join that stops on the first refuting counterexample. `EXPLAIN`
 tells you how many calls that is before you spend them.
 
+![The terminal UI: a run mid-stream, the first open, the command popup and the setup wizard](docs/screenshots/overview.png)
+
+- [Install](#install)
+- [Quickstart](#quickstart)
+- [Example runs](#example-runs)
+- [How it works](#how-it-works): [one turn](#one-turn-of-a-session),
+  [delegation](#delegation-rlm-and-spawn), [processes](#processes-cli-daemon-and-tui),
+  [crates](#crates)
+- [Commands](#commands)
+- [Documentation](#documentation)
+- [Status](#status)
+- [Developing](#developing)
+- [Why "Kleene"](#why-kleene)
+
 ## Install
+
+Pick one of the three. Prebuilt binaries cover macOS (Apple silicon, Intel)
+and Linux (x86_64, aarch64).
 
 ```bash
 # curl: detects OS and architecture, verifies the SHA-256, installs to ~/.local/bin
@@ -34,35 +57,40 @@ brew install MarcusElwin/callgebra/kleene
 cargo install --git https://github.com/MarcusElwin/callgebra kleene
 ```
 
-Prebuilt binaries cover macOS (Apple silicon, Intel) and Linux (x86_64,
-aarch64). `KLEENE_VERSION=v0.1.0` pins the installer to a tag and
+`KLEENE_VERSION=v0.1.0` pins the installer to a tag and
 `KLEENE_INSTALL=/usr/local/bin` changes the destination. While the
 repository is private, the raw URL is not served; set `GITHUB_TOKEN` and fetch
-the script through the API instead (see [`docs/CLI.md`](docs/CLI.md#curl)).
-Then:
+the script through the API instead (see [`docs/CLI.md`](docs/CLI.md#curl)),
+and use one of the [`cargo` variants](docs/CLI.md#cargo) that let the git CLI
+authenticate.
+
+Check that the engine works without a model:
 
 ```bash
-kleene repl -c "SELECT 1 + 1 AS two"    # the engine, no model needed
+kleene --version
+kleene repl -c "SELECT 1 + 1 AS two"    # prints a one-row table: two = 2
 ```
 
 Full install, provider and command reference: [`docs/CLI.md`](docs/CLI.md).
 
 ## Quickstart
 
-Point it at a model. The wizard asks which providers to use and stores the
-keys owner-readable under `~/.config/kleene/`; environment variables win
+**1. Point it at a model.** The wizard asks which providers to use and stores
+the keys owner-readable under `~/.config/kleene/`; environment variables win
 over the file when both are set:
 
 ```bash
-kleene setup                               # pick Anthropic, OpenAI, or a compatible endpoint (Ollama, vLLM, a gateway); optionally Brave, Tavily, Exa or Linkup for web_search
-export ANTHROPIC_API_KEY=sk-ant-...        # or just the environment: Anthropic, routed root/worker/proxy/judge by default
+kleene setup                               # Anthropic, OpenAI, or a compatible endpoint (Ollama, vLLM, a gateway);
+                                           # optionally Brave, Tavily, Exa or Linkup for web_search
+export ANTHROPIC_API_KEY=sk-ant-...        # or just the environment: routed root/worker/proxy/judge by default
 export OPENAI_API_KEY=sk-...               # or any OpenAI-compatible endpoint (OPENAI_BASE_URL, OPENAI_MODEL)
 ```
 
-Then just run it. `kleene` alone opens the terminal UI, one scrolling stream
-with a prompt: type a task, press Enter, watch the model's reply stream in,
-its SQL run and the answer arrive; `/sql`, `/trace` and `/board` query the
-engine from the same prompt. Or drive it from the shell:
+**2. Run it.** `kleene` alone opens the terminal UI: one scrolling stream
+with a prompt. Type a task, press Enter, watch the model's reply stream in,
+its SQL run and the answer arrive. `/sql`, `/trace` and `/board` query the
+engine from the same prompt and `/setup` opens the wizard without leaving
+it. Or drive it from the shell:
 
 ```bash
 kleene                                              # the UI, prompt bar focused
@@ -74,65 +102,240 @@ kleene trace "SELECT depth, role, outcome, turns, calls, dollars FROM trace_sess
 spinner while statements execute and prints the results and the final
 relation as tables.
 
-![The terminal UI: a run mid-stream, the first open, the command popup and the setup wizard](docs/screenshots/overview.png)
-
 The model receives the context as a table `ctx(ordinal, text)` and writes
 CallSQL turn by turn: it can `SELECT` over the context, define prompt
 functions, call tools with `CALL`, delegate with `rlm(...)` and
 `spawn(...)`, and finish with `FINAL`. Every model call is memoised, so
-running the same task again is free.
+running the same task again is free. Everything lands in
+`.kleene/run.duckdb` under the current directory.
 
-Watch it live, or explore the plan space without spending anything:
+<details>
+<summary>More screenshots</summary>
+
+| First open | A run mid-stream |
+|---|---|
+| ![Welcome screen](docs/screenshots/welcome.png) | ![A run streaming](docs/screenshots/run.png) |
+
+| Slash commands | `/setup` wizard |
+|---|---|
+| ![Command popup](docs/screenshots/commands.png) | ![Setup wizard](docs/screenshots/setup.png) |
+
+</details>
+
+## Example runs
+
+Every example below is in [`demos/`](demos/README.md) or
+[`tasks/`](tasks/README.md). They need a provider unless noted; a second run
+of the same demo costs nothing because every call is memoised.
+
+**Long context: partition and map.** Sixty dated meeting notes about six
+projects. The root peeks at `ctx`, partitions it, maps `rlm` over the
+partitions and aggregates the children's answers.
+
+```bash
+kleene run @demos/oolong/task.txt --context demos/oolong/corpus.txt --budget-calls 60
+kleene trace "SELECT depth, role, outcome, turns, calls FROM trace_sessions ORDER BY started_at"
+```
+
+**Repository question with reviewer agents.** The root reads the codebase
+with `files`, `grep` and `read`, declares a read-only `reviewer` agent and
+spawns one per hypothesis with `CROSS JOIN LATERAL spawn(...)`.
+
+```bash
+kleene run @demos/repo-review/task.txt --workspace . --max-depth 1
+kleene trace "SELECT s.role, st.sql, st.calls FROM trace_statements st JOIN trace_sessions s USING (session) ORDER BY st.started_at"
+```
+
+**The planner, without spending anything.** `EXPLAIN` needs no provider: it
+prints the plan space, the chosen join order and the as-written cost beside
+it. See [`demos/planner`](demos/planner/README.md).
+
+```bash
+kleene explain "SELECT c FROM candidates WHERE llm_bool('Is ' || c || ' a real place?')"
+kleene repl < demos/planner/three_way.sql        # join ordering over call predicates
+kleene repl < demos/planner/cascade_and_beam.sql # a proxy cascade and a beam of width five
+```
+
+**Watch it live.**
 
 ```bash
 kleene tui --run @demos/oolong/task.txt --context demos/oolong/corpus.txt
-kleene explain "SELECT c FROM candidates WHERE llm_bool('Is ' || c || ' a real place?')"
-kleene repl < demos/planner/three_way.sql     # join ordering over call predicates
 ```
 
-Keep it learning overnight, and measure it:
+**Keep it learning overnight, and measure it.** State is tables in the
+store, so stopping and starting again resumes.
 
 ```bash
-kleene learn run --tasks 20 --generators puzzle,corpus   # resumable; state is tables in the store
+kleene learn run --tasks 20 --generators puzzle,corpus   # resumable continual loop
 kleene learn report                                       # the morning query
 kleene bench run tasks/terminal --mode frozen             # a task pack, one mode
 kleene bench report                                       # accuracy and cost per pack and mode
 ```
 
-Everything lands in `.kleene/run.duckdb` under the current directory.
+**Resume a run that hit its turn cap.**
 
-## Commands
-
-| Command | Does |
-|---|---|
-| `kleene` | the terminal UI: one stream, a prompt, slash commands; type a task to run it |
-| `kleene setup` | pick providers and store their keys; `/setup` in the TUI does the same without leaving it |
-| `kleene run <task>` | drive a model through the SQL turn loop to `FINAL`, streamed to the terminal |
-| `kleene resume <run-id>` | continue a run that hit its turn cap |
-| `kleene repl [-c SQL]` | CallSQL against the store, interactive or scripted |
-| `kleene explain <sql>` | the call plan and its cost, without executing |
-| `kleene trace <sql>` | DuckDB SQL over the trace, memo and session tables |
-| `kleene tui` | the same UI over the engine daemon, optionally starting a run on connect |
-| `kleene attach` | the same, headless: every event as a JSON line |
-| `kleene daemon` | the engine as a server on a Unix socket |
-| `kleene learn …` | the continual loop: tasks, oracles, ratings, curriculum, playbook |
-| `kleene bench …` | task packs under learning, frozen and plain-agent modes |
-
-Details and every flag: [`docs/CLI.md`](docs/CLI.md).
+```bash
+kleene run "..." --max-turns 5
+kleene resume <run-id> --max-turns 10
+```
 
 ## How it works
 
+### One turn of a session
+
+A session is a loop. The harness sends the model a cached system prefix
+(the CallSQL rules, the catalog, the budget) plus the transcript; the model
+replies with CallSQL in one fence; the harness parses it, annotates every
+operator with the calls it implies, prices the plan, refuses it if the
+remaining budget cannot pay, executes it, renders the rows back into the
+transcript, and repeats until the model writes `FINAL`.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant M as Model
+    participant H as Harness (kleene-harness)
+    participant S as kleene-sql
+    participant A as kleene-algebra
+    participant X as kleene-exec
+    participant L as LiveSink
+    participant D as DuckDB (kleene-store)
+
+    H->>M: system prefix + transcript
+    M-->>H: CallSQL in one sql fence
+    H->>S: parse, validate, resolve names and types
+    S-->>H: LogicalPlan
+    H->>A: annotate with call kinds, run rewrite rules
+    A-->>H: CallPlan with rows, calls, tokens, dollars
+    alt estimate exceeds remaining budget
+        H-->>M: refused, with the plan
+    else within budget
+        H->>X: execute(plan)
+        loop every scalar, table, tool or child call
+            X->>L: call
+            L->>D: memo lookup
+            alt hit
+                D-->>L: cached result
+            else miss
+                L->>L: route, call provider or tool, price, charge budget
+                L->>D: memo store, TraceEvent
+            end
+            L-->>X: rows
+        end
+        X-->>H: batches
+        H->>D: persist session
+        H-->>M: rendered rows + footer (calls, tokens, dollars, remaining)
+    end
+    Note over M,H: repeat until FINAL
 ```
-model reply ─▶ kleene-sql ─▶ kleene-algebra ─▶ budget check ─▶ kleene-exec ─▶ rendered rows
-   CallSQL     parse, resolve     call kinds, cost,   refuse if over    operators, recursion,   back to the model
-               to a LogicalPlan   rules, EXPLAIN                        calls via LiveSink
-                                                                            │
-                                    kleene-llm  (Anthropic, OpenAI-compatible, router, replay)
-                                    kleene-tools (files, grep, read, shell, write_file, patch, git_*, web_*)
-                                    child sessions  (rlm, spawn: same loop at depth + 1 with a role and a budget slice)
-                                                                            │
-                                    kleene-store (DuckDB): tables · memo · trace_* · sessions · learning · evals
+
+`kleene repl` and `kleene explain` run the same path without a model turn
+around it. Details: [the path of one statement](docs/ARCHITECTURE.md#the-path-of-one-statement).
+
+### Delegation: `rlm` and `spawn`
+
+Child sessions are the same loop one level deeper, with a role, a budget
+slice and their own table namespace. `rlm(q, ctx)` opens one child per input
+row; `spawn('reviewer', task)` opens a child with that agent's tools and
+budget. A child's `FINAL` comes back to the parent as a row.
+
+```mermaid
+sequenceDiagram
+    participant R as Root session (depth 0)
+    participant P as Provider
+    participant C1 as Child 1 (depth 1, worker)
+    participant C2 as Child 2 (depth 1, worker)
+
+    R->>P: turn: peek at ctx, partition it
+    P-->>R: CREATE TABLE parts AS SELECT ...
+    R->>P: turn
+    P-->>R: SELECT * FROM parts CROSS JOIN LATERAL rlm(question, chunk)
+    par one child per row, concurrently
+        R->>C1: task + chunk, budget slice
+        C1->>P: turns until FINAL
+        C1-->>R: (answer, detail, session)
+    and
+        R->>C2: task + chunk, budget slice
+        C2->>P: turns until FINAL
+        C2-->>R: (answer, detail, session)
+    end
+    R->>P: turn: aggregate the children's answers
+    P-->>R: FINAL FROM (SELECT ...)
 ```
+
+Budgets have calls, tokens, dollars, depth and wall clock; a child gets the
+parent's remaining slice intersected with its role's budget and its spending
+rolls up. Details: [sessions and delegation](docs/ARCHITECTURE.md#sessions-and-delegation).
+
+### Processes: CLI, daemon and TUI
+
+`kleene run`, `repl`, `explain`, `learn` and `bench` run the harness in
+one process. The TUI talks to an engine daemon over a Unix socket and a
+JSONL protocol with cursors, so a client that reconnects resumes from where
+it left off and `kleene attach` can watch the same events headless.
+
+```mermaid
+sequenceDiagram
+    participant U as kleene (TUI)
+    participant Dm as kleene daemon
+    participant Hs as Harness + store + provider
+
+    U->>Dm: connect .kleene/daemon.sock (starts one if none listens)
+    U->>Dm: Subscribe { after: cursor }
+    Dm-->>U: Hello, replayed Events
+    U->>Dm: StartRun (a task typed at the prompt)
+    Dm->>Hs: run
+    Hs-->>Dm: streamed text, trace events
+    Dm-->>U: CallDelta ... TurnFinished (reply, SQL, rendered results)
+    U->>Dm: /sql → Submit, /trace and /board → Query
+    Dm-->>U: Table
+    U->>Dm: /setup → Reload (re-read the keys)
+    Dm-->>U: RunFinished
+```
+
+Details: [processes](docs/ARCHITECTURE.md#processes) and
+[`kleene tui`](docs/CLI.md#kleene-tui).
+
+### Crates
+
+```mermaid
+flowchart TB
+    CLI[kleene<br/>CLI binary]
+    TUI[kleene-tui<br/>ratatui client, setup wizard]
+    DAEMON[kleene-daemon<br/>Unix socket, JSONL protocol]
+    HARNESS[kleene-harness<br/>sessions, turn loop, LiveSink, learn, bench]
+    EXEC[kleene-exec<br/>operators, semi-naive recursion, concurrent calls]
+    ALGEBRA[kleene-algebra<br/>call kinds, cost model, rules, EXPLAIN]
+    SQL[kleene-sql<br/>sqlparser to LogicalPlan]
+    LLM[kleene-llm<br/>Anthropic, OpenAI-compatible, router, replay]
+    TOOLS[kleene-tools<br/>files, grep, shell, git, web_search ...]
+    STORE[kleene-store<br/>DuckDB: tables, memo, trace, sessions]
+    TRACE[kleene-trace<br/>TraceEvent, sinks]
+    CORE[kleene-core<br/>Value, Schema, Catalog, Budget, CallKind]
+
+    CLI --> TUI
+    CLI --> DAEMON
+    CLI --> HARNESS
+    TUI --> DAEMON
+    DAEMON --> HARNESS
+    HARNESS --> EXEC
+    HARNESS --> LLM
+    HARNESS --> TOOLS
+    HARNESS --> STORE
+    HARNESS --> TRACE
+    EXEC --> ALGEBRA
+    ALGEBRA --> SQL
+    SQL -.-> CORE
+    EXEC -.-> CORE
+    LLM -.-> CORE
+    TOOLS -.-> CORE
+    STORE -.-> CORE
+    TRACE -.-> CORE
+```
+
+Every crate depends on `kleene-core` and nothing depends on the binary.
+The full table of crates, what each owns and its key types is in
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#crates).
 
 - **A planner for calls.** Predicates that call a model have a cost the
   optimizer can see: join order, conjunct order, semi-joins for `EXISTS`,
@@ -145,12 +348,39 @@ model reply ─▶ kleene-sql ─▶ kleene-algebra ─▶ budget check ─▶ k
   generator dials, sampled selectivities) is rows in DuckDB: inspectable,
   replay-gated and revertible.
 
-Read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the crates, the path
-of a statement, sessions, the store and the daemon; [`docs/DIALECT.md`](docs/DIALECT.md)
-for the language; [`docs/PLAN.md`](docs/PLAN.md) for the design and its
-rationale; [`docs/WRITEUP.md`](docs/WRITEUP.md) for what has been measured;
-[`docs/RESEARCH.md`](docs/RESEARCH.md) for the sources. Demos are in
-[`demos/`](demos/README.md) and task packs in [`tasks/`](tasks/README.md).
+## Commands
+
+| Command | Does | Reference |
+|---|---|---|
+| `kleene` | the terminal UI: one stream, a prompt, slash commands; type a task to run it | [docs](docs/CLI.md#kleene) |
+| `kleene setup` | pick providers and store their keys; `/setup` in the TUI does the same without leaving it | [docs](docs/CLI.md#kleene-setup) |
+| `kleene run <task>` | drive a model through the SQL turn loop to `FINAL`, streamed to the terminal | [docs](docs/CLI.md#kleene-run-task) |
+| `kleene resume <run-id>` | continue a run that hit its turn cap | [docs](docs/CLI.md#kleene-resume-run-id) |
+| `kleene repl [-c SQL]` | CallSQL against the store, interactive or scripted | [docs](docs/CLI.md#kleene-repl) |
+| `kleene explain <sql>` | the call plan and its cost, without executing | [docs](docs/CLI.md#kleene-explain-sql) |
+| `kleene trace <sql>` | DuckDB SQL over the trace, memo and session tables | [docs](docs/CLI.md#kleene-trace-sql) |
+| `kleene tui` | the same UI over the engine daemon, optionally starting a run on connect | [docs](docs/CLI.md#kleene-tui) |
+| `kleene attach` | the same, headless: every event as a JSON line | [docs](docs/CLI.md#kleene-attach) |
+| `kleene daemon` | the engine as a server on a Unix socket | [docs](docs/CLI.md#kleene-daemon) |
+| `kleene learn …` | the continual loop: tasks, oracles, ratings, curriculum, playbook | [docs](docs/CLI.md#kleene-learn) |
+| `kleene bench …` | task packs under learning, frozen and plain-agent modes | [docs](docs/CLI.md#kleene-bench) |
+
+Every flag: `kleene <command> --help`, or [`docs/CLI.md`](docs/CLI.md#commands).
+
+## Documentation
+
+| Read this | For |
+|---|---|
+| [`docs/CLI.md`](docs/CLI.md) | install, [provider setup](docs/CLI.md#configuring-a-model-provider), [environment variables](docs/CLI.md#environment-variables), every command and flag, [troubleshooting](docs/CLI.md#troubleshooting) |
+| [`docs/DIALECT.md`](docs/DIALECT.md) | the CallSQL language: the [relational core](docs/DIALECT.md#relational-core), [sessions](docs/DIALECT.md#sessions), [model calls](docs/DIALECT.md#model-calls), [tools](docs/DIALECT.md#tools), [delegation](docs/DIALECT.md#delegation), [planner rules](docs/DIALECT.md#planner-rules) |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | the crates, [the path of a statement](docs/ARCHITECTURE.md#the-path-of-one-statement), [sessions](docs/ARCHITECTURE.md#sessions-and-delegation), [the store and trace tables](docs/ARCHITECTURE.md#store-and-trace), [the daemon protocol](docs/ARCHITECTURE.md#processes), [the planner](docs/ARCHITECTURE.md#planner), [testing](docs/ARCHITECTURE.md#testing-strategy) |
+| [`docs/PLAN.md`](docs/PLAN.md) | the design and its rationale, milestone by milestone |
+| [`docs/WRITEUP.md`](docs/WRITEUP.md) | the claim, the algebra, [what has been measured](docs/WRITEUP.md#3-what-was-measured-deterministically) and [how to reproduce it](docs/WRITEUP.md#6-reproduce) |
+| [`docs/RESEARCH.md`](docs/RESEARCH.md) | the sources: recursive language models, SQL as an LLM interface, complexity results, benchmarks |
+| [`demos/`](demos/README.md) | runnable demos: long context, reviewer agents, the planner, the continual loop, benchmarks |
+| [`tasks/`](tasks/README.md) | the shipped task packs and their oracles |
+| [`CLAUDE.md`](CLAUDE.md) | working rules for contributors and coding agents |
+| [`ci/README.md`](ci/README.md) | the release workflow: tags, tarballs, checksums, the Homebrew formula |
 
 ## Status
 
@@ -167,16 +397,18 @@ replayable.
 ## Developing
 
 ```bash
-git clone https://github.com/MarcusElwin/callgebra && cd kleene
+git clone https://github.com/MarcusElwin/callgebra && cd callgebra
 cargo build                                                          # DuckDB compiles once, ~10 min
 cargo test --workspace --all-features
 cargo clippy --workspace --all-targets --all-features -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 ```
 
 `CLAUDE.md` holds the working rules (interfaces first, typed errors, the
-flag shapes that keep DuckDB from rebuilding) and `ci/README.md` the release
-workflow. Written in Rust, model-agnostic with no SDK and no gateway
-required, MIT licensed.
+flag shapes that keep DuckDB from rebuilding), CI runs in
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) and `ci/README.md`
+describes the release workflow. Written in Rust, model-agnostic with no SDK
+and no gateway required, MIT licensed.
 
 ## Why "Kleene"
 
@@ -196,3 +428,16 @@ the planner prices the closure before it is computed. The engine is named
 for the mathematician who showed that closure is a thing you can compute,
 and the dialect keeps its own name, CallSQL, because the SQL is where the
 calls are.
+
+<!-- Badge and repository links. If the repository is renamed, update the
+     owner/repo below (and the install URLs above) in one place. -->
+[ci-badge]: https://github.com/MarcusElwin/callgebra/actions/workflows/ci.yml/badge.svg
+[ci-link]: https://github.com/MarcusElwin/callgebra/actions/workflows/ci.yml
+[release-badge]: https://img.shields.io/github/v/release/MarcusElwin/callgebra?include_prereleases&label=release
+[release-link]: https://github.com/MarcusElwin/callgebra/releases
+[msrv-badge]: https://img.shields.io/badge/rust-1.88%2B-orange?logo=rust
+[msrv-link]: rust-toolchain.toml
+[duckdb-badge]: https://img.shields.io/badge/DuckDB-inside-fff100?logo=duckdb&logoColor=black
+[duckdb-link]: https://duckdb.org
+[license-badge]: https://img.shields.io/badge/license-MIT-blue
+[license-link]: LICENSE
