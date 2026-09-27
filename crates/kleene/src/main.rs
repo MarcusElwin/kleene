@@ -408,7 +408,7 @@ enum LearnAction {
     },
     /// Generate tasks from a generator at its current dial.
     Generate {
-        /// sat3, graph, puzzle, corpus or repo.
+        /// sat3, graph, puzzle, corpus, repo, statements or contracts.
         generator: String,
         /// How many.
         #[arg(long, default_value_t = 3)]

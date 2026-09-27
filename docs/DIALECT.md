@@ -69,21 +69,27 @@ router knows). `PROXY` declares a cheap scorer (`RETURNS DOUBLE` in `[0, 1]`)
 the planner may cascade the predicate through. Volatility defaults: prompt
 functions `IMMUTABLE`, SQL bodies `STABLE`, shell bodies `VOLATILE`.
 
-Identical prompts are served from the memo (`memo(model, prompt_hash,
-schema_hash, output, usage)`) across sessions and runs.
+Identical prompts are served from the memo (`memo(model, fingerprint,
+response, input_tokens, output_tokens, cost_usd, created_at)`, keyed by
+model and prompt fingerprint) across sessions and runs.
 
 ## Tools
 
 Pure table functions usable in `FROM`: `files(glob)`, `lines(path)`,
-`read(path)`, `grep(pattern, glob)`, `chunks(path, size)`. Volatile tools run
-as statements: `CALL shell('cmd') [FROM query]`, `CALL write_file(path, text)`,
-`CALL patch(path, diff)`. A tool's output relation is rendered back to the
-model. Roles restrict which tools a session may use.
+`read(path)`, `grep(pattern [, glob])`, `chunks(text, size [, overlap])`,
+`env(name)`, `git_log([n])`, `git_diff([ref])`, `git_blame(path)`. Volatile
+tools run as statements: `CALL shell('cmd' [, cwd, timeout_ms]) [FROM query]`,
+`CALL write_file(path, text)`, `CALL append_file(path, text)`,
+`CALL patch(path, old, new)`, `CALL mkdir(path)`, `CALL remove(path)`,
+`CALL web_fetch(url)`, `CALL web_search(q [, n])`. A tool's output relation is
+rendered back to the model; the full table with columns and volatility is
+in `kleene-tools`'s crate docs. Roles restrict which tools a session may use.
 
 ## Delegation
 
 - `rlm(question [, context])` in `CROSS JOIN LATERAL`: one child session per
-  input row at depth + 1, returning `(answer, detail JSON, session)`.
+  input row at depth + 1, returning `(answer, detail JSON)`; `spawn` also
+  returns the child's `session` id.
 - `CREATE AGENT name MODEL 'alias' EFFORT 'low' TOOLS (files, grep)
   BUDGET (calls 40) PROMPT '...'` declares a role; `spawn('name', task [,
   context])` runs it. The child's catalog is restricted to the role's tools;

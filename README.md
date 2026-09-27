@@ -189,8 +189,8 @@ The commands the popup lists:
 | `/clear`, `/quit` | clear the stream (`Ctrl-L`); detach, the daemon and its runs keep going (`Ctrl-C`) |
 
 `Tab` completes a command, `Up`/`Down` walk the input history, `PageUp`/`PageDown`
-scroll the stream. Runs started from a shell against the same daemon appear in
-the stream too.
+scroll the stream. Runs started against the same daemon from another client
+(`kleene tui --run`, `kleene attach --run`) appear in the stream too.
 
 **Long context: partition and map.** Sixty dated meeting notes about six
 projects. The root peeks at `ctx`, partitions it, maps `rlm` over the

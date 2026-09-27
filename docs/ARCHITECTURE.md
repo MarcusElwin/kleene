@@ -133,7 +133,8 @@ Harness::run(task, context)
   costs new tokens only for what changed.
 - **Namespaces.** A child's tables are `cgs_<id>__name` in the shared store;
   `ctx` is preloaded one row per paragraph. Its `FINAL` comes back to the
-  parent as `(answer, detail JSON, session)`; a child that never reached
+  parent as `(answer, detail JSON)` for `rlm` and `(answer, detail JSON,
+  session)` for `spawn`; a child that never reached
   `FINAL` returns one row with a NULL answer and the outcome in `detail`, so
   the parent's statement survives.
 - **Budgets.** `Budget` has calls, tokens, dollars, depth and wall clock. A
@@ -161,15 +162,15 @@ One DuckDB file (`.kleene/run.duckdb` by default) holds everything:
 | user tables, `ctx`, `cgs_*__*` | statements | statements |
 | `kleene_columns` | store | planner (declared CallSQL types; JSON is stored as VARCHAR) |
 | `memo` | `LiveSink` | `LiveSink` (keyed by model and prompt fingerprint, across runs) |
-| `trace_runs`, `trace_sessions`, `trace_statements`, `trace_calls`, `trace_tool_calls`, `trace_rounds`, `trace_final` | `DuckDbTraceSink` from a background task | `kleene trace`, the TUI explorer, `EXPLAIN`'s sampled selectivity |
+| `trace_runs`, `trace_sessions`, `trace_statements`, `trace_calls`, `trace_tool_calls`, `trace_rounds`, `trace_final` | `DuckDbTraceSink` from a background task | `kleene trace`, `/trace` in the TUI, `EXPLAIN`'s sampled selectivity |
 | `kleene_sessions` | harness after every turn | `kleene resume` |
-| `tasks`, `task_ratings`, `solver_ratings`, `generator_state`, `playbook`, `playbook_evals`, `attempts`, view `trace_tasks` | `learn` | `learn board/report/playbook`, TUI view 4 |
+| `tasks`, `task_ratings`, `solver_ratings`, `generator_state`, `playbook`, `playbook_evals`, `attempts`, view `trace_tasks` | `learn` | `learn board/report/playbook`, `/board` in the TUI |
 | `evals`, `bench_runs` | `bench` | `bench report/curve/csv` |
 
 `TraceEvent`s flow through a `Tracer` to a sink. In-process that is the store
 sink; under the daemon a `FanoutSink` mirrors them into the event log as
 well, so the TUI and the trace tables tell the same story. The store flushes
-the async writer before answering a `Query`, so the explorer never lags.
+the async writer before answering a `Query`, so `/trace` never lags.
 
 ## Processes
 
