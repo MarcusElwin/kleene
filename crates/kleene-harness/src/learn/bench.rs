@@ -71,6 +71,108 @@ pub struct EvalRow {
     pub dollars: f64,
     /// Turns.
     pub turns: u32,
+    /// Where the task's `output/` was exported (`BenchOptions::outputs`),
+    /// as the run id LAB's evaluator takes.
+    #[serde(default)]
+    pub exported: Option<String>,
+}
+
+/// What a `bench run` covers and keeps, beyond the mode.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct BenchOptions {
+    /// Only the first N tasks (after sampling).
+    pub limit: Option<usize>,
+    /// A seeded sample of `k` tasks, in pack order, instead of the whole
+    /// pack: `(k, seed)`.
+    pub sample: Option<(usize, u64)>,
+    /// Export every task's `output/` directory here in the layout the
+    /// Harvey LAB evaluator reads: `<task id with / for __>/kleene-<mode>/<run>/`
+    /// holding `output/`, `config.json` and `metrics.json`, so
+    /// `lab_core.evaluation.run_eval --run-id <that path> --task <task id>`
+    /// scores it when the directory is the checkout's `results/`.
+    pub outputs: Option<std::path::PathBuf>,
+}
+
+/// Copy a finished task's `output/` into `dir` in the layout the Harvey
+/// LAB evaluator reads, and return the LAB run id (`<task>/kleene-<mode>/<run>`).
+/// A pack task id spells the LAB task id with `__` for `/`.
+#[allow(clippy::too_many_arguments)]
+fn export_outputs(
+    dir: &Path,
+    task_id: &str,
+    mode: Mode,
+    run: &str,
+    workspace: &Path,
+    turns: u32,
+    tokens: u64,
+    wall_ms: u64,
+    verdict: &Verdict,
+) -> Result<String, HarnessError> {
+    let lab_task = task_id.replace("__", "/");
+    let lab_run = format!("{lab_task}/kleene-{}/{run}", mode.label());
+    let dest = dir.join(&lab_run);
+    let err = |e: std::io::Error| HarnessError::Config(format!("export {}: {e}", dest.display()));
+    std::fs::create_dir_all(dest.join("output")).map_err(err)?;
+    let out = workspace.join("output");
+    if out.is_dir() {
+        copy_tree(&out, &dest.join("output"))?;
+    }
+    let now = chrono_now();
+    let config = serde_json::json!({
+        "model": format!("kleene-{}", mode.label()),
+        "task": lab_task,
+        "run_id": lab_run,
+        "harness": "kleene",
+        "started_at": now,
+    });
+    let metrics = serde_json::json!({
+        "model": format!("kleene-{}", mode.label()),
+        "task": lab_task,
+        "run_id": lab_run,
+        "turn_count": turns,
+        "input_tokens": tokens,
+        "output_tokens": 0,
+        "total_tokens": tokens,
+        "wall_clock_seconds": wall_ms as f64 / 1000.0,
+        "finished_cleanly": true,
+        "finish_reason": "final",
+        "completed_at": now,
+        "kleene_verdict": { "pass": verdict.pass, "detail": verdict.detail },
+    });
+    std::fs::write(
+        dest.join("config.json"),
+        serde_json::to_string_pretty(&config).unwrap_or_default(),
+    )
+    .map_err(err)?;
+    std::fs::write(
+        dest.join("metrics.json"),
+        serde_json::to_string_pretty(&metrics).unwrap_or_default(),
+    )
+    .map_err(err)?;
+    Ok(lab_run)
+}
+
+fn chrono_now() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    format!("{secs}")
+}
+
+fn copy_tree(from: &Path, to: &Path) -> Result<(), HarnessError> {
+    let err = |e: std::io::Error| HarnessError::Config(format!("copy {}: {e}", from.display()));
+    std::fs::create_dir_all(to).map_err(err)?;
+    for entry in std::fs::read_dir(from).map_err(err)? {
+        let entry = entry.map_err(err)?;
+        let target = to.join(entry.file_name());
+        if entry.path().is_dir() {
+            copy_tree(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), &target).map_err(err)?;
+        }
+    }
+    Ok(())
 }
 
 /// A whole run.
@@ -150,6 +252,36 @@ impl Learn {
         mode: Mode,
         limit: Option<usize>,
     ) -> Result<BenchReport, HarnessError> {
+        self.bench_with(
+            pack_dir,
+            pack,
+            mode,
+            BenchOptions {
+                limit,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// [`Learn::bench`] with sampling and output export (see
+    /// [`BenchOptions`]).
+    pub async fn bench_with(
+        &self,
+        pack_dir: &Path,
+        pack: &Pack,
+        mode: Mode,
+        options: BenchOptions,
+    ) -> Result<BenchReport, HarnessError> {
+        let sampled;
+        let pack = match options.sample {
+            Some((k, seed)) => {
+                sampled = pack.sampled(k, seed);
+                &sampled
+            }
+            None => pack,
+        };
+        let limit = options.limit;
         self.init_bench().await?;
         let run = kleene_core::RunId::new().to_string();
         self.store()
@@ -202,6 +334,12 @@ impl Learn {
                     s(&verdict.detail)
                 ))
                 .await?;
+            let exported = match &options.outputs {
+                Some(dir) => Some(export_outputs(
+                    dir, &pt.id, mode, &run, &workspace, turns, tokens, wall_ms, &verdict,
+                )?),
+                None => None,
+            };
             rows.push(EvalRow {
                 seq,
                 task: pt.id.clone(),
@@ -211,6 +349,7 @@ impl Learn {
                 tokens,
                 dollars,
                 turns,
+                exported,
             });
         }
         let report = BenchReport {
@@ -414,6 +553,7 @@ mod tests {
                     tokens: 10,
                     dollars: 0.01,
                     turns: 1,
+                    exported: None,
                 })
                 .collect(),
         };

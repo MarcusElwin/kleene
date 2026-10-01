@@ -3,7 +3,7 @@
 //! same provider, learning versus frozen on a frozen generator stream, and
 //! the report, curve and CSV.
 
-use kleene_harness::learn::bench::Mode;
+use kleene_harness::learn::bench::{BenchOptions, Mode};
 use kleene_harness::learn::packs::{terminal_pack, Pack};
 use kleene_harness::learn::{Learn, LearnConfig};
 use kleene_harness::testing::ScriptedProvider;
@@ -183,4 +183,72 @@ async fn learning_mode_adopts_a_playbook_and_frozen_does_not() {
     let summary = l.bench_summary().await.unwrap();
     assert_eq!(summary.rows.len(), 2, "{}", summary.render_table(10));
     assert_eq!(learning.curve(3).last().copied(), Some(1.0));
+}
+
+#[tokio::test]
+async fn a_sampled_run_exports_outputs_in_the_lab_results_layout() {
+    let dir = tempfile::tempdir().unwrap();
+    let pack = terminal_pack();
+    pack.save(dir.path()).unwrap();
+    // The plain agent writes a deliverable under output/ for every task
+    // (through write_file, a .docx built from the Markdown), then finishes.
+    let p = Arc::new(ScriptedProvider::new(
+        vec![(
+            "Create a file named hello.txt",
+            r##"{"tool": "write_file", "args": ["output/memo.docx", "# Memo. Done."]}"##,
+        )],
+        r#"{"final": [["done"]], "columns": ["answer"]}"#,
+    ));
+    let store = DuckDbStore::in_memory().unwrap();
+    let l = learn(store.clone(), p).await;
+    let out = tempfile::tempdir().unwrap();
+    let report = l
+        .bench_with(
+            dir.path(),
+            &pack,
+            Mode::Plain,
+            BenchOptions {
+                limit: None,
+                sample: Some((2, 3)),
+                outputs: Some(out.path().to_path_buf()),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(report.rows.len(), 2);
+    // The sample keeps pack order and the same seed gives the same tasks.
+    let ids: Vec<&str> = pack.tasks.iter().map(|t| t.id.as_str()).collect();
+    let pos: Vec<usize> = report
+        .rows
+        .iter()
+        .map(|r| ids.iter().position(|i| *i == r.task).unwrap())
+        .collect();
+    assert!(pos[0] < pos[1], "{pos:?}");
+    assert_eq!(
+        report
+            .rows
+            .iter()
+            .map(|r| r.task.clone())
+            .collect::<Vec<_>>(),
+        pack.sampled(2, 3)
+            .tasks
+            .iter()
+            .map(|t| t.id.clone())
+            .collect::<Vec<_>>()
+    );
+    for r in &report.rows {
+        let lab_run = r.exported.as_deref().unwrap();
+        assert_eq!(lab_run, format!("{}/kleene-plain/{}", r.task, report.run));
+        let d = out.path().join(lab_run);
+        assert!(d.join("output").is_dir());
+        assert!(d.join("config.json").is_file());
+        let metrics: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(d.join("metrics.json")).unwrap())
+                .unwrap();
+        assert_eq!(metrics["task"], r.task.as_str());
+        assert_eq!(metrics["run_id"], lab_run);
+        if r.task == "create-file" {
+            assert!(d.join("output/memo.docx").is_file(), "deliverable exported");
+        }
+    }
 }

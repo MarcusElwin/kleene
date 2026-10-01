@@ -21,7 +21,8 @@ Rebuild a frozen pack with `kleene bench build <dir> --from <generator>
 the real OOLONG with `kleene bench import-oolong tasks/oolong-trec` (the
 `trec_coarse` 128k-token split the RLM paper uses, 50 questions, `oolong`
 oracle; `--dataset`, `--context-len` and `--limit` pick another slice) and a
-Harvey LAB checkout with `kleene bench import-lab <root> tasks/harvey-lab`
-(matter folders are copied into the pack; LAB's own evaluator remains the
-scorer of record). The external datasets themselves are not redistributed;
+Harvey LAB checkout with `kleene bench import-lab <checkout>/tasks
+tasks/harvey-lab [--sample N --seed S]` (matter folders are copied into the
+pack; run with `bench run --outputs <checkout>/results` and LAB's own
+evaluator remains the scorer of record). The external datasets themselves are not redistributed;
 imported packs live outside git.

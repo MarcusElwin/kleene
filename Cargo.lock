@@ -1527,6 +1527,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "walkdir",
+ "zip",
 ]
 
 [[package]]

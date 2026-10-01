@@ -306,11 +306,19 @@ pub fn terminal_pack() -> Pack {
 /// list), `criteria` (objects with `id`, `title`, `match_criteria` and the
 /// `deliverables` they are scoped to), and `docs_dir` for tasks over a
 /// shared corpus.
-pub fn import_lab(root: &Path, pack_dir: &Path) -> Result<Pack, HarnessError> {
+pub fn import_lab(
+    root: &Path,
+    pack_dir: &Path,
+    sample: Option<(usize, u64)>,
+) -> Result<Pack, HarnessError> {
     let mut tasks = vec![];
     let mut dirs = vec![];
     walk_for(root, "task.json", &mut dirs, 0);
     dirs.sort();
+    if let Some((k, seed)) = sample {
+        let keep = sample_indices(dirs.len(), k, seed);
+        dirs = keep.into_iter().map(|i| dirs[i].clone()).collect();
+    }
     // Shared corpora (`docs_dir`) are copied once; canonical source path to
     // the workspace directory, relative to the pack.
     let mut shared: std::collections::BTreeMap<PathBuf, String> = Default::default();
@@ -413,6 +421,35 @@ pub fn import_lab(root: &Path, pack_dir: &Path) -> Result<Pack, HarnessError> {
         kind: "lab_task".into(),
         tasks,
     })
+}
+
+/// `k` of `n` indices chosen without replacement by a seeded shuffle, in
+/// ascending order, so a sample of a pack keeps the pack's order and the
+/// same seed gives the same sample on every machine.
+pub fn sample_indices(n: usize, k: usize, seed: u64) -> Vec<usize> {
+    let mut rng = generators::Rng::new(seed ^ 0x5eed_5eed_5eed_5eed);
+    let mut idx: Vec<usize> = (0..n).collect();
+    let k = k.min(n);
+    for i in 0..k {
+        let j = i + rng.below((n - i) as u64) as usize;
+        idx.swap(i, j);
+    }
+    let mut out = idx[..k].to_vec();
+    out.sort_unstable();
+    out
+}
+
+impl Pack {
+    /// The pack with `k` tasks sampled by `seed` (see [`sample_indices`]),
+    /// in their original order; the name is kept so evals group with the
+    /// full pack.
+    pub fn sampled(&self, k: usize, seed: u64) -> Pack {
+        let keep = sample_indices(self.tasks.len(), k, seed);
+        Pack {
+            tasks: keep.into_iter().map(|i| self.tasks[i].clone()).collect(),
+            ..self.clone()
+        }
+    }
 }
 
 /// The deliverable file names of a LAB task: `deliverables` is a map from
@@ -708,7 +745,7 @@ mod tests {
         )
         .unwrap();
         let out = tempfile::tempdir().unwrap();
-        let pack = import_lab(root.path(), out.path()).unwrap();
+        let pack = import_lab(root.path(), out.path(), None).unwrap();
         assert_eq!(pack.tasks.len(), 4);
         let t = &pack.tasks[0];
         assert_eq!(t.id, "contracting__extract-psa-key-terms__scenario-01");
@@ -736,7 +773,52 @@ mod tests {
         assert!(
             matches!(&l.verify, Verify::Judge { rubric, .. } if rubric.ends_with("- It is done"))
         );
-        assert!(import_lab(out.path().join("nope").as_path(), out.path()).is_err());
+        assert!(import_lab(out.path().join("nope").as_path(), out.path(), None).is_err());
+        // A sample is deterministic, ordered, and copies only its own documents.
+        let out2 = tempfile::tempdir().unwrap();
+        let two = import_lab(root.path(), out2.path(), Some((2, 7))).unwrap();
+        let again = import_lab(
+            root.path(),
+            tempfile::tempdir().unwrap().path(),
+            Some((2, 7)),
+        )
+        .unwrap();
+        assert_eq!(two.tasks.len(), 2);
+        assert_eq!(
+            two.tasks.iter().map(|t| &t.id).collect::<Vec<_>>(),
+            again.tasks.iter().map(|t| &t.id).collect::<Vec<_>>()
+        );
+        let ids: Vec<&str> = pack.tasks.iter().map(|t| t.id.as_str()).collect();
+        let pos: Vec<usize> = two
+            .tasks
+            .iter()
+            .map(|t| ids.iter().position(|i| *i == t.id).unwrap())
+            .collect();
+        assert!(pos[0] < pos[1]);
+        assert_eq!(
+            pack.sampled(2, 7).tasks,
+            two.tasks
+                .iter()
+                .map(|t| PackTask {
+                    workspace_from: pack.tasks[ids.iter().position(|i| *i == t.id).unwrap()]
+                        .workspace_from
+                        .clone(),
+                    ..t.clone()
+                })
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn sampling_is_seeded_ordered_and_without_replacement() {
+        let a = sample_indices(10, 4, 1);
+        assert_eq!(a, sample_indices(10, 4, 1));
+        assert_eq!(a.len(), 4);
+        assert!(a.windows(2).all(|w| w[0] < w[1]));
+        assert!(a.iter().all(|i| *i < 10));
+        assert_ne!(a, sample_indices(10, 4, 2));
+        assert_eq!(sample_indices(3, 10, 1), vec![0, 1, 2]);
+        assert!(sample_indices(0, 3, 1).is_empty());
     }
 
     #[test]

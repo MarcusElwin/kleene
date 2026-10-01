@@ -4,6 +4,7 @@
 
 pub mod append_file;
 pub mod chunks;
+pub mod convert;
 pub mod env;
 pub mod files;
 pub mod git_blame;

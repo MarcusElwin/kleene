@@ -78,11 +78,24 @@ on demand:
   deliverables it is scoped to, all-pass. LAB's own evaluator
   (`lab_core.evaluation.run_eval`, Sonnet 4.6 and GPT-5.5 as judges) stays
   the scorer of record; the in-loop oracle approximates it with one judge
-  and no per-deliverable scoping. A pass through a practice area
-  (`import-lab <checkout>/tasks/antitrust-competition …`) is the cheap way
-  to start: the full set is 2.7 GB of `.docx`, `.xlsx`, `.eml` and `.pptx`
-  matter documents, which the `read` tool cannot parse until its pandoc
-  conversion lands.
+  and no per-deliverable scoping. The matter documents are `.docx`,
+  `.xlsx`, `.pptx` and `.eml`, which `read` returns as text (paragraphs
+  and tables, one CSV block per sheet, one block per slide, decoded mail),
+  and a deliverable written with `CALL write_file` to a `.docx` or `.xlsx`
+  path is built from the Markdown or CSV given (through `pandoc` when it
+  is installed, else a minimal package), so LAB's evaluator can open it.
+
+  To score with LAB's evaluator, run with `--outputs <checkout>/results`:
+  every task's `output/` is exported as
+  `results/<task>/kleene-<mode>/<run>/output/` with the `config.json` and
+  `metrics.json` LAB's reports expect, and `bench run` prints one
+  `run_eval` command per task. Sampling keeps the cost of a first pass
+  down: `import-lab … --sample 50 --seed 1` imports a seeded sample (and
+  copies only its documents), `bench run … --sample 20 --seed 1` runs a
+  seeded sample of any pack, in pack order, so two people with the same
+  seed run the same tasks. One practice area
+  (`import-lab <checkout>/tasks/antitrust-competition …`, 33 tasks) is the
+  other cheap start.
 
 ## Modes
 

@@ -183,6 +183,16 @@ enum BenchAction {
         /// Only the first N tasks.
         #[arg(long)]
         limit: Option<usize>,
+        /// A seeded sample of N tasks, in pack order, instead of the whole pack.
+        #[arg(long)]
+        sample: Option<usize>,
+        /// Seed for --sample; the same seed picks the same tasks.
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+        /// Export every task's output/ here in the layout Harvey LAB's
+        /// evaluator reads (point it at the checkout's results/ directory).
+        #[arg(long)]
+        outputs: Option<PathBuf>,
         /// Record every model response as a fixture under this directory.
         #[arg(long)]
         record: Option<PathBuf>,
@@ -214,10 +224,16 @@ enum BenchAction {
     },
     /// Import a Harvey LAB checkout into a pack (matter folders copied in).
     ImportLab {
-        /// LAB root containing task directories with task.json.
+        /// LAB tasks root (`<checkout>/tasks`, or one practice area under it).
         root: PathBuf,
         /// Output directory, e.g. tasks/harvey-lab.
         out: PathBuf,
+        /// Import a seeded sample of N tasks instead of every task.
+        #[arg(long)]
+        sample: Option<usize>,
+        /// Seed for --sample; the same seed picks the same tasks.
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
     },
     /// Import OOLONG-synth questions (Bertsch et al. 2025, MIT) from Hugging
     /// Face into a pack with the `oolong` oracle; the default is the
@@ -270,7 +286,7 @@ enum BenchAction {
 
 async fn run_bench(cli: &Cli, action: &BenchAction) -> anyhow::Result<()> {
     use anyhow::Context;
-    use kleene_harness::learn::bench::{sparkline, Mode};
+    use kleene_harness::learn::bench::{sparkline, BenchOptions, Mode};
     use kleene_harness::learn::packs::{import_lab, oolong_pack, terminal_pack, OolongRow, Pack};
     use kleene_harness::learn::{Learn, LearnConfig};
     match action {
@@ -308,8 +324,13 @@ async fn run_bench(cli: &Cli, action: &BenchAction) -> anyhow::Result<()> {
             );
             return Ok(());
         }
-        BenchAction::ImportLab { root, out } => {
-            let pack = import_lab(root, out)?;
+        BenchAction::ImportLab {
+            root,
+            out,
+            sample,
+            seed,
+        } => {
+            let pack = import_lab(root, out, sample.map(|k| (k, *seed)))?;
             pack.save(out)?;
             println!(
                 "imported {} LAB tasks to {}",
@@ -393,12 +414,29 @@ async fn run_bench(cli: &Cli, action: &BenchAction) -> anyhow::Result<()> {
     let learn = Learn::new(store, cfg, LearnConfig::default()).await?;
     match action {
         BenchAction::Run {
-            pack, mode, limit, ..
+            pack,
+            mode,
+            limit,
+            sample,
+            seed,
+            outputs,
+            ..
         } => {
             let mode = Mode::parse(mode)
                 .ok_or_else(|| anyhow::anyhow!("mode must be learning, frozen or plain"))?;
             let p = Pack::load(pack)?;
-            let report = learn.bench(pack, &p, mode, *limit).await?;
+            let report = learn
+                .bench_with(
+                    pack,
+                    &p,
+                    mode,
+                    BenchOptions {
+                        limit: *limit,
+                        sample: sample.map(|k| (k, *seed)),
+                        outputs: outputs.clone(),
+                    },
+                )
+                .await?;
             for r in &report.rows {
                 println!(
                     "{} {:>3} {:<24} {} calls ${:.4} {}",
@@ -423,6 +461,19 @@ curve {}",
                 report.dollars(),
                 sparkline(&report.curve(5))
             );
+            if let Some(dir) = outputs {
+                println!(
+                    "outputs exported under {}; score them with LAB's evaluator (LAB_ROOT is the checkout whose results/ this is):",
+                    dir.display()
+                );
+                for r in report.rows.iter().filter(|r| r.exported.is_some()) {
+                    let run_id = r.exported.as_deref().unwrap_or_default();
+                    let task = run_id.rsplitn(3, '/').nth(2).unwrap_or(run_id);
+                    println!(
+                        "  uv run python -m lab_core.evaluation.run_eval --run-id {run_id} --task {task}"
+                    );
+                }
+            }
         }
         BenchAction::Report => print!("{}", learn.bench_summary().await?.render_table(200)),
         BenchAction::Curve { run, window } => {
