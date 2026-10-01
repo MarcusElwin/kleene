@@ -109,8 +109,10 @@ impl AnthropicProvider {
         }
     }
 
-    /// Whether the `thinking` parameter is sent for this model. Haiku models
-    /// do not accept adaptive thinking, so it is omitted for them.
+    /// Whether the `thinking` and `output_config.effort` parameters are sent
+    /// for this model. Haiku models accept neither adaptive thinking nor
+    /// effort (the API answers "This model does not support the effort
+    /// parameter"), so both are omitted for them.
     pub fn supports_thinking(model: &str) -> bool {
         !model.starts_with("claude-haiku")
     }
@@ -153,7 +155,12 @@ impl AnthropicProvider {
                 json!({"type": "json_schema", "schema": schema}),
             );
         }
-        if let Some(effort) = &req.options.effort {
+        if let Some(effort) = req
+            .options
+            .effort
+            .as_ref()
+            .filter(|_| Self::supports_thinking(&req.model))
+        {
             output_config.insert("effort".into(), json!(effort));
         }
         if !output_config.is_empty() {
@@ -672,13 +679,17 @@ mod tests {
     }
 
     #[test]
-    fn thinking_is_omitted_for_haiku() {
+    fn thinking_and_effort_are_omitted_for_haiku() {
         let mut r = req();
+        r.options.effort = Some("low".into());
         r.model = "claude-haiku-4-5".into();
         let body = AnthropicProvider::build_body(&r);
         assert!(body.get("thinking").is_none());
+        assert!(body.pointer("/output_config/effort").is_none());
         r.model = "claude-opus-5".into();
-        assert!(AnthropicProvider::build_body(&r).get("thinking").is_some());
+        let body = AnthropicProvider::build_body(&r);
+        assert!(body.get("thinking").is_some());
+        assert_eq!(body.pointer("/output_config/effort"), Some(&json!("low")));
     }
 
     #[test]
