@@ -53,7 +53,13 @@ estimate exceeds the remaining budget is refused with its plan.
 ## Model calls
 
 Scalar builtins: `llm(prompt [, alias [, effort]]) -> TEXT`,
-`llm_bool(prompt) -> BOOLEAN`, `llm_json(prompt, schema) -> JSON`. Table
+`llm_bool(prompt) -> BOOLEAN`, `llm_json(prompt, schema) -> JSON`. The
+schema is JSON Schema, and the Anthropic adapter rewrites it into the
+subset the structured-output API accepts before sending: a bare field map
+such as `{"hours": "number"}` becomes a closed object with every field
+required, an object gets `additionalProperties: false`, and an array's
+`minItems` is clamped to 1 (a schema the API would otherwise reject fails
+the call, and a per-row `llm_json` then fails on every row). Table
 builtins: `expand(text, n) -> TABLE(item TEXT)` (used as `CROSS JOIN LATERAL
 expand(h, 3) AS e`).
 

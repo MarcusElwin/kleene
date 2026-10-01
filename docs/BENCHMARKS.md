@@ -105,7 +105,10 @@ run is not the same control as a frozen run on a fresh store.
 The `plain` agent parses JSON actions from text rather than using a
 provider's native tool-calling API. That keeps it provider-agnostic, and is
 the one place the baseline is not identical to a vendor agent loop; the
-write-up lists it under honest gaps.
+write-up lists it under honest gaps. A reply that holds several JSON
+objects (Haiku 4.5 writes five to ten actions per reply, with imagined
+tool output between them) has only its first object run; the real output
+of that one action comes back as the next user turn.
 
 Every task, in every mode, runs in its own fresh temporary workspace,
 seeded from the pack's `workspace_from` directory and `setup` commands, so
@@ -137,10 +140,13 @@ The shipped packs use `shell` (terminal, coding), `exact` (oolong-like,
 legal, logbook-hard) and `number` (finance); only `memo-rubric` uses
 `judge`, which sends the rubric, the reference and the answer's cells in
 full to the `judge` alias (Sonnet in the default routing) and costs one
-short call per task. A rubric-judged verdict is as good as its rubric: the
-memo rubrics name every fact the memo must state, with its number, and
-forbid the superseded and rejected values, so the judge's job is checking,
-not appraising.
+short call per task. The judge is asked for `PASS` or `FAIL` on its first
+line; a first line that says PASS but also mentions FAIL ("PASS or FAIL?",
+"PASS (provisional), though it would FAIL on ...") counts as a fail, since
+a hedged pass is not a verdict. A rubric-judged verdict is as good as its
+rubric: the memo rubrics name every fact the memo must state, with its
+number, and forbid the superseded and rejected values, so the judge's job
+is checking, not appraising.
 
 ## What is recorded
 
@@ -215,7 +221,18 @@ SQL through the planner, not only from `bench run`.
 The plan names four measurements; this is how each maps onto the commands.
 
 - **Learning curve**: `bench run <pack> --mode learning` and `--mode frozen`
-  on the same pack, then `bench curve` on each run id or `bench plot`.
+  on the same pack, then `bench curve` on each run id or `bench plot`. Use
+  a fresh store (`--db`) for each mode: both Kleene modes read and write
+  the same memo, so the second run in a store answers every prompt the
+  first run already sent for free, and its calls and dollars are not an
+  independent measurement (two coding steps in the Haiku learning run
+  finished with zero calls this way). One store per pack and mode also
+  lets the runs go in parallel, since DuckDB has one writer per file; the
+  rows merge afterwards with `kleene trace "ATTACH 'other.duckdb' AS o
+  (READ_ONLY); INSERT INTO evals SELECT * FROM o.evals"` (and the same for
+  `bench_runs`, `attempts`, `playbook_evals`, `trace_statements`, `tasks`,
+  `task_ratings`), after which `bench report` and `bench plot` read the
+  merged store.
 - **Cost parity**: `--mode plain` on the same pack, then `bench report` for
   the totals and `cost_parity.svg` for accuracy at equal spend.
 - **Transfer**: `bench run <pack> --mode learning --limit N` to learn on the
@@ -259,6 +276,10 @@ Results against a real model are reported in
   generator's shape will look better than one meeting the real datasets;
   that is the point of freezing them for the learning curve, and the
   limitation for any absolute claim.
+- Pace the long-context pack to the model. On Haiku 4.5 a `logbook-hard`
+  task in frozen mode took some 500 calls and over twenty minutes, so 30
+  tasks in three modes is more than a day; run it with `--limit 10` and
+  compare the same ten tasks across modes.
 - All three modes share the provider, tools and budget caps, so `dollars`
   is comparable between them. The replay evals a `learning` run pays for
   when it gates a playbook candidate are not in `evals`; they are recorded

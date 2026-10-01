@@ -193,8 +193,10 @@ What the numbers say:
   `LLM_JSON` output schemas the API rejects (`additionalProperties` not
   set, `minItems` above 1, a bare `{"hours": "number"}`), and the
   statement retries until the call budget goes; five frozen tasks took 22
-  to 141 calls each. A schema check before the request, or a repair of the
-  schema the model wrote, would remove most of that cost.
+  to 141 calls each. The adapter now rewrites a model-written schema into
+  the accepted subset before the request (bare field maps, missing
+  `additionalProperties`, `minItems` above 1), which would have removed
+  most of that cost; these runs predate it.
 - **Learning and frozen share the store's memo.** The learning run comes
   second in the same store, so a prompt identical to one the frozen run
   sent is answered from the memo for free. Two coding steps in the
@@ -243,9 +245,9 @@ What the numbers say:
   use, which keeps it provider-agnostic but is not identical to a vendor
   agent loop, and a model that writes several actions per reply (Haiku)
   gets only its first one run.
-- Output schemas the model writes for `LLM_JSON` go to the provider
-  unchecked; Haiku writes ones the API rejects, and the retries burn the
-  call budget.
+- Output schemas the model writes for `llm_json` are rewritten into the
+  provider's accepted subset, but only the shapes seen so far (field maps,
+  open objects, `minItems`); a schema outside that still fails the call.
 
 ## 6. Reproduce
 
