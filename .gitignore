@@ -7,3 +7,8 @@
 # agent worktrees
 .claude/worktrees/
 /.claude/
+
+# imported benchmark packs (downloaded on demand, not redistributed)
+/tasks/oolong-*/
+!/tasks/oolong-like/
+/tasks/harvey-lab/

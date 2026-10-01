@@ -48,9 +48,29 @@ prior on every task is derived from the dial (800 rating points at 0, 1600
 at 1, so 1200 at 0.5); the terminal tasks carry the 1000 baseline.
 
 The external datasets these packs imitate (OOLONG, Terminal-Bench,
-FinanceBench, CUAD, Harvey LAB) are not redistributed. A Harvey LAB checkout
-imports with `bench import-lab <root> <out-dir>`; LAB's own evaluator stays
-the scorer of record and the in-loop `judge` oracle approximates it.
+FinanceBench, CUAD, Harvey LAB) are not redistributed. Two of them import
+on demand:
+
+- **OOLONG** (Bertsch et al. 2025, MIT): `bench import-oolong <out-dir>`
+  downloads questions from the Hugging Face dataset `oolongbench/oolong-synth`
+  and writes a pack with the `oolong` oracle. The default is the
+  `trec_coarse` source dataset at the 131,072-token bucket: 50 questions (33 counting,
+  17 per-user; comparisons, counts, labels and user ids) over two shared
+  context windows of about 3,200 TREC questions each, which is the split the Recursive Language Models paper reports on.
+  `--dataset`, `--context-len`, `--limit` and `--offset` pick another slice
+  (`spam` is the other validation dataset; `agnews`, `app_reviews`,
+  `formality`, `imdb`, `metaphors`, `multinli`, `negation` and `yahoo` are
+  the test datasets; buckets run from 1,024 to 4,194,304 tokens). Every
+  context window is written once to `contexts/` and shared by its questions,
+  one line of the original per `ctx` row, so the pack is self-contained and
+  the same arguments give the same pack. The importer reads each parquet
+  shard's footer with a range request to find the row groups that hold the
+  slice and fetches only those rows, so a 12 GB dataset costs a few tens of
+  megabytes to import. `--from-json <file>` builds the pack from rows saved
+  earlier instead of the network.
+- **Harvey LAB**: a checkout imports with `bench import-lab <root> <out-dir>`;
+  LAB's own evaluator stays the scorer of record and the in-loop `judge`
+  oracle approximates it.
 
 ## Modes
 
@@ -99,10 +119,12 @@ model call and is never the solver's own session. Definitions are in
 | `shell` | a command run in the task's workspace, with the answer rows as JSON on stdin, exits 0 |
 | `sat` | a 3-SAT verdict is right: `SAT` with a satisfying assignment, or `UNSAT` when brute force agrees |
 | `judge` | a separate `judge` model, given a rubric and an optional reference, answers `PASS` |
+| `oolong` | an OOLONG answer, scored as the paper scores it: a label, date, user id or comparison on exact match (any of the listed values when the dataset lists a tie), a number with partial credit `0.75^|expected − got|`. The task passes only at a score of 1; the score itself is in `detail` (`oolong score 0.562: expected 1542, got 1540`), so a run's mean OOLONG score is a query over `evals.detail` |
 | `human` | a person marks it; the task waits in `needs_review` and counts as unsolved until then |
 
 The shipped packs use `shell` (terminal), `exact` (oolong-like, legal) and
-`number` (finance) only, so none of them needs a judge model to score.
+`number` (finance) only, so none of them needs a judge model to score; an
+imported OOLONG pack uses `oolong`, which is also free.
 
 ## What is recorded
 

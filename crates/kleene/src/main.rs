@@ -2,6 +2,7 @@
 
 #![forbid(unsafe_code)]
 
+mod hf;
 mod pretty;
 
 use clap::{Parser, Subcommand};
@@ -218,6 +219,34 @@ enum BenchAction {
         /// Output directory, e.g. tasks/harvey-lab.
         out: PathBuf,
     },
+    /// Import OOLONG-synth questions (Bertsch et al. 2025, MIT) from Hugging
+    /// Face into a pack with the `oolong` oracle; the default is the
+    /// trec_coarse split at 128k tokens the RLM paper reports on.
+    ImportOolong {
+        /// Output directory, e.g. tasks/oolong-trec.
+        out: PathBuf,
+        /// Source classification dataset: trec_coarse or spam (validation
+        /// split); agnews, app_reviews, formality, imdb, metaphors, multinli,
+        /// negation or yahoo (test split).
+        #[arg(long, default_value = "trec_coarse")]
+        dataset: String,
+        /// Context length bucket in tokens: 1024, 2048, … 4194304.
+        #[arg(long, default_value_t = 131072)]
+        context_len: i64,
+        /// Split: validation or test; inferred from --dataset when omitted.
+        #[arg(long)]
+        split: Option<String>,
+        /// At most this many questions, in dataset order.
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+        /// Skip this many matching questions first.
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+        /// Read rows from a JSON file (an array of row objects as the
+        /// datasets-server returns them) instead of the network.
+        #[arg(long)]
+        from_json: Option<PathBuf>,
+    },
     /// Accuracy, calls and dollars per pack and mode over every recorded run.
     Report,
     /// The learning curve of one run as a sparkline and rolling mean.
@@ -240,8 +269,9 @@ enum BenchAction {
 }
 
 async fn run_bench(cli: &Cli, action: &BenchAction) -> anyhow::Result<()> {
+    use anyhow::Context;
     use kleene_harness::learn::bench::{sparkline, Mode};
-    use kleene_harness::learn::packs::{import_lab, terminal_pack, Pack};
+    use kleene_harness::learn::packs::{import_lab, oolong_pack, terminal_pack, OolongRow, Pack};
     use kleene_harness::learn::{Learn, LearnConfig};
     match action {
         BenchAction::Build {
@@ -283,6 +313,62 @@ async fn run_bench(cli: &Cli, action: &BenchAction) -> anyhow::Result<()> {
             pack.save(out)?;
             println!(
                 "imported {} LAB tasks to {}",
+                pack.tasks.len(),
+                out.join("pack.json").display()
+            );
+            return Ok(());
+        }
+        BenchAction::ImportOolong {
+            out,
+            dataset,
+            context_len,
+            split,
+            limit,
+            offset,
+            from_json,
+        } => {
+            let rows = match from_json {
+                Some(path) => {
+                    let text = std::fs::read_to_string(path)
+                        .with_context(|| format!("reading {}", path.display()))?;
+                    let raw: Vec<serde_json::Value> = serde_json::from_str(&text)
+                        .with_context(|| format!("{} is not a JSON array", path.display()))?;
+                    raw.into_iter()
+                        .map(|r| r.get("row").cloned().unwrap_or(r))
+                        .collect()
+                }
+                None => {
+                    let split = split.clone().unwrap_or_else(|| {
+                        if matches!(dataset.as_str(), "trec_coarse" | "spam") {
+                            "validation".to_string()
+                        } else {
+                            "test".to_string()
+                        }
+                    });
+                    fetch_oolong_rows(dataset, *context_len, &split, *offset + *limit).await?
+                }
+            };
+            let rows: Vec<OolongRow> = rows
+                .into_iter()
+                .map(serde_json::from_value)
+                .collect::<Result<_, _>>()
+                .context("a row is not an OOLONG-synth row")?;
+            // Shard order is not id order; sort so the same slice gives the
+            // same pack whichever way the rows arrived.
+            let mut rows: Vec<OolongRow> = rows
+                .into_iter()
+                .filter(|r| &r.dataset == dataset && r.context_len == *context_len)
+                .collect();
+            rows.sort_by_key(|r| r.id);
+            let rows: Vec<OolongRow> = rows.into_iter().skip(*offset).take(*limit).collect();
+            let name = out
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "oolong".to_string());
+            let pack = oolong_pack(&name, &rows, out)?;
+            pack.save(out)?;
+            println!(
+                "imported {} OOLONG questions ({dataset} at {context_len} tokens) to {}",
                 pack.tasks.len(),
                 out.join("pack.json").display()
             );
@@ -374,7 +460,8 @@ curve {}",
         }
         BenchAction::Build { .. }
         | BenchAction::Terminal { .. }
-        | BenchAction::ImportLab { .. } => {}
+        | BenchAction::ImportLab { .. }
+        | BenchAction::ImportOolong { .. } => {}
     }
     Ok(())
 }
@@ -725,6 +812,55 @@ fn db_path(cli: &Cli) -> PathBuf {
     cli.db
         .clone()
         .unwrap_or_else(|| PathBuf::from(".kleene").join("run.duckdb"))
+}
+
+/// The first `want` OOLONG-synth rows with this dataset and context length,
+/// in split order, read through the parquet footers and the rows API
+/// (see `hf`).
+async fn fetch_oolong_rows(
+    dataset: &str,
+    context_len: i64,
+    split: &str,
+    want: usize,
+) -> anyhow::Result<Vec<serde_json::Value>> {
+    const REPO: &str = "oolongbench/oolong-synth";
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(600))
+        .build()?;
+    let shards = hf::shards(&client, REPO, split).await?;
+    eprintln!("{REPO} {split}: {} shards; reading footers", shards.len());
+    let mut groups = vec![];
+    let mut first_row = 0u64;
+    for (shard, size) in &shards {
+        let g = hf::row_groups(&client, REPO, shard, *size, first_row).await?;
+        first_row += g.iter().map(|x| x.rows).sum::<u64>();
+        groups.extend(g);
+    }
+    let candidates: Vec<_> = groups
+        .iter()
+        .filter(|g| g.may_hold(dataset, context_len))
+        .collect();
+    eprintln!(
+        "{} row groups over {first_row} rows; {} may hold {dataset} at {context_len} tokens",
+        groups.len(),
+        candidates.len()
+    );
+    let mut out = vec![];
+    for g in candidates {
+        if out.len() >= want {
+            break;
+        }
+        eprintln!("  rows {}..{} of {}", g.offset, g.offset + g.rows, g.shard);
+        let rows = hf::rows(&client, REPO, split, g.offset, g.rows).await?;
+        out.extend(rows.into_iter().filter(|r| {
+            r.get("dataset").and_then(|d| d.as_str()) == Some(dataset)
+                && r.get("context_len").and_then(|c| c.as_i64()) == Some(context_len)
+        }));
+    }
+    if out.is_empty() {
+        anyhow::bail!("no rows with dataset {dataset} and context_len {context_len} in {split}");
+    }
+    Ok(out)
 }
 
 fn open_store(cli: &Cli) -> anyhow::Result<kleene_store::DuckDbStore> {

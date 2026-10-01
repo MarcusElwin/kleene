@@ -554,12 +554,14 @@ modes, oracles, report columns and plots measure is in
 | `bench build <out-dir> --from <generator> [--count 20] [--dial 0.5] [--seed 1]` | Freeze generator output into a pack; same seeds, same tasks |
 | `bench terminal <out-dir>` | Write the built-in Terminal-Bench-style pack |
 | `bench import-lab <lab-root> <out-dir>` | Import a Harvey LAB checkout into a pack |
+| `bench import-oolong <out-dir> [--dataset trec_coarse] [--context-len 131072] [--limit 50] [--offset 0] [--split validation\|test] [--from-json <file>]` | Import OOLONG-synth questions from Hugging Face into a pack with the `oolong` oracle; the defaults are the RLM paper's trec_coarse 128k split |
 | `bench report` | Accuracy, calls and dollars per pack and mode |
 | `bench curve <run-id> [--window 5]` | The learning curve of one run as a sparkline and rolling mean |
 | `bench csv` | Every eval row as CSV on stdout |
 | `bench plot <out-dir>` | The write-up's plots as SVG files: `learning_curve`, `cost_parity`, `calls_vs_difficulty`, `estimate_accuracy` (the planner's estimated calls against actuals, from `trace_statements`) and `plan_space` (join orders against relations joined) |
 
 ```bash
+kleene bench import-oolong tasks/oolong-trec && kleene bench run tasks/oolong-trec --mode frozen
 kleene bench run tasks/oolong-like --mode frozen --record fixtures/oolong
 kleene bench run tasks/oolong-like --mode learning --replay fixtures/oolong
 kleene bench run tasks/terminal --mode plain
