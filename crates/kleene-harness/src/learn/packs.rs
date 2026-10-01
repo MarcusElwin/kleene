@@ -414,6 +414,132 @@ pub fn import_lab(root: &Path, pack_dir: &Path) -> Result<Pack, HarnessError> {
     })
 }
 
+/// One OOLONG-synth question as the Hugging Face dataset
+/// `oolongbench/oolong-synth` stores it: the fields the importer reads.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct OolongRow {
+    /// Question id in the dataset.
+    pub id: i64,
+    /// Context length bucket in tokens (1024 to 4194304).
+    pub context_len: i64,
+    /// Source classification dataset (`trec_coarse`, `spam`, `agnews`, …).
+    pub dataset: String,
+    /// The context window: instructions, one entry per line, a reminder.
+    pub context_window_text: String,
+    /// The question, including the dataset's own answer-format line.
+    pub question: String,
+    /// `counting`, `user` or `timeline`.
+    pub task_group: String,
+    /// The fine task type (`TASK_TYPE.MOST_FREQ`, …).
+    pub task: String,
+    /// The expected answer as a Python list literal (`['correct']`, `[1542]`).
+    pub answer: String,
+    /// `ANSWER_TYPE.LABEL`, `ANSWER_TYPE.NUMERIC`, `ANSWER_TYPE.COMPARISON`, …
+    pub answer_type: String,
+    /// Which context window the question is over; questions share windows.
+    pub context_window_id: i64,
+}
+
+/// Parse an OOLONG answer: a Python list literal (`['a', 'b']`, `[1542]`)
+/// or a bare value, into its values.
+pub fn oolong_answer_values(answer: &str) -> Vec<String> {
+    let t = answer.trim();
+    let inner = t
+        .strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .unwrap_or(t);
+    let mut out = vec![];
+    let mut cur = String::new();
+    let mut quote: Option<char> = None;
+    for c in inner.chars() {
+        match (quote, c) {
+            (Some(q), c) if c == q => quote = None,
+            (Some(_), c) => cur.push(c),
+            (None, '\'' | '"') => quote = Some(c),
+            (None, ',') => {
+                out.push(std::mem::take(&mut cur));
+            }
+            (None, c) => cur.push(c),
+        }
+    }
+    out.push(cur);
+    out.into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// Build a pack from OOLONG-synth rows (Bertsch et al. 2025, MIT). Every
+/// context window is written once to `contexts/window-<id>.txt` under
+/// `pack_dir`, one line of the original per `ctx` row, and every question
+/// over it becomes a task with the `oolong` oracle. The rows keep their
+/// order, so the same rows give the same pack; the context text is the
+/// dataset's own (instructions, entries, reminder), untouched apart from
+/// the row split.
+pub fn oolong_pack(name: &str, rows: &[OolongRow], pack_dir: &Path) -> Result<Pack, HarnessError> {
+    if rows.is_empty() {
+        return Err(HarnessError::Config("no OOLONG rows to import".into()));
+    }
+    let ctx_dir = pack_dir.join("contexts");
+    std::fs::create_dir_all(&ctx_dir)
+        .map_err(|e| HarnessError::Config(format!("cannot create {}: {e}", ctx_dir.display())))?;
+    let mut tasks = vec![];
+    let mut written = std::collections::BTreeSet::new();
+    for r in rows {
+        let rel = format!("contexts/window-{}.txt", r.context_window_id);
+        if written.insert(r.context_window_id) {
+            let lines: Vec<&str> = r
+                .context_window_text
+                .lines()
+                .map(str::trim_end)
+                .filter(|l| !l.trim().is_empty())
+                .collect();
+            std::fs::write(pack_dir.join(&rel), lines.join("\n\n"))
+                .map_err(|e| HarnessError::Config(format!("cannot write {rel}: {e}")))?;
+        }
+        let numeric = r.answer_type.ends_with("NUMERIC");
+        let answer = oolong_answer_values(&r.answer);
+        let group = r.task_group.to_ascii_lowercase();
+        // 1000 at 1k tokens, +100 per doubling: 1700 at 128k, 2200 at 4M.
+        let difficulty = 1000.0 + 100.0 * ((r.context_len.max(1024) as f64) / 1024.0).log2();
+        tasks.push(PackTask {
+            id: format!("{}-{}", r.dataset, r.id),
+            kind: Some(format!("oolong_{}_{group}", r.dataset)),
+            task: format!(
+                "{}\n\nThe data is in ctx, one line of the original per row in order: the dataset's instructions first, then one entry per row (`Date: … || User: … || Instance: …`), then a closing reminder. Answer with FINAL over one row and one column answer holding only the value (a label, a number, a date, a user id or a comparison; no `Answer:` or `Label:` prefix), or one row per value if the question asks for several.",
+                r.question.trim()
+            ),
+            context: None,
+            context_file: Some(rel),
+            setup: vec![],
+            workspace_from: None,
+            verify: Verify::Oolong { answer, numeric },
+            difficulty,
+        });
+    }
+    let datasets: std::collections::BTreeSet<&str> =
+        rows.iter().map(|r| r.dataset.as_str()).collect();
+    let lens: std::collections::BTreeSet<i64> = rows.iter().map(|r| r.context_len).collect();
+    let kind = if datasets.len() == 1 {
+        format!("oolong_{}", rows[0].dataset)
+    } else {
+        "oolong".to_string()
+    };
+    Ok(Pack {
+        name: name.to_string(),
+        description: format!(
+            "OOLONG-synth {} at {} tokens: {} questions over {} context windows, imported from Hugging Face oolongbench/oolong-synth",
+            datasets.iter().copied().collect::<Vec<_>>().join(", "),
+            lens.iter().map(|l| l.to_string()).collect::<Vec<_>>().join(", "),
+            tasks.len(),
+            written.len()
+        ),
+        license: "OOLONG (Bertsch et al. 2025), MIT, github.com/abertsch72/oolong; downloaded on import, not redistributed".into(),
+        kind,
+        tasks,
+    })
+}
+
 fn walk_for(dir: &Path, file: &str, out: &mut Vec<PathBuf>, depth: usize) {
     if depth > 6 {
         return;
@@ -501,5 +627,81 @@ mod tests {
         let ws = t.workspace_from.as_ref().unwrap();
         assert!(out.path().join(ws).join("documents/psa.txt").exists());
         assert!(import_lab(out.path().join("nope").as_path(), out.path()).is_err());
+    }
+
+    #[test]
+    fn oolong_answers_parse_as_python_lists() {
+        assert_eq!(oolong_answer_values("['incorrect']"), vec!["incorrect"]);
+        assert_eq!(oolong_answer_values("[1542]"), vec!["1542"]);
+        assert_eq!(
+            oolong_answer_values("['more common than', \"it's\"]"),
+            vec!["more common than", "it's"]
+        );
+        assert_eq!(oolong_answer_values("2023-05"), vec!["2023-05"]);
+        assert!(oolong_answer_values("[]").is_empty());
+    }
+
+    #[test]
+    fn oolong_pack_shares_context_files_between_questions() {
+        let out = tempfile::tempdir().unwrap();
+        let row = |id: i64, window: i64, task: &str, answer: &str, answer_type: &str| {
+            OolongRow {
+            id,
+            context_len: 131072,
+            dataset: "trec_coarse".into(),
+            context_window_text: "The following lines contain 2 questions.\n\nYou will be asked.\n\nDate: Oct 06, 2022 || User: 1 || Instance: What is it?\nDate: Jun 11, 2025 || User: 2 || Instance: Who was it?\nRecall: the preceding lines contain 2 questions.\n\n".into(),
+            question: "Which label is most common? Give your final answer in the form 'Label: answer'.".into(),
+            task_group: "counting".into(),
+            task: task.into(),
+            answer: answer.into(),
+            answer_type: answer_type.into(),
+            context_window_id: window,
+        }
+        };
+        let rows = vec![
+            row(1, 7, "TASK_TYPE.MOST_FREQ", "['ENTY']", "ANSWER_TYPE.LABEL"),
+            row(
+                2,
+                7,
+                "TASK_TYPE.NUMERIC_ONE_CLASS",
+                "[3]",
+                "ANSWER_TYPE.NUMERIC",
+            ),
+            row(3, 8, "TASK_TYPE.MOST_FREQ", "['HUM']", "ANSWER_TYPE.LABEL"),
+        ];
+        let pack = oolong_pack("oolong-trec", &rows, out.path()).unwrap();
+        assert_eq!(pack.kind, "oolong_trec_coarse");
+        assert_eq!(pack.tasks.len(), 3);
+        assert_eq!(pack.tasks[0].id, "trec_coarse-1");
+        assert_eq!(
+            pack.tasks[0].kind.as_deref(),
+            Some("oolong_trec_coarse_counting")
+        );
+        assert_eq!(
+            pack.tasks[0].context_file.as_deref(),
+            Some("contexts/window-7.txt")
+        );
+        assert_eq!(pack.tasks[0].context_file, pack.tasks[1].context_file);
+        assert_ne!(pack.tasks[0].context_file, pack.tasks[2].context_file);
+        assert_eq!(
+            pack.tasks[1].verify,
+            Verify::Oolong {
+                answer: vec!["3".into()],
+                numeric: true
+            }
+        );
+        assert!((pack.tasks[0].difficulty - 1700.0).abs() < 1e-9);
+        let ctx = pack
+            .context_of(out.path(), &pack.tasks[0])
+            .unwrap()
+            .unwrap();
+        let rows_in_ctx = crate::session::paragraphs(&ctx);
+        assert_eq!(rows_in_ctx.len(), 5, "{rows_in_ctx:?}");
+        assert!(rows_in_ctx[2].starts_with("Date: Oct 06, 2022"));
+        assert!(pack.tasks[0]
+            .task
+            .starts_with("Which label is most common?"));
+        pack.save(out.path()).unwrap();
+        assert_eq!(Pack::load(out.path()).unwrap(), pack);
     }
 }

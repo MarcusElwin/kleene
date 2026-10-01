@@ -49,6 +49,19 @@ pub enum Verify {
         /// Absolute tolerance.
         tolerance: f64,
     },
+    /// An OOLONG answer (Bertsch et al. 2025): a label, date, user id or
+    /// comparison is scored on exact match; a numeric answer scores
+    /// `0.75^|expected - got|` and passes only when the score is 1. The
+    /// score is reported in the detail either way, so a run's mean OOLONG
+    /// score can be read back from `evals.detail`.
+    Oolong {
+        /// Expected values. Several means a tie (OOLONG lists every label
+        /// that is equally least or most common), and any non-empty subset
+        /// of them passes, one row per value.
+        answer: Vec<String>,
+        /// Whether the answer is a number, which earns partial credit.
+        numeric: bool,
+    },
     /// A person decides; the task waits in `needs_review`.
     Human,
 }
@@ -71,6 +84,7 @@ impl Verify {
             Verify::Shell { .. } => "shell",
             Verify::Judge { .. } => "judge",
             Verify::Number { .. } => "number",
+            Verify::Oolong { .. } => "oolong",
             Verify::Human => "human",
         }
     }
@@ -101,6 +115,10 @@ impl Verify {
                 },
             },
             Verify::Number { value, tolerance } => number(*value, *tolerance, answer),
+            Verify::Oolong {
+                answer: want,
+                numeric,
+            } => oolong(want, *numeric, answer),
             Verify::Human => Verdict {
                 pass: false,
                 detail: "awaiting human review".into(),
@@ -134,6 +152,96 @@ fn number(value: f64, tolerance: f64, answer: &Batch) -> Verdict {
             pass: false,
             detail: format!("expected a number, got {}", cell.render()),
         },
+    }
+}
+
+/// The answer cells of a `FINAL` relation for an OOLONG question: the first
+/// column, with a `Label:` or `Answer:` prefix the model may have echoed
+/// from the question removed. One cell holding a comma-separated list is
+/// split when several values are expected.
+fn oolong_cells(answer: &Batch, expected: usize) -> Vec<String> {
+    let strip = |s: &str| -> String {
+        let t = s.trim();
+        let lower = t.to_ascii_lowercase();
+        let t = ["label:", "answer:", "user:", "date:"]
+            .iter()
+            .find(|p| lower.starts_with(*p))
+            .map(|p| &t[p.len()..])
+            .unwrap_or(t);
+        t.trim().trim_matches(|c| c == '\'' || c == '"').to_string()
+    };
+    let mut cells: Vec<String> = answer
+        .rows
+        .iter()
+        .filter_map(|r| r.first())
+        .map(|v| strip(&v.render()))
+        .filter(|s| !s.is_empty())
+        .collect();
+    if cells.len() == 1 && expected > 1 {
+        cells = cells[0]
+            .split(',')
+            .map(strip)
+            .filter(|s| !s.is_empty())
+            .collect();
+    }
+    cells
+}
+
+/// Score an OOLONG answer: exact match on normalised values (any of the
+/// expected values when several are tied), or `0.75^|y - ŷ|` for a
+/// number. Returns the score and a description.
+pub fn oolong_score(want: &[String], numeric: bool, got: &[String]) -> (f64, String) {
+    if numeric {
+        let parse = |s: &str| -> Option<f64> {
+            s.chars()
+                .filter(|c| c.is_ascii_digit() || *c == '.' || *c == '-')
+                .collect::<String>()
+                .parse::<f64>()
+                .ok()
+        };
+        let Some(expected) = want.first().and_then(|s| parse(s)) else {
+            return (0.0, format!("expected answer {want:?} is not a number"));
+        };
+        return match got.first().and_then(|s| parse(s)) {
+            Some(actual) => {
+                let score = 0.75f64.powf((expected - actual).abs());
+                (score, format!("expected {expected}, got {actual}"))
+            }
+            None => (
+                0.0,
+                format!(
+                    "expected {expected}, got {}",
+                    got.first().map(String::as_str).unwrap_or("nothing")
+                ),
+            ),
+        };
+    }
+    let mut w: Vec<String> = want.iter().map(|s| norm(s)).collect();
+    let mut g: Vec<String> = got.iter().map(|s| norm(s)).collect();
+    w.sort();
+    g.sort();
+    g.dedup();
+    let score = if !g.is_empty() && g.iter().all(|x| w.contains(x)) {
+        1.0
+    } else {
+        0.0
+    };
+    let how = if w.len() > 1 { "any of" } else { "expected" };
+    (score, format!("{how} {w:?}, got {g:?}"))
+}
+
+fn oolong(want: &[String], numeric: bool, answer: &Batch) -> Verdict {
+    let got = oolong_cells(answer, want.len());
+    if got.is_empty() {
+        return Verdict {
+            pass: false,
+            detail: "oolong score 0.000: empty answer".into(),
+        };
+    }
+    let (score, why) = oolong_score(want, numeric, &got);
+    Verdict {
+        pass: score >= 1.0 - 1e-9,
+        detail: format!("oolong score {score:.3}: {why}"),
     }
 }
 
@@ -468,5 +576,66 @@ mod tests {
         assert!(rt.block_on(v.check(&b, &ws, None)).pass);
         let b = batch(&["n"], vec![vec![Value::Int(41)]]);
         assert!(!rt.block_on(v.check(&b, &ws, None)).pass);
+    }
+
+    #[test]
+    fn oolong_oracle_scores_labels_exactly_and_numbers_with_decay() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let ws = std::env::temp_dir();
+        let label = Verify::Oolong {
+            answer: vec!["incorrect".into()],
+            numeric: false,
+        };
+        let b = batch(&["answer"], vec![vec![Value::from("Label: Incorrect")]]);
+        let v = rt.block_on(label.check(&b, &ws, None));
+        assert!(v.pass, "{}", v.detail);
+        assert!(v.detail.starts_with("oolong score 1.000"));
+        let b = batch(&["answer"], vec![vec![Value::from("correct")]]);
+        assert!(!rt.block_on(label.check(&b, &ws, None)).pass);
+
+        let num = Verify::Oolong {
+            answer: vec!["1542".into()],
+            numeric: true,
+        };
+        let b = batch(&["answer"], vec![vec![Value::Int(1542)]]);
+        assert!(rt.block_on(num.check(&b, &ws, None)).pass);
+        let b = batch(&["answer"], vec![vec![Value::from("Answer: 1,540")]]);
+        let v = rt.block_on(num.check(&b, &ws, None));
+        assert!(!v.pass);
+        assert_eq!(v.detail, "oolong score 0.562: expected 1542, got 1540");
+        let empty = batch(&["answer"], vec![]);
+        assert!(!rt.block_on(num.check(&empty, &ws, None)).pass);
+
+        // A tie: OOLONG lists every least-common label; naming one, or all
+        // of them, is right; naming a label outside the tie is wrong.
+        let tie = Verify::Oolong {
+            answer: vec!["human being".into(), "location".into()],
+            numeric: false,
+        };
+        let rows = batch(
+            &["answer"],
+            vec![
+                vec![Value::from("location")],
+                vec![Value::from("Human Being")],
+            ],
+        );
+        assert!(rt.block_on(tie.check(&rows, &ws, None)).pass);
+        let one_cell = batch(
+            &["answer"],
+            vec![vec![Value::from("human being, location")]],
+        );
+        assert!(rt.block_on(tie.check(&one_cell, &ws, None)).pass);
+        let one = batch(&["answer"], vec![vec![Value::from("Label: location")]]);
+        let v = rt.block_on(tie.check(&one, &ws, None));
+        assert!(v.pass);
+        assert_eq!(
+            v.detail,
+            "oolong score 1.000: any of [\"human being\", \"location\"], got [\"location\"]"
+        );
+        let outside = batch(
+            &["answer"],
+            vec![vec![Value::from("location")], vec![Value::from("entity")]],
+        );
+        assert!(!rt.block_on(tie.check(&outside, &ws, None)).pass);
     }
 }
