@@ -68,9 +68,21 @@ on demand:
   slice and fetches only those rows, so a 12 GB dataset costs a few tens of
   megabytes to import. `--from-json <file>` builds the pack from rows saved
   earlier instead of the network.
-- **Harvey LAB**: a checkout imports with `bench import-lab <root> <out-dir>`;
-  LAB's own evaluator stays the scorer of record and the in-loop `judge`
-  oracle approximates it.
+- **Harvey LAB** (MIT, `harveyai/harvey-labs`): a checkout imports with
+  `bench import-lab <checkout>/tasks <out-dir>`, all 2,010 tasks (1,599
+  standalone plus 411 workflow scenarios) in about twenty seconds. Each
+  task's `documents/` folder is copied in as its workspace; the 250
+  firm-knowledge tasks that share one `dms` corpus through `docs_dir` share
+  one copy. The oracle is `judge` over the task's rubric exactly as shipped:
+  one line per criterion with its id, title, `match_criteria` and the
+  deliverables it is scoped to, all-pass. LAB's own evaluator
+  (`lab_core.evaluation.run_eval`, Sonnet 4.6 and GPT-5.5 as judges) stays
+  the scorer of record; the in-loop oracle approximates it with one judge
+  and no per-deliverable scoping. A pass through a practice area
+  (`import-lab <checkout>/tasks/antitrust-competition …`) is the cheap way
+  to start: the full set is 2.7 GB of `.docx`, `.xlsx`, `.eml` and `.pptx`
+  matter documents, which the `read` tool cannot parse until its pandoc
+  conversion lands.
 
 ## Modes
 

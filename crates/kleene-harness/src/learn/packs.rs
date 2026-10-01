@@ -293,16 +293,27 @@ pub fn terminal_pack() -> Pack {
     }
 }
 
-/// Import a Harvey LAB checkout: every directory with a `task.json` becomes
-/// a task whose workspace is the matter folder (`documents/` copied in) and
-/// whose oracle is a judge over the task's criteria, with deliverables
-/// expected under `output/`. LAB's own `evaluation.run_eval` remains the
-/// scorer of record; this oracle is the in-loop approximation.
+/// Import a Harvey LAB checkout (`harveyai/harvey-labs`, MIT): every
+/// directory with a `task.json` becomes a task whose workspace is the
+/// matter folder (`documents/`, or the shared corpus a `docs_dir` points
+/// at, copied once and shared) and whose oracle is a judge over the task's
+/// rubric criteria, with deliverables expected under `output/`. LAB's own
+/// evaluator (`lab_core.evaluation.run_eval`, two judges, all-pass) remains
+/// the scorer of record; this oracle is the in-loop approximation.
+///
+/// The schema read is LAB's as shipped: `instructions`, `title`,
+/// `work_type`, `deliverables` (a map from file name to description, or a
+/// list), `criteria` (objects with `id`, `title`, `match_criteria` and the
+/// `deliverables` they are scoped to), and `docs_dir` for tasks over a
+/// shared corpus.
 pub fn import_lab(root: &Path, pack_dir: &Path) -> Result<Pack, HarnessError> {
     let mut tasks = vec![];
     let mut dirs = vec![];
     walk_for(root, "task.json", &mut dirs, 0);
     dirs.sort();
+    // Shared corpora (`docs_dir`) are copied once; canonical source path to
+    // the workspace directory, relative to the pack.
+    let mut shared: std::collections::BTreeMap<PathBuf, String> = Default::default();
     for dir in dirs {
         let text = std::fs::read_to_string(dir.join("task.json"))
             .map_err(|e| HarnessError::Config(format!("{}: {e}", dir.display())))?;
@@ -320,35 +331,8 @@ pub fn import_lab(root: &Path, pack_dir: &Path) -> Result<Pack, HarnessError> {
             .display()
             .to_string()
             .replace(['/', '\\'], "__");
-        let deliverables: Vec<String> = json
-            .get("deliverables")
-            .or_else(|| json.get("expected_deliverables"))
-            .and_then(|v| v.as_array())
-            .map(|a| {
-                a.iter()
-                    .filter_map(|d| {
-                        d.as_str().map(str::to_string).or_else(|| {
-                            d.get("filename")
-                                .and_then(|f| f.as_str())
-                                .map(str::to_string)
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        let criteria: Vec<String> = json
-            .get("criteria")
-            .and_then(|v| v.as_array())
-            .map(|a| {
-                a.iter()
-                    .filter_map(|c| {
-                        c.as_str()
-                            .map(str::to_string)
-                            .or_else(|| c.get("text").and_then(|t| t.as_str()).map(str::to_string))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        let deliverables = lab_deliverables(&json);
+        let criteria = lab_criteria(&json);
         let rubric = if criteria.is_empty() {
             format!(
                 "Every requirement of the instructions is met and every deliverable ({}) was written under output/.",
@@ -356,19 +340,36 @@ pub fn import_lab(root: &Path, pack_dir: &Path) -> Result<Pack, HarnessError> {
             )
         } else {
             format!(
-                "All of the following must hold (all-pass):\n- {}",
+                "All of the following must hold (all-pass), judged against the files under output/:\n- {}",
                 criteria.join("\n- ")
             )
         };
-        // Copy the matter folder next to the pack so the pack is self-contained.
-        let ws_rel = format!("workspaces/{id}");
-        let ws = pack_dir.join(&ws_rel);
-        std::fs::create_dir_all(&ws)
-            .map_err(|e| HarnessError::Config(format!("cannot create {}: {e}", ws.display())))?;
-        let docs = dir.join("documents");
-        if docs.is_dir() {
-            copy_dir(&docs, &ws.join("documents"))?;
-        }
+        // The matter documents: the task's own documents/ folder, or a shared
+        // corpus named by docs_dir (relative to the task directory).
+        let docs_dir = field("docs_dir");
+        let ws_rel = if docs_dir.is_empty() {
+            let ws_rel = format!("workspaces/{id}");
+            let ws = pack_dir.join(&ws_rel);
+            std::fs::create_dir_all(&ws).map_err(|e| {
+                HarnessError::Config(format!("cannot create {}: {e}", ws.display()))
+            })?;
+            let docs = dir.join("documents");
+            if docs.is_dir() {
+                copy_dir(&docs, &ws.join("documents"))?;
+            }
+            ws_rel
+        } else {
+            let src = dir.join(&docs_dir);
+            let key = src.canonicalize().unwrap_or(src.clone());
+            if let Some(rel) = shared.get(&key) {
+                rel.clone()
+            } else {
+                let rel = format!("workspaces/shared-{:02}", shared.len() + 1);
+                copy_dir(&src, &pack_dir.join(&rel).join("documents"))?;
+                shared.insert(key, rel.clone());
+                rel
+            }
+        };
         tasks.push(PackTask {
             id: id.clone(),
             kind: Some(format!(
@@ -412,6 +413,72 @@ pub fn import_lab(root: &Path, pack_dir: &Path) -> Result<Pack, HarnessError> {
         kind: "lab_task".into(),
         tasks,
     })
+}
+
+/// The deliverable file names of a LAB task: `deliverables` is a map from
+/// file name to description in the shipped tasks; older drafts used a list
+/// of names or of `{filename}` objects.
+fn lab_deliverables(json: &serde_json::Value) -> Vec<String> {
+    let v = json
+        .get("deliverables")
+        .or_else(|| json.get("expected_deliverables"));
+    match v {
+        Some(serde_json::Value::Object(m)) => m.keys().cloned().collect(),
+        Some(serde_json::Value::Array(a)) => a
+            .iter()
+            .filter_map(|d| {
+                d.as_str().map(str::to_string).or_else(|| {
+                    d.get("filename")
+                        .and_then(|f| f.as_str())
+                        .map(str::to_string)
+                })
+            })
+            .collect(),
+        _ => vec![],
+    }
+}
+
+/// The rubric lines of a LAB task, one per criterion: `id`, `title`, the
+/// `match_criteria` the judge checks, and the deliverables it is scoped to.
+fn lab_criteria(json: &serde_json::Value) -> Vec<String> {
+    let Some(a) = json.get("criteria").and_then(|v| v.as_array()) else {
+        return vec![];
+    };
+    a.iter()
+        .filter_map(|c| {
+            if let Some(s) = c.as_str() {
+                return Some(s.to_string());
+            }
+            let get = |k: &str| c.get(k).and_then(|v| v.as_str()).unwrap_or("").trim();
+            let text = if get("match_criteria").is_empty() {
+                get("text")
+            } else {
+                get("match_criteria")
+            };
+            if text.is_empty() {
+                return None;
+            }
+            let mut line = String::new();
+            if !get("id").is_empty() {
+                line.push_str(get("id"));
+                line.push(' ');
+            }
+            if !get("title").is_empty() {
+                line.push_str(get("title"));
+                line.push_str(": ");
+            }
+            line.push_str(text);
+            let scoped: Vec<&str> = c
+                .get("deliverables")
+                .and_then(|d| d.as_array())
+                .map(|d| d.iter().filter_map(|x| x.as_str()).collect())
+                .unwrap_or_default();
+            if !scoped.is_empty() {
+                line.push_str(&format!(" (in {})", scoped.join(", ")));
+            }
+            Some(line)
+        })
+        .collect()
 }
 
 /// One OOLONG-synth question as the Hugging Face dataset
@@ -610,22 +677,65 @@ mod tests {
             .join("contracting/extract-psa-key-terms/scenario-01");
         std::fs::create_dir_all(task.join("documents")).unwrap();
         std::fs::write(task.join("documents/psa.txt"), "Purchase price: 10").unwrap();
+        // The shipped schema: deliverables as a map, criteria as objects.
         std::fs::write(
             task.join("task.json"),
-            r#"{"instructions": "Extract the key terms of the PSA.", "work_type": "analyze", "deliverables": ["key_terms.md"], "criteria": [{"text": "States the purchase price"}]}"#,
+            r#"{"title": "Extract PSA Key Terms", "instructions": "Extract the key terms of the PSA.", "work_type": "analyze", "deliverables": {"key_terms.md": "key_terms.md"}, "criteria": [{"id": "C-001", "title": "Purchase price", "deliverables": ["key_terms.md"], "match_criteria": "PASS if the purchase price is stated as 10."}]}"#,
+        )
+        .unwrap();
+        // Two firm-knowledge tasks over one shared corpus.
+        std::fs::create_dir_all(root.path().join("firm-knowledge/dms")).unwrap();
+        std::fs::write(
+            root.path().join("firm-knowledge/dms/deal.txt"),
+            "ground lease",
+        )
+        .unwrap();
+        for n in ["001", "002"] {
+            let t = root.path().join("firm-knowledge/tasks").join(n);
+            std::fs::create_dir_all(&t).unwrap();
+            std::fs::write(
+                t.join("task.json"),
+                r#"{"id": "1", "title": "Latest deal", "instructions": "What is our latest ground-lease deal?", "docs_dir": "../../dms", "deliverables": {"response.md": "response.md"}, "criteria": [{"id": "C-001", "title": "Names the deal", "match_criteria": "Identifies the ground lease.", "deliverables": ["response.md"]}]}"#,
+            )
+            .unwrap();
+        }
+        // An older draft shape still imports.
+        let legacy = root.path().join("legacy/task");
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::write(
+            legacy.join("task.json"),
+            r#"{"instructions": "Do it.", "deliverables": ["out.md"], "criteria": [{"text": "It is done"}]}"#,
         )
         .unwrap();
         let out = tempfile::tempdir().unwrap();
         let pack = import_lab(root.path(), out.path()).unwrap();
-        assert_eq!(pack.tasks.len(), 1);
+        assert_eq!(pack.tasks.len(), 4);
         let t = &pack.tasks[0];
+        assert_eq!(t.id, "contracting__extract-psa-key-terms__scenario-01");
         assert_eq!(t.kind.as_deref(), Some("lab_analyze"));
-        assert!(t.task.contains("key_terms.md"), "{}", t.task);
-        assert!(
-            matches!(&t.verify, Verify::Judge { rubric, .. } if rubric.contains("purchase price"))
-        );
+        assert!(t.task.contains("(expected: key_terms.md)"), "{}", t.task);
+        match &t.verify {
+            Verify::Judge { rubric, .. } => assert_eq!(
+                rubric,
+                "All of the following must hold (all-pass), judged against the files under output/:\n- C-001 Purchase price: PASS if the purchase price is stated as 10. (in key_terms.md)"
+            ),
+            other => panic!("{other:?}"),
+        }
         let ws = t.workspace_from.as_ref().unwrap();
         assert!(out.path().join(ws).join("documents/psa.txt").exists());
+        let (a, b) = (&pack.tasks[1], &pack.tasks[2]);
+        assert_eq!(a.kind.as_deref(), Some("lab_task"));
+        assert_eq!(a.workspace_from.as_deref(), Some("workspaces/shared-01"));
+        assert_eq!(a.workspace_from, b.workspace_from);
+        assert!(out
+            .path()
+            .join("workspaces/shared-01/documents/deal.txt")
+            .exists());
+        let l = &pack.tasks[3];
+        assert!(l.task.contains("(expected: out.md)"));
+        assert!(
+            matches!(&l.verify, Verify::Judge { rubric, .. } if rubric.ends_with("- It is done"))
+        );
         assert!(import_lab(out.path().join("nope").as_path(), out.path()).is_err());
     }
 
