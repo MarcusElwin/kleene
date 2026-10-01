@@ -152,11 +152,85 @@ The external datasets themselves (OOLONG, Terminal-Bench, FinanceBench,
 CUAD, LAB) are not redistributed here. A coding pack (edit code in a
 workspace, judged by its tests) is the next pack to add.
 
+### 4.1 Haiku 4.5 on the harder packs
+
+The harder packs (`tasks/coding`, `tasks/memo-rubric`, `tasks/logbook-hard`)
+ran on 1 October 2026 with every solver alias (`root`, `worker`, `proxy`)
+on `claude-haiku-4-5-20251001` and the `judge` alias on `claude-sonnet-5-5`
+(the router file is `plots/haiku-2026-10-01/router.toml`). The sweep was
+stopped before it finished; the table is what completed. Rows and report
+are `plots/haiku-2026-10-01/evals.csv` and `report.txt`, the SVGs beside
+them. Columns as in the table above.
+
+| pack | mode | solved | calls / task | tokens / task | dollars |
+|---|---|---|---|---|---|
+| coding (12) | frozen | 2/12 | 4.58 | 48,375 | 0.87 |
+| coding (12) | learning | 2/12 | 2.67 | 29,910 | 0.47 |
+| memo-rubric (20) | frozen | 8/20 | 19.95 | 49,043 | 1.30 |
+| memo-rubric (20) | learning | 11/20 | 3.80 | 23,041 | 0.37 |
+| memo-rubric (20) | plain | 8/20 | 3.15 | 10,764 | 0.35 |
+
+Not in the table: `logbook-hard` in any mode (a frozen task took about
+500 calls and over twenty minutes at Haiku's pace, so the pack was capped
+at ten tasks and then stopped before the first row landed), and `coding`
+in plain mode (below). The gate replays, in `playbook_evals`, cost $1.43
+on memo-rubric (11 candidates, 3 adopted) and $1.04 on coding (2
+candidates, 1 adopted); the counted runs cost $3.36 in all.
+
+What the numbers say:
+
+- **These packs separate on accuracy.** Where Opus 5.5 solved every task
+  of the first four packs, Haiku solves 17% of the coding steps and 40 to
+  55% of the memos. The coding steps it solves are the first step of an
+  episode (`ledger-1-parse`, `inventory-1-stock`); it solved no "extend"
+  or "fix the bug report" step in either Kleene mode.
+- **Learning beat frozen on memo-rubric, on both axes.** 11/20 against
+  8/20, at 3.8 calls a task against 19.95 and $0.37 against $1.30. Two
+  effects are mixed in. Three playbook entries were adopted and the
+  second half of the learning run solved 5 of 10 where the frozen run's
+  first half solved 3 of 10. But most of the frozen run's calls are a
+  failure mode the playbook happens to steer around: Haiku writes
+  `LLM_JSON` output schemas the API rejects (`additionalProperties` not
+  set, `minItems` above 1, a bare `{"hours": "number"}`), and the
+  statement retries until the call budget goes; five frozen tasks took 22
+  to 141 calls each. A schema check before the request, or a repair of the
+  schema the model wrote, would remove most of that cost.
+- **Learning and frozen share the store's memo.** The learning run comes
+  second in the same store, so a prompt identical to one the frozen run
+  sent is answered from the memo for free. Two coding steps in the
+  learning run finished with zero calls: they replayed the frozen run's
+  failed answers. The learning column's calls and dollars are therefore
+  not an independent measurement; a clean comparison needs a fresh store
+  per mode, or the memo excluded from the gate's cost accounting.
+- **The plain baseline needs a protocol Haiku keeps.** The agent asks for
+  one JSON action per reply. Haiku answers with five to ten actions and
+  invented tool output between them; the first extractor took the span
+  from the first `{` to the last `}`, which never parsed, so on every
+  coding task the model saw only "not a single JSON object" and gave up
+  with a FINAL after two turns (0/12 at $0.45). The extractor now takes
+  the first balanced object and runs it. With that, Haiku worked through
+  the first coding task for all 30 turns without solving it ($1.11), and
+  the rerun was stopped before a row landed. On memo-rubric, where the
+  task fits in one call, the plain agent matches frozen on accuracy at a
+  quarter of the cost, and learning beats it by three tasks for the same
+  money.
+- **The judge wobbles.** Sonnet 5.5's first lines included "PASS (with
+  caveat)", "PASS (provisional)" and "PASS or FAIL?"; the parser counted
+  all of them as passes. It now requires a first line that says PASS and
+  does not mention FAIL. The memo frozen and learning runs predate that
+  change; the plain run does not.
+- **Two provider facts.** Haiku rejects `output_config.effort`, which the
+  adapter sent along with the rest of the family; the default routing puts
+  `proxy` on Haiku at low effort, so every proxy call failed until the
+  adapter learned to omit it. And `claude-sonnet-5-5` is served now (it
+  was not on 27 September).
+
 ## 5. Honest gaps
 
-- One model, one run per pack, and every task solved: the results in
-  section 4 compare cost, not accuracy, and need harder packs and a second
-  model before they say more.
+- One run per pack and mode. Opus 5.5 solved every task of the first four
+  packs, so section 4 compares cost there; the harder packs of section 4.1
+  separate on accuracy with Haiku 4.5, but only two of the three finished,
+  and the learning column shares the frozen run's memo.
 - Session scratch tables persist in the shared store and appear in every
   later session's catalog, which grows prompts over a run and breaks
   replaying a recorded run from its own fixtures.
@@ -167,7 +241,11 @@ workspace, judged by its tests) is the next pack to add.
   as versioned tables.
 - The `plain` baseline parses JSON actions from text rather than native tool
   use, which keeps it provider-agnostic but is not identical to a vendor
-  agent loop.
+  agent loop, and a model that writes several actions per reply (Haiku)
+  gets only its first one run.
+- Output schemas the model writes for `LLM_JSON` go to the provider
+  unchecked; Haiku writes ones the API rejects, and the retries burn the
+  call budget.
 
 ## 6. Reproduce
 
