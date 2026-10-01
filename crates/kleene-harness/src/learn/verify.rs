@@ -394,7 +394,7 @@ async fn judge_call(
                 .trim()
                 .to_ascii_uppercase();
             Verdict {
-                pass: first.starts_with("PASS"),
+                pass: first.starts_with("PASS") && !first.contains("FAIL"),
                 detail: text.lines().take(2).collect::<Vec<_>>().join(" "),
             }
         }
