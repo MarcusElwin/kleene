@@ -90,6 +90,12 @@ pub struct HarnessConfig {
     pub no_memo: bool,
     /// The service behind `web_search`; `None` makes every search fail.
     pub web_search: Option<WebSearchBackend>,
+    /// Drop the tables a session created (`ctx`, its `CREATE TABLE`
+    /// scratch, a child's whole namespace) when it finishes, so a shared
+    /// store does not list every past session's tables to every later one.
+    /// Off by default so a REPL keeps what it built; benchmark runs turn it
+    /// on.
+    pub drop_session_tables: bool,
 }
 
 impl Default for HarnessConfig {
@@ -110,6 +116,7 @@ impl Default for HarnessConfig {
             functions: None,
             no_memo: false,
             web_search: None,
+            drop_session_tables: false,
         }
     }
 }
@@ -640,6 +647,9 @@ impl Harness {
             }
         };
         self.unregister(meta.id);
+        if self.cfg.drop_session_tables {
+            sink.store().drop_created().await?;
+        }
         let mut usage = sink.usage().await;
         usage.wall = started.elapsed();
         record.usage = usage;

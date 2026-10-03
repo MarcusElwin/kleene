@@ -15,9 +15,15 @@ What the modes, oracles, report columns and plots mean is in
 | `oolong-like/` | 20 meeting-note corpora with per-project hour totals, frozen from the `corpus` generator at dial 0.5 | exact rows |
 | `finance-synthetic/` | 20 synthetic statements with growth, ratio and sum questions, frozen from `statements` | number within tolerance |
 | `legal-synthetic/` | 20 synthetic contracts with planted clause categories, frozen from `contracts` | exact set of categories |
+| `logbook-hard/` | 30 work logs of about 1,650 dated entries each (about 30,000 tokens) with corrections and non-hour distractors, five question shapes, frozen lazily from `logbook` at dial 0.9 | exact rows |
+| `memo-rubric/` | 20 synthetic services agreements with an amendment and a rejected proposal; the task is a short memo on three of the terms, frozen lazily from `memo` at dial 0.8 | `judge` with a rubric naming each required fact and a reference memo |
+| `coding/` | four Python projects under `workspaces/`, three steps each (implement, extend, fix a bug report); later steps `continues` the earlier step's workspace | the grader's hidden unit tests (`.grader/run.sh N`) |
 
 Rebuild a frozen pack with `kleene bench build <dir> --from <generator>
---count N --dial D --seed S`; the same seeds give the same tasks. Import a
+--count N --dial D --seed S`; the same seeds give the same tasks. With
+`--lazy` the pack stores only the generator, dial and seed per task and
+regenerates on load, which is how `logbook-hard` and `memo-rubric` are kept
+small. Import a
 Harvey LAB checkout with `kleene bench import-lab <root> tasks/harvey-lab`
 (matter folders are copied into the pack; LAB's own evaluator remains the
 scorer of record). The external datasets themselves are not redistributed.

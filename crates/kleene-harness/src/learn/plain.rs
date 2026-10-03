@@ -214,9 +214,74 @@ pub async fn run(cfg: &PlainConfig, task: &str, context: Option<&str>) -> PlainR
     }
 }
 
+/// The first balanced JSON object in `text`. A model that writes several
+/// actions in one reply (Haiku does, with imagined tool output between
+/// them) gets its first action executed and the real output fed back,
+/// instead of a parse error for the whole reply.
 fn extract_json(text: &str) -> Option<String> {
     let t = text.trim();
     let start = t.find('{')?;
-    let end = t.rfind('}')?;
-    (end > start).then(|| t[start..=end].to_string())
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (i, c) in t[start..].char_indices() {
+        if in_string {
+            match c {
+                '\\' if !escaped => escaped = true,
+                '"' if !escaped => in_string = false,
+                _ => escaped = false,
+            }
+            continue;
+        }
+        match c {
+            '"' => in_string = true,
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(t[start..start + i + c.len_utf8()].to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_json;
+
+    #[test]
+    fn a_single_object_is_taken_whole() {
+        let t = "Sure.\n{\"tool\": \"read\", \"args\": [\"a.py\"]}\n";
+        assert_eq!(
+            extract_json(t).as_deref(),
+            Some("{\"tool\": \"read\", \"args\": [\"a.py\"]}")
+        );
+    }
+
+    #[test]
+    fn the_first_of_several_objects_is_taken() {
+        let t = "{\"tool\": \"files\", \"args\": [\"*\"]}\nimagined output\n{\"tool\": \"read\", \"args\": [\"x\"]}";
+        assert_eq!(
+            extract_json(t).as_deref(),
+            Some("{\"tool\": \"files\", \"args\": [\"*\"]}")
+        );
+    }
+
+    #[test]
+    fn braces_inside_strings_do_not_close_the_object() {
+        let t =
+            "{\"tool\": \"write_file\", \"args\": [\"a.py\", \"d = {\\\"k\\\": 1}\\n\"]} trailing";
+        let got = extract_json(t).unwrap();
+        assert!(got.ends_with("]}"), "{got}");
+        assert!(serde_json::from_str::<serde_json::Value>(&got).is_ok());
+    }
+
+    #[test]
+    fn an_unbalanced_object_is_none() {
+        assert_eq!(extract_json("{\"tool\": \"x\", \"args\": ["), None);
+        assert_eq!(extract_json("no json here"), None);
+    }
 }

@@ -27,38 +27,145 @@ pub struct Pack {
 }
 
 /// One task in a pack.
+///
+/// On disk a task is either written out in full, or names a generator, a
+/// dial and a seed in `from` and is regenerated on load (`bench build
+/// --lazy`); the two forms load to the same task, because every generator
+/// is a pure function of its dial and seed. A task with `from` is saved in
+/// the short form.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "PackTaskOnDisk", into = "PackTaskOnDisk")]
 pub struct PackTask {
     /// Stable id within the pack.
     pub id: String,
     /// Kind override.
-    #[serde(default)]
     pub kind: Option<String>,
     /// Task text.
     pub task: String,
     /// Inline context (one paragraph per `ctx` row, blank-line separated).
-    #[serde(default)]
     pub context: Option<String>,
     /// Context read from a file relative to the pack directory.
-    #[serde(default)]
     pub context_file: Option<String>,
-    /// Shell commands run in a fresh temporary workspace before the task
-    /// (Terminal-Bench style setup).
-    #[serde(default)]
+    /// Shell commands run in the workspace before the task (Terminal-Bench
+    /// style setup). For a task that `continues` another they run in the
+    /// inherited workspace, so they can check or repair what the earlier
+    /// step left.
     pub setup: Vec<String>,
     /// A directory (relative to the pack) copied into the workspace before
     /// setup, for document-heavy tasks (LAB matter folders).
-    #[serde(default)]
     pub workspace_from: Option<String>,
+    /// The id of the task whose workspace this one starts from: a step in
+    /// a multi-step episode. The workspace that task left, files and all,
+    /// is this task's workspace; `setup` then runs in it. The task named
+    /// must come earlier in the pack.
+    pub continues: Option<String>,
     /// The oracle.
     pub verify: Verify,
     /// Difficulty prior in rating points.
-    #[serde(default = "default_difficulty")]
     pub difficulty: f64,
+    /// The generator this task was regenerated from, when it was.
+    pub from: Option<GeneratorRef>,
 }
 
-fn default_difficulty() -> f64 {
-    super::ratings::BASELINE
+/// A task that is regenerated on load: a generator with its dial and seed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GeneratorRef {
+    /// Generator name (`generators::GENERATORS`).
+    pub generator: String,
+    /// Hardness dial.
+    pub dial: f64,
+    /// Seed.
+    pub seed: u64,
+}
+
+/// The on-disk shape of a task: the full form, or `from` plus overrides.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PackTaskOnDisk {
+    id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    from: Option<GeneratorRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    task: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    context: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    context_file: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    setup: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    workspace_from: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    continues: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    verify: Option<Verify>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    difficulty: Option<f64>,
+}
+
+impl TryFrom<PackTaskOnDisk> for PackTask {
+    type Error = String;
+
+    fn try_from(d: PackTaskOnDisk) -> Result<Self, String> {
+        let generated = match &d.from {
+            Some(r) => Some(
+                generators::generate(&r.generator, r.dial, r.seed, &std::env::temp_dir())
+                    .ok_or_else(|| format!("task {}: unknown generator {}", d.id, r.generator))?,
+            ),
+            None => None,
+        };
+        let (kind, task, context, verify, difficulty) = match generated {
+            Some(g) => (
+                d.kind.or(Some(g.kind)),
+                d.task.unwrap_or(g.task),
+                d.context.or(g.context),
+                d.verify.unwrap_or(g.verify),
+                d.difficulty.unwrap_or(g.difficulty),
+            ),
+            None => (
+                d.kind,
+                d.task
+                    .ok_or_else(|| format!("task {}: missing field `task`", d.id))?,
+                d.context,
+                d.verify
+                    .ok_or_else(|| format!("task {}: missing field `verify`", d.id))?,
+                d.difficulty.unwrap_or(super::ratings::BASELINE),
+            ),
+        };
+        Ok(PackTask {
+            id: d.id,
+            kind,
+            task,
+            context,
+            context_file: d.context_file,
+            setup: d.setup,
+            workspace_from: d.workspace_from,
+            continues: d.continues,
+            verify,
+            difficulty,
+            from: d.from,
+        })
+    }
+}
+
+impl From<PackTask> for PackTaskOnDisk {
+    fn from(t: PackTask) -> Self {
+        let lazy = t.from.is_some();
+        PackTaskOnDisk {
+            id: t.id,
+            kind: t.kind,
+            from: t.from,
+            task: (!lazy).then_some(t.task),
+            context: if lazy { None } else { t.context },
+            context_file: t.context_file,
+            setup: t.setup,
+            workspace_from: t.workspace_from,
+            continues: t.continues,
+            verify: (!lazy).then_some(t.verify),
+            difficulty: (!lazy).then_some(t.difficulty),
+        }
+    }
 }
 
 impl Pack {
@@ -75,7 +182,50 @@ impl Pack {
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_default();
         }
+        pack.check()?;
         Ok(pack)
+    }
+
+    /// Structural checks: ids are unique, and a task that `continues`
+    /// another names an earlier task of this pack.
+    pub fn check(&self) -> Result<(), HarnessError> {
+        let mut seen: Vec<&str> = vec![];
+        for t in &self.tasks {
+            if seen.contains(&t.id.as_str()) {
+                return Err(HarnessError::Config(format!(
+                    "pack {}: duplicate task id {}",
+                    self.name, t.id
+                )));
+            }
+            if let Some(prev) = &t.continues {
+                if !seen.contains(&prev.as_str()) {
+                    return Err(HarnessError::Config(format!(
+                        "pack {}: task {} continues {}, which is not an earlier task",
+                        self.name, t.id, prev
+                    )));
+                }
+            }
+            seen.push(&t.id);
+        }
+        Ok(())
+    }
+
+    /// The chain of tasks a task's workspace descends from, root first and
+    /// the task itself last.
+    pub fn lineage<'a>(&'a self, t: &'a PackTask) -> Vec<&'a PackTask> {
+        let mut chain = vec![t];
+        let mut cur = t;
+        while let Some(prev) = &cur.continues {
+            match self.tasks.iter().find(|x| &x.id == prev) {
+                Some(p) => {
+                    chain.push(p);
+                    cur = p;
+                }
+                None => break,
+            }
+        }
+        chain.reverse();
+        chain
     }
 
     /// Write `dir/pack.json` (and nothing else).
@@ -104,7 +254,9 @@ impl Pack {
     }
 
     /// Freeze `count` tasks from a generator at `dial` into a pack, seeds
-    /// `seed..seed + count`, so the stream is reproducible.
+    /// `seed..seed + count`, so the stream is reproducible. A `lazy` pack
+    /// stores only the generator references and regenerates on load, which
+    /// keeps a pack with long contexts small on disk.
     pub fn from_generator(
         name: &str,
         generator: &str,
@@ -112,6 +264,7 @@ impl Pack {
         dial: f64,
         seed: u64,
         workspace: &Path,
+        lazy: bool,
     ) -> Result<Self, HarnessError> {
         if !generators::GENERATORS.contains(&generator) {
             return Err(HarnessError::Config(format!(
@@ -127,14 +280,22 @@ impl Pack {
             kind = g.kind.clone();
             tasks.push(PackTask {
                 id: format!("{generator}-{:03}", i + 1),
-                kind: None,
+                // Generators like `logbook` vary the kind with the seed, so
+                // every task carries its own.
+                kind: Some(g.kind.clone()),
                 task: g.task,
                 context: g.context,
                 context_file: None,
                 setup: vec![],
                 workspace_from: None,
+                continues: None,
                 verify: g.verify,
                 difficulty: g.difficulty,
+                from: lazy.then(|| GeneratorRef {
+                    generator: generator.to_string(),
+                    dial,
+                    seed: seed + i,
+                }),
             });
         }
         Ok(Pack {
@@ -197,6 +358,14 @@ pub async fn prepare_workspace(pack_dir: &Path, t: &PackTask) -> Result<Workspac
     if let Some(from) = &t.workspace_from {
         copy_dir(&pack_dir.join(from), dir.path())?;
     }
+    run_setup(&dir, t).await?;
+    Ok(dir)
+}
+
+/// Run a task's setup commands in an existing workspace: the second and
+/// later steps of an episode run theirs in the workspace the previous step
+/// left.
+pub async fn run_setup(dir: &Workspace, t: &PackTask) -> Result<(), HarnessError> {
     for cmd in &t.setup {
         let out = tokio::process::Command::new("sh")
             .arg("-c")
@@ -212,7 +381,7 @@ pub async fn prepare_workspace(pack_dir: &Path, t: &PackTask) -> Result<Workspac
             )));
         }
     }
-    Ok(dir)
+    Ok(())
 }
 
 fn copy_dir(from: &Path, to: &Path) -> Result<(), HarnessError> {
@@ -243,10 +412,12 @@ pub fn terminal_pack() -> Pack {
         context_file: None,
         setup: setup.iter().map(|s| s.to_string()).collect(),
         workspace_from: None,
+        continues: None,
         verify: Verify::Shell {
             command: check.into(),
         },
         difficulty: 1000.0,
+        from: None,
     };
     Pack {
         name: "terminal".into(),
@@ -393,11 +564,13 @@ pub fn import_lab(root: &Path, pack_dir: &Path) -> Result<Pack, HarnessError> {
             context_file: None,
             setup: vec!["mkdir -p output".into()],
             workspace_from: Some(ws_rel),
+            continues: None,
             verify: Verify::Judge {
                 rubric,
                 reference: None,
             },
             difficulty: 1400.0,
+            from: None,
         });
     }
     if tasks.is_empty() {
@@ -442,8 +615,8 @@ mod tests {
     fn packs_round_trip_and_generator_packs_are_reproducible() {
         let dir = tempfile::tempdir().unwrap();
         let ws = std::env::temp_dir();
-        let a = Pack::from_generator("corp", "corpus", 3, 0.4, 11, &ws).unwrap();
-        let b = Pack::from_generator("corp", "corpus", 3, 0.4, 11, &ws).unwrap();
+        let a = Pack::from_generator("corp", "corpus", 3, 0.4, 11, &ws, false).unwrap();
+        let b = Pack::from_generator("corp", "corpus", 3, 0.4, 11, &ws, false).unwrap();
         assert_eq!(a, b);
         assert_eq!(a.tasks.len(), 3);
         a.save(dir.path()).unwrap();
@@ -452,6 +625,89 @@ mod tests {
         let g = loaded.to_generated(dir.path(), &loaded.tasks[0]).unwrap();
         assert_eq!(g.generator, "pack:corp");
         assert_eq!(g.kind, "corpus_hours_by_project");
+    }
+
+    #[test]
+    fn lazy_packs_store_generator_references_and_load_the_same_tasks() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = std::env::temp_dir();
+        let full = Pack::from_generator("lb", "logbook", 2, 0.3, 5, &ws, false).unwrap();
+        let lazy = Pack::from_generator("lb", "logbook", 2, 0.3, 5, &ws, true).unwrap();
+        lazy.save(dir.path()).unwrap();
+        let text = std::fs::read_to_string(dir.path().join("pack.json")).unwrap();
+        assert!(text.contains("\"from\""), "{text}");
+        assert!(
+            !text.contains("\"context\""),
+            "lazy packs hold no context: {text}"
+        );
+        assert!(text.len() < 2000, "{}", text.len());
+        let loaded = Pack::load(dir.path()).unwrap();
+        assert_eq!(loaded, lazy);
+        for (l, f) in loaded.tasks.iter().zip(&full.tasks) {
+            assert_eq!(l.task, f.task);
+            assert_eq!(l.context, f.context);
+            assert_eq!(l.verify, f.verify);
+            assert_eq!(l.kind, f.kind);
+            assert!(l.kind.as_deref().unwrap().starts_with("logbook_"));
+        }
+        // A hand-written lazy task may override the generated text.
+        std::fs::write(
+            dir.path().join("pack.json"),
+            r#"{"name":"x","description":"","kind":"k","tasks":[{"id":"t","from":{"generator":"puzzle","dial":0.1,"seed":3},"difficulty":1500}]}"#,
+        )
+        .unwrap();
+        let p = Pack::load(dir.path()).unwrap();
+        assert!(p.tasks[0].task.contains("divisible"), "{}", p.tasks[0].task);
+        assert_eq!(p.tasks[0].difficulty, 1500.0);
+        std::fs::write(
+            dir.path().join("pack.json"),
+            r#"{"name":"x","description":"","kind":"k","tasks":[{"id":"t","from":{"generator":"nope","dial":0.1,"seed":3}}]}"#,
+        )
+        .unwrap();
+        assert!(Pack::load(dir.path()).is_err());
+    }
+
+    #[test]
+    fn episodes_name_earlier_tasks_and_lineage_runs_root_first() {
+        let step = |id: &str, continues: Option<&str>| PackTask {
+            id: id.into(),
+            kind: None,
+            task: "t".into(),
+            context: None,
+            context_file: None,
+            setup: vec![],
+            workspace_from: None,
+            continues: continues.map(str::to_string),
+            verify: Verify::Human,
+            difficulty: 1000.0,
+            from: None,
+        };
+        let mut pack = Pack {
+            name: "ep".into(),
+            description: String::new(),
+            license: String::new(),
+            kind: "k".into(),
+            tasks: vec![
+                step("a", None),
+                step("b", Some("a")),
+                step("c", Some("b")),
+                step("d", None),
+            ],
+        };
+        pack.check().unwrap();
+        let chain: Vec<&str> = pack
+            .lineage(&pack.tasks[2])
+            .iter()
+            .map(|t| t.id.as_str())
+            .collect();
+        assert_eq!(chain, ["a", "b", "c"]);
+        assert_eq!(pack.lineage(&pack.tasks[3]).len(), 1);
+        pack.tasks.push(step("e", Some("zzz")));
+        let err = pack.check().unwrap_err().to_string();
+        assert!(err.contains("continues zzz"), "{err}");
+        pack.tasks.pop();
+        pack.tasks.push(step("a", None));
+        assert!(pack.check().unwrap_err().to_string().contains("duplicate"));
     }
 
     #[test]
