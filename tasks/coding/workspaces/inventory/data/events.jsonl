@@ -1,7 +1,0 @@
-{"id": "e3", "ts": "2026-02-01T09:30:00", "type": "reserve", "order": "o7", "sku": "bolt", "qty": 5}
-{"id": "e1", "ts": "2026-02-01T09:00:00", "type": "add", "sku": "bolt", "qty": 20}
-{"id": "e2", "ts": "2026-02-01T09:10:00", "type": "remove", "sku": "bolt", "qty": 8}
-{"id": "e2", "ts": "2026-02-01T09:10:00", "type": "remove", "sku": "bolt", "qty": 8}
-{"id": "e4", "ts": "2026-02-01T10:00:00", "type": "add", "sku": "nut", "qty": 3}
-{"id": "e5", "ts": "2026-02-01T10:05:00", "type": "reserve", "order": "o8", "sku": "nut", "qty": 3}
-{"id": "e6", "ts": "2026-02-01T10:30:00", "type": "release", "order": "o8"}

@@ -37,7 +37,6 @@ prior. The schema is `Pack` and `PackTask` in
 | `tasks/legal-synthetic` | 20 | `ctx`: a synthetic contract, one clause per row, with planted clause categories among boilerplate, paraphrases and near-miss distractors | `FINAL` with one row per category present, out of six named categories | `exact`: the set of categories, spelled as given | CUAD / Harvey LAB-style clause classification |
 | `tasks/logbook-hard` | 30 | `ctx`: a work log of about 1,650 dated entries (about 118,000 characters, 30,000 tokens) in four phrasings, with entries about the same projects whose numbers are not hours, and `Correction:` entries that amend an earlier entry | `FINAL` answering one of five questions: hours per project, hours per person on one project, the top person, hours per project in one month, distinct people on a project | `exact` | OOLONG at a size that cannot be read once and answered: the context has to be filtered and aggregated |
 | `tasks/memo-rubric` | 20 | `ctx`: a synthetic services agreement of about 40 sections with six planted commercial terms, a rejected proposal in a schedule, and an amendment that supersedes one term | `FINAL` with one row holding a short written memo answering three questions about the terms | `judge`: a separate model grades the memo against a rubric naming each required fact and forbidding the superseded and rejected values, with a reference memo | Harvey LAB-style drafting graded by rubric |
-| `tasks/coding` | 12 | a small Python project in the workspace (four projects: a finance CSV library, word statistics, warehouse stock, day-interval scheduling), visible unit tests, and a task: implement a module, then extend it, then fix a bug report | files edited in place and a one-row `FINAL` | `shell`: the grader's own hidden unit tests for every step so far (visible tests plus edge cases the task text states) | SWE-bench-style code editing, in three-step episodes over one checkout |
 
 The synthetic packs are frozen output of the continual loop's generators:
 `corpus`, `statements` and `contracts` at dial 0.5, seeds 1 to 20, and the
@@ -56,22 +55,7 @@ the generator's hardness knob in `[0, 1]`: it adds notes and distractors for
 paraphrase for `contracts`, entries, phrasings, distractors and corrections
 for `logbook`, and length and the amendment for `memo`. The difficulty prior
 on every task is derived from the dial (800 rating points at 0, 1600 at 1, so
-1200 at 0.5); the terminal tasks carry the 1000 baseline and the coding
-steps 1150 to 1350.
-
-The coding pack is hand-written. Each project is a directory under
-`tasks/coding/workspaces/` copied into the workspace, and its three steps
-form an **episode**: the second and third steps carry `continues` naming the
-step before, so they run in the workspace that step left, files and all,
-rather than in a fresh copy. A step's `setup` runs in the inherited
-workspace; the coding steps use it to check the previous step with the
-grader's hidden tests and, when they fail (the earlier step was not solved,
-or the run was resumed and the workspace is gone), to install the reference
-solution for that step, so each step is measured on its own work. The
-grader (`.grader/run.sh N`) runs its own copies of the tests for steps 1 to
-N, so editing `tests/` changes nothing; the visible tests under `tests/` are
-a subset, and the edge cases the hidden tests add are all stated in the task
-text.
+1200 at 0.5); the terminal tasks carry the 1000 baseline.
 
 The external datasets these packs imitate (OOLONG, Terminal-Bench,
 FinanceBench, CUAD, Harvey LAB) are not redistributed. A Harvey LAB checkout
@@ -113,8 +97,8 @@ of that one action comes back as the next user turn.
 Every task, in every mode, runs in its own fresh temporary workspace,
 seeded from the pack's `workspace_from` directory and `setup` commands, so
 tasks and concurrent runs cannot see each other's files; the exception is a
-task that `continues` another, which inherits that task's workspace (see the
-coding pack above). Every bench session also drops the tables it created
+task that `continues` another, which inherits that task's workspace (an
+episode, see "Adding a pack"). Every bench session also drops the tables it created
 (`ctx`, its `CREATE TABLE` scratch, a child's namespace) when it finishes,
 so the catalog a session sees does not grow with every session before it and
 a recorded run replays from its own fixtures (`drop_session_tables` in the
@@ -136,7 +120,7 @@ model call and is never the solver's own session. Definitions are in
 | `judge` | a separate `judge` model, given a rubric and an optional reference, answers `PASS` |
 | `human` | a person marks it; the task waits in `needs_review` and counts as unsolved until then |
 
-The shipped packs use `shell` (terminal, coding), `exact` (oolong-like,
+The shipped packs use `shell` (terminal), `exact` (oolong-like,
 legal, logbook-hard) and `number` (finance); only `memo-rubric` uses
 `judge`, which sends the rubric, the reference and the answer's cells in
 full to the `judge` alias (Sonnet in the default routing) and costs one
@@ -225,8 +209,7 @@ The plan names four measurements; this is how each maps onto the commands.
   a fresh store (`--db`) for each mode: both Kleene modes read and write
   the same memo, so the second run in a store answers every prompt the
   first run already sent for free, and its calls and dollars are not an
-  independent measurement (two coding steps in the Haiku learning run
-  finished with zero calls this way). One store per pack and mode also
+  independent measurement. One store per pack and mode also
   lets the runs go in parallel, since DuckDB has one writer per file; the
   rows merge afterwards with `kleene trace "ATTACH 'other.duckdb' AS o
   (READ_ONLY); INSERT INTO evals SELECT * FROM o.evals"` (and the same for
@@ -297,7 +280,7 @@ one exists, and a `difficulty` prior, and add a row to
 fields as overrides. Steps of an episode name the step before in
 `continues`, which must be an earlier task of the pack; their `setup` runs
 in the inherited workspace, and a pack whose steps can repair a missing
-predecessor there (as the coding pack does from its reference solutions)
-resumes cleanly with `--resume`. Anything that needs a model to grade should
+predecessor there (install a reference solution when the previous step's
+tests fail) resumes cleanly with `--resume`. Anything that needs a model to grade should
 use `judge` with a written rubric and a reference answer, so the verdict is
 auditable; leave `human` for tasks that truly need a person.
