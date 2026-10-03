@@ -2,7 +2,7 @@
 # a tap, so this file is the template for the `homebrew-kleene` repository
 # (as `Formula/kleene.rb`), after which users run
 #
-#   brew install MarcusElwin/callgebra/kleene
+#   brew install MarcusElwin/kleene/kleene
 #
 # Until that tap exists, or to build the current main from source, put it in
 # a local tap:
@@ -18,33 +18,33 @@
 # can authenticate (gh auth setup-git, or an SSH remote).
 class Kleene < Formula
   desc "Relational algebra for recursive model calls: CallSQL engine, planner, harness and TUI"
-  homepage "https://github.com/MarcusElwin/callgebra"
+  homepage "https://github.com/MarcusElwin/kleene"
   version "0.1.0"
   license "MIT"
 
   head do
-    url "https://github.com/MarcusElwin/callgebra.git", branch: "main"
+    url "https://github.com/MarcusElwin/kleene.git", branch: "main"
     depends_on "rust" => :build
   end
 
   on_macos do
     on_arm do
-      url "https://github.com/MarcusElwin/callgebra/releases/download/v#{version}/kleene-#{version}-aarch64-apple-darwin.tar.gz"
+      url "https://github.com/MarcusElwin/kleene/releases/download/v#{version}/kleene-#{version}-aarch64-apple-darwin.tar.gz"
       sha256 "REPLACE_WITH_SHA256_FROM_RELEASE"
     end
     on_intel do
-      url "https://github.com/MarcusElwin/callgebra/releases/download/v#{version}/kleene-#{version}-x86_64-apple-darwin.tar.gz"
+      url "https://github.com/MarcusElwin/kleene/releases/download/v#{version}/kleene-#{version}-x86_64-apple-darwin.tar.gz"
       sha256 "REPLACE_WITH_SHA256_FROM_RELEASE"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/MarcusElwin/callgebra/releases/download/v#{version}/kleene-#{version}-aarch64-unknown-linux-gnu.tar.gz"
+      url "https://github.com/MarcusElwin/kleene/releases/download/v#{version}/kleene-#{version}-aarch64-unknown-linux-gnu.tar.gz"
       sha256 "REPLACE_WITH_SHA256_FROM_RELEASE"
     end
     on_intel do
-      url "https://github.com/MarcusElwin/callgebra/releases/download/v#{version}/kleene-#{version}-x86_64-unknown-linux-gnu.tar.gz"
+      url "https://github.com/MarcusElwin/kleene/releases/download/v#{version}/kleene-#{version}-x86_64-unknown-linux-gnu.tar.gz"
       sha256 "REPLACE_WITH_SHA256_FROM_RELEASE"
     end
   end

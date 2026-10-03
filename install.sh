@@ -1,19 +1,19 @@
 #!/bin/sh
 # Install the kleene binary from a GitHub release.
 #
-#   curl -fsSL https://raw.githubusercontent.com/MarcusElwin/callgebra/main/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/MarcusElwin/kleene/main/install.sh | sh
 #
 # Options (environment variables):
 #   KLEENE_VERSION   tag to install, e.g. v0.1.0 (default: latest release)
 #   KLEENE_INSTALL   directory to install into (default: ~/.local/bin,
 #                       or /usr/local/bin when run as root)
-#   KLEENE_REPO      owner/repo (default: MarcusElwin/callgebra)
+#   KLEENE_REPO      owner/repo (default: MarcusElwin/kleene)
 #   GITHUB_TOKEN        (or GH_TOKEN) a token with read access; needed while
 #                       the repository is private, and raises the API rate
 #                       limit otherwise
 set -eu
 
-REPO="${KLEENE_REPO:-MarcusElwin/callgebra}"
+REPO="${KLEENE_REPO:-MarcusElwin/kleene}"
 BIN="kleene"
 
 say() { printf '%s\n' "$*" >&2; }
