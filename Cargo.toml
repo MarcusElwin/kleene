@@ -21,7 +21,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.88"
 license = "MIT"
-repository = "https://github.com/MarcusElwin/callgebra"
+repository = "https://github.com/MarcusElwin/kleene"
 authors = ["Marcus Elwin"]
 
 [workspace.dependencies]

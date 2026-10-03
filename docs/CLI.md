@@ -21,7 +21,7 @@ aarch64) are attached to every tagged release. Pick one of the three.
 ### curl
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MarcusElwin/callgebra/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/MarcusElwin/kleene/main/install.sh | sh
 ```
 
 The script detects your OS and architecture, downloads the latest release
@@ -33,7 +33,7 @@ destination is not on your `PATH`. Environment variables it honours:
 |---|---|---|
 | `KLEENE_VERSION` | Install a specific tag, e.g. `v0.1.0` | latest release |
 | `KLEENE_INSTALL` | Destination directory | `~/.local/bin` |
-| `KLEENE_REPO` | `owner/repo` to fetch from | `MarcusElwin/callgebra` |
+| `KLEENE_REPO` | `owner/repo` to fetch from | `MarcusElwin/kleene` |
 | `GITHUB_TOKEN` (or `GH_TOKEN`) | Token with read access to the repository; required while it is private, and raises the API rate limit otherwise | unset |
 
 Read it before piping it into a shell if that is your habit:
@@ -49,14 +49,14 @@ prints the token the GitHub CLI holds:
 ```bash
 export GITHUB_TOKEN="$(gh auth token)"
 curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github.raw" \
-  "https://api.github.com/repos/MarcusElwin/callgebra/contents/install.sh?ref=main" | sh
+  "https://api.github.com/repos/MarcusElwin/kleene/contents/install.sh?ref=main" | sh
 ```
 
 or, letting `gh` handle the authentication:
 
 ```bash
 export GITHUB_TOKEN="$(gh auth token)"
-gh api -H "Accept: application/vnd.github.raw" repos/MarcusElwin/callgebra/contents/install.sh | sh
+gh api -H "Accept: application/vnd.github.raw" repos/MarcusElwin/kleene/contents/install.sh | sh
 ```
 
 The script downloads release assets through the GitHub API with the same
@@ -72,7 +72,7 @@ build from a checkout: `cargo install --path crates/kleene`.
 ### Homebrew
 
 ```bash
-brew install MarcusElwin/callgebra/kleene
+brew install MarcusElwin/kleene/kleene
 ```
 
 This installs from the tap `MarcusElwin/homebrew-kleene`, whose formula is
@@ -96,7 +96,7 @@ public repository.
 ### cargo
 
 ```bash
-cargo install --git https://github.com/MarcusElwin/callgebra kleene
+cargo install --git https://github.com/MarcusElwin/kleene kleene
 ```
 
 Needs Rust 1.88 or newer and about ten minutes: DuckDB is compiled from source
@@ -112,8 +112,8 @@ works instead:
 ```bash
 cargo install --path crates/kleene                    # from a checkout you already have
 CARGO_NET_GIT_FETCH_WITH_CLI=true \
-  cargo install --git https://github.com/MarcusElwin/callgebra kleene   # let the git CLI authenticate
-cargo install --git ssh://git@github.com/MarcusElwin/callgebra kleene   # over SSH
+  cargo install --git https://github.com/MarcusElwin/kleene kleene   # let the git CLI authenticate
+cargo install --git ssh://git@github.com/MarcusElwin/kleene kleene   # over SSH
 ```
 
 ### Check
@@ -575,7 +575,7 @@ Shipped packs are described in [`tasks/README.md`](../tasks/README.md).
 ## Working from source
 
 ```bash
-git clone https://github.com/MarcusElwin/callgebra && cd callgebra
+git clone https://github.com/MarcusElwin/kleene && cd kleene
 cargo build --release                       # first build compiles DuckDB: ~10 min, ~4 GB
 ./target/release/kleene --help
 cargo run -- repl -c "SELECT 42 AS answer"   # debug build, same engine

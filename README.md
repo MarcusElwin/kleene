@@ -48,13 +48,13 @@ and Linux (x86_64, aarch64).
 
 ```bash
 # curl: detects OS and architecture, verifies the SHA-256, installs to ~/.local/bin
-curl -fsSL https://raw.githubusercontent.com/MarcusElwin/callgebra/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/MarcusElwin/kleene/main/install.sh | sh
 
 # Homebrew
-brew install MarcusElwin/callgebra/kleene
+brew install MarcusElwin/kleene/kleene
 
 # From source (compiles DuckDB the first time, about ten minutes)
-cargo install --git https://github.com/MarcusElwin/callgebra kleene
+cargo install --git https://github.com/MarcusElwin/kleene kleene
 ```
 
 `KLEENE_VERSION=v0.1.0` pins the installer to a tag and
@@ -492,7 +492,7 @@ Not yet, in the order they are planned:
 ## Developing
 
 ```bash
-git clone https://github.com/MarcusElwin/callgebra && cd callgebra
+git clone https://github.com/MarcusElwin/kleene && cd kleene
 cargo build                                                          # DuckDB compiles once, ~10 min
 cargo test --workspace --all-features
 cargo clippy --workspace --all-targets --all-features -- -D warnings
@@ -558,10 +558,10 @@ relies on, is collected in [`docs/RESEARCH.md`](docs/RESEARCH.md).
 
 <!-- Badge and repository links. If the repository is renamed, update the
      owner/repo below (and the install URLs above) in one place. -->
-[ci-badge]: https://github.com/MarcusElwin/callgebra/actions/workflows/ci.yml/badge.svg
-[ci-link]: https://github.com/MarcusElwin/callgebra/actions/workflows/ci.yml
-[release-badge]: https://img.shields.io/github/v/release/MarcusElwin/callgebra?include_prereleases&label=release
-[release-link]: https://github.com/MarcusElwin/callgebra/releases
+[ci-badge]: https://github.com/MarcusElwin/kleene/actions/workflows/ci.yml/badge.svg
+[ci-link]: https://github.com/MarcusElwin/kleene/actions/workflows/ci.yml
+[release-badge]: https://img.shields.io/github/v/release/MarcusElwin/kleene?include_prereleases&label=release
+[release-link]: https://github.com/MarcusElwin/kleene/releases
 [msrv-badge]: https://img.shields.io/badge/rust-1.88%2B-orange?logo=rust
 [msrv-link]: rust-toolchain.toml
 [duckdb-badge]: https://img.shields.io/badge/DuckDB-inside-fff100?logo=duckdb&logoColor=black
