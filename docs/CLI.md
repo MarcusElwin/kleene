@@ -161,6 +161,10 @@ kleene setup
 without a configured provider, and `/setup` at the TUI's prompt opens it
 again at any time to add or change keys; saving there asks the running
 daemon to reload, so the next run uses the new keys without a restart.
+Web search is the fourth row of the first step: tick it with space, and
+its own page asks for the service and the key.
+
+![The web search page of the setup wizard](screenshots/setup-web-search.png)
 Non-interactive forms for scripts:
 
 ```bash
