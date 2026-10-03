@@ -2,6 +2,7 @@
 
 use crate::args::{check_arity, text};
 use crate::paths::{resolve, Access, Resolved};
+use crate::tools::convert::{write_document, DELIVERABLE_EXTENSIONS};
 use crate::{Signature, Tool, ToolContext, ToolError};
 use kleene_core::{Batch, DataType, Field, Schema, Value, Volatility};
 use std::sync::{Arc, OnceLock};
@@ -65,7 +66,7 @@ impl Tool for WriteFile {
     }
 
     fn description(&self) -> &str {
-        "create or replace a workspace file with the given text; returns path and bytes written"
+        "create or replace a workspace file with the given text (a .docx is built from Markdown, a .xlsx from CSV); returns path and bytes written"
     }
 
     async fn call(&self, args: &[Value], ctx: &ToolContext) -> Result<Batch, ToolError> {
@@ -73,14 +74,22 @@ impl Tool for WriteFile {
         let path = text(args, 0, "path")?;
         let contents = text(args, 1, "text")?;
         let resolved = prepare_write(ctx, path)?;
-        std::fs::write(&resolved.abs, contents)?;
+        let ext = std::path::Path::new(path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase());
+        let bytes = if ext.is_some_and(|e| DELIVERABLE_EXTENSIONS.contains(&e.as_str())) {
+            // A .docx is built from the Markdown given, a .xlsx from CSV, so
+            // a deliverable named like a document is one.
+            write_document(&resolved.abs, contents).await? as i64
+        } else {
+            std::fs::write(&resolved.abs, contents)?;
+            contents.len() as i64
+        };
         record_written(ctx, &resolved)?;
         Ok(Batch {
             schema: self.schema(),
-            rows: vec![vec![
-                Value::Text(resolved.rel),
-                Value::Int(contents.len() as i64),
-            ]],
+            rows: vec![vec![Value::Text(resolved.rel), Value::Int(bytes)]],
         })
     }
 }

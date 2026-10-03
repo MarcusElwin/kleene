@@ -2,6 +2,7 @@
 
 #![forbid(unsafe_code)]
 
+mod hf;
 mod pretty;
 
 use clap::{Parser, Subcommand};
@@ -182,6 +183,16 @@ enum BenchAction {
         /// Only the first N tasks.
         #[arg(long)]
         limit: Option<usize>,
+        /// A seeded sample of N tasks, in pack order, instead of the whole pack.
+        #[arg(long)]
+        sample: Option<usize>,
+        /// Seed for --sample; the same seed picks the same tasks.
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+        /// Export every task's output/ here in the layout Harvey LAB's
+        /// evaluator reads (point it at the checkout's results/ directory).
+        #[arg(long)]
+        outputs: Option<PathBuf>,
         /// Record every model response as a fixture under this directory.
         #[arg(long)]
         record: Option<PathBuf>,
@@ -221,10 +232,69 @@ enum BenchAction {
     },
     /// Import a Harvey LAB checkout into a pack (matter folders copied in).
     ImportLab {
-        /// LAB root containing task directories with task.json.
+        /// LAB tasks root (`<checkout>/tasks`, or one practice area under it).
         root: PathBuf,
         /// Output directory, e.g. tasks/harvey-lab.
         out: PathBuf,
+        /// Import a seeded sample of N tasks instead of every task.
+        #[arg(long)]
+        sample: Option<usize>,
+        /// Seed for --sample; the same seed picks the same tasks.
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+    },
+    /// Import OOLONG-synth questions (Bertsch et al. 2025, MIT) from Hugging
+    /// Face into a pack with the `oolong` oracle; the default is the
+    /// trec_coarse split at 128k tokens the RLM paper reports on.
+    ImportOolong {
+        /// Output directory, e.g. tasks/oolong-trec.
+        out: PathBuf,
+        /// Source classification dataset: trec_coarse or spam (validation
+        /// split); agnews, app_reviews, formality, imdb, metaphors, multinli,
+        /// negation or yahoo (test split).
+        #[arg(long, default_value = "trec_coarse")]
+        dataset: String,
+        /// Context length bucket in tokens: 1024, 2048, … 4194304.
+        #[arg(long, default_value_t = 131072)]
+        context_len: i64,
+        /// Split: validation or test; inferred from --dataset when omitted.
+        #[arg(long)]
+        split: Option<String>,
+        /// At most this many questions, in dataset order.
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+        /// Skip this many matching questions first.
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+        /// Read rows from a JSON file (an array of row objects as the
+        /// datasets-server returns them) instead of the network.
+        #[arg(long)]
+        from_json: Option<PathBuf>,
+    },
+    /// Import contract redlining examples (UmaiTech
+    /// legal-contract-*-redlining, CC BY 4.0, synthetic redlines over
+    /// CUAD) from Hugging Face into a pack with the `redline` oracle.
+    ImportRedlining {
+        /// Output directory, e.g. tasks/redlining-1k.
+        out: PathBuf,
+        /// Which dataset: `1k` (GPT-5 mix, 992 examples), `10k` (GPT-4.1)
+        /// or a full Hugging Face repo id in the same layout.
+        #[arg(long, default_value = "1k")]
+        dataset: String,
+        /// Split: test (the held-out 10%) or train.
+        #[arg(long, default_value = "test")]
+        split: String,
+        /// At most this many examples, in dataset order.
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+        /// Skip this many examples first.
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+        /// Read rows from a JSON file (an array of `alpaca`-config row
+        /// objects as the datasets-server returns them) instead of the
+        /// network.
+        #[arg(long)]
+        from_json: Option<PathBuf>,
     },
     /// Accuracy, calls and dollars per pack and mode over every recorded run.
     Report,
@@ -270,8 +340,11 @@ enum BenchAction {
 }
 
 async fn run_bench(cli: &Cli, action: &BenchAction) -> anyhow::Result<()> {
-    use kleene_harness::learn::bench::{sparkline, Mode};
-    use kleene_harness::learn::packs::{import_lab, terminal_pack, Pack};
+    use anyhow::Context;
+    use kleene_harness::learn::bench::{sparkline, BenchOptions, Mode};
+    use kleene_harness::learn::packs::{
+        import_lab, oolong_pack, redlining_pack, terminal_pack, OolongRow, Pack, RedlineRow,
+    };
     use kleene_harness::learn::{Learn, LearnConfig};
     match action {
         BenchAction::Build {
@@ -309,11 +382,131 @@ async fn run_bench(cli: &Cli, action: &BenchAction) -> anyhow::Result<()> {
             );
             return Ok(());
         }
-        BenchAction::ImportLab { root, out } => {
-            let pack = import_lab(root, out)?;
+        BenchAction::ImportLab {
+            root,
+            out,
+            sample,
+            seed,
+        } => {
+            let pack = import_lab(root, out, sample.map(|k| (k, *seed)))?;
             pack.save(out)?;
             println!(
                 "imported {} LAB tasks to {}",
+                pack.tasks.len(),
+                out.join("pack.json").display()
+            );
+            return Ok(());
+        }
+        BenchAction::ImportOolong {
+            out,
+            dataset,
+            context_len,
+            split,
+            limit,
+            offset,
+            from_json,
+        } => {
+            let rows = match from_json {
+                Some(path) => {
+                    let text = std::fs::read_to_string(path)
+                        .with_context(|| format!("reading {}", path.display()))?;
+                    let raw: Vec<serde_json::Value> = serde_json::from_str(&text)
+                        .with_context(|| format!("{} is not a JSON array", path.display()))?;
+                    raw.into_iter()
+                        .map(|r| r.get("row").cloned().unwrap_or(r))
+                        .collect()
+                }
+                None => {
+                    let split = split.clone().unwrap_or_else(|| {
+                        if matches!(dataset.as_str(), "trec_coarse" | "spam") {
+                            "validation".to_string()
+                        } else {
+                            "test".to_string()
+                        }
+                    });
+                    fetch_oolong_rows(dataset, *context_len, &split, *offset + *limit).await?
+                }
+            };
+            let rows: Vec<OolongRow> = rows
+                .into_iter()
+                .map(serde_json::from_value)
+                .collect::<Result<_, _>>()
+                .context("a row is not an OOLONG-synth row")?;
+            // Shard order is not id order; sort so the same slice gives the
+            // same pack whichever way the rows arrived.
+            let mut rows: Vec<OolongRow> = rows
+                .into_iter()
+                .filter(|r| &r.dataset == dataset && r.context_len == *context_len)
+                .collect();
+            rows.sort_by_key(|r| r.id);
+            let rows: Vec<OolongRow> = rows.into_iter().skip(*offset).take(*limit).collect();
+            let name = out
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "oolong".to_string());
+            let pack = oolong_pack(&name, &rows, out)?;
+            pack.save(out)?;
+            println!(
+                "imported {} OOLONG questions ({dataset} at {context_len} tokens) to {}",
+                pack.tasks.len(),
+                out.join("pack.json").display()
+            );
+            return Ok(());
+        }
+        BenchAction::ImportRedlining {
+            out,
+            dataset,
+            split,
+            limit,
+            offset,
+            from_json,
+        } => {
+            let repo = match dataset.as_str() {
+                "1k" => "UmaiTech/legal-contract-qpt5-redlining-1k".to_string(),
+                "10k" => "UmaiTech/legal-contract-gpt41-redlining-10k".to_string(),
+                other => other.to_string(),
+            };
+            let rows = match from_json {
+                Some(path) => {
+                    let text = std::fs::read_to_string(path)
+                        .with_context(|| format!("reading {}", path.display()))?;
+                    let raw: Vec<serde_json::Value> = serde_json::from_str(&text)
+                        .with_context(|| format!("{} is not a JSON array", path.display()))?;
+                    raw.into_iter()
+                        .map(|r| r.get("row").cloned().unwrap_or(r))
+                        .skip(*offset)
+                        .take(*limit)
+                        .collect()
+                }
+                None => {
+                    let client = reqwest::Client::builder()
+                        .timeout(std::time::Duration::from_secs(600))
+                        .build()?;
+                    eprintln!("{repo} alpaca/{split}: rows {offset}..{}", offset + limit);
+                    hf::rows_in(
+                        &client,
+                        &repo,
+                        "alpaca",
+                        split,
+                        *offset as u64,
+                        *limit as u64,
+                    )
+                    .await?
+                }
+            };
+            let rows: Vec<RedlineRow> = rows
+                .into_iter()
+                .map(serde_json::from_value)
+                .collect::<Result<_, _>>()
+                .context("a row is not an alpaca-format redlining row")?;
+            let name = out
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "redlining".to_string());
+            let pack = redlining_pack(&name, &repo, &rows)?;
+            pack.save(out)?;
+            println!(
+                "imported {} redlining tasks ({repo}, {split}) to {}",
                 pack.tasks.len(),
                 out.join("pack.json").display()
             );
@@ -350,6 +543,9 @@ async fn run_bench(cli: &Cli, action: &BenchAction) -> anyhow::Result<()> {
             pack,
             mode,
             limit,
+            sample,
+            seed,
+            outputs,
             resume,
             ..
         } => {
@@ -357,7 +553,17 @@ async fn run_bench(cli: &Cli, action: &BenchAction) -> anyhow::Result<()> {
                 .ok_or_else(|| anyhow::anyhow!("mode must be learning, frozen or plain"))?;
             let p = Pack::load(pack)?;
             let report = learn
-                .bench_from(pack, &p, mode, *limit, resume.as_deref())
+                .bench_with(
+                    pack,
+                    &p,
+                    mode,
+                    BenchOptions {
+                        limit: *limit,
+                        sample: sample.map(|k| (k, *seed)),
+                        outputs: outputs.clone(),
+                        resume: resume.clone(),
+                    },
+                )
                 .await?;
             for r in &report.rows {
                 println!(
@@ -383,6 +589,19 @@ curve {}",
                 report.dollars(),
                 sparkline(&report.curve(5))
             );
+            if let Some(dir) = outputs {
+                println!(
+                    "outputs exported under {}; score them with LAB's evaluator (LAB_ROOT is the checkout whose results/ this is):",
+                    dir.display()
+                );
+                for r in report.rows.iter().filter(|r| r.exported.is_some()) {
+                    let run_id = r.exported.as_deref().unwrap_or_default();
+                    let task = run_id.rsplitn(3, '/').nth(2).unwrap_or(run_id);
+                    println!(
+                        "  uv run python -m lab_core.evaluation.run_eval --run-id {run_id} --task {task}"
+                    );
+                }
+            }
         }
         BenchAction::Report => print!("{}", learn.bench_summary().await?.render_table(200)),
         BenchAction::Curve { run, window } => {
@@ -455,7 +674,9 @@ curve {}",
         }
         BenchAction::Build { .. }
         | BenchAction::Terminal { .. }
-        | BenchAction::ImportLab { .. } => {}
+        | BenchAction::ImportLab { .. }
+        | BenchAction::ImportOolong { .. }
+        | BenchAction::ImportRedlining { .. } => {}
     }
     Ok(())
 }
@@ -809,6 +1030,55 @@ fn db_path(cli: &Cli) -> PathBuf {
     cli.db
         .clone()
         .unwrap_or_else(|| PathBuf::from(".kleene").join("run.duckdb"))
+}
+
+/// The first `want` OOLONG-synth rows with this dataset and context length,
+/// in split order, read through the parquet footers and the rows API
+/// (see `hf`).
+async fn fetch_oolong_rows(
+    dataset: &str,
+    context_len: i64,
+    split: &str,
+    want: usize,
+) -> anyhow::Result<Vec<serde_json::Value>> {
+    const REPO: &str = "oolongbench/oolong-synth";
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(600))
+        .build()?;
+    let shards = hf::shards(&client, REPO, split).await?;
+    eprintln!("{REPO} {split}: {} shards; reading footers", shards.len());
+    let mut groups = vec![];
+    let mut first_row = 0u64;
+    for (shard, size) in &shards {
+        let g = hf::row_groups(&client, REPO, shard, *size, first_row).await?;
+        first_row += g.iter().map(|x| x.rows).sum::<u64>();
+        groups.extend(g);
+    }
+    let candidates: Vec<_> = groups
+        .iter()
+        .filter(|g| g.may_hold(dataset, context_len))
+        .collect();
+    eprintln!(
+        "{} row groups over {first_row} rows; {} may hold {dataset} at {context_len} tokens",
+        groups.len(),
+        candidates.len()
+    );
+    let mut out = vec![];
+    for g in candidates {
+        if out.len() >= want {
+            break;
+        }
+        eprintln!("  rows {}..{} of {}", g.offset, g.offset + g.rows, g.shard);
+        let rows = hf::rows(&client, REPO, split, g.offset, g.rows).await?;
+        out.extend(rows.into_iter().filter(|r| {
+            r.get("dataset").and_then(|d| d.as_str()) == Some(dataset)
+                && r.get("context_len").and_then(|c| c.as_i64()) == Some(context_len)
+        }));
+    }
+    if out.is_empty() {
+        anyhow::bail!("no rows with dataset {dataset} and context_len {context_len} in {split}");
+    }
+    Ok(out)
 }
 
 fn open_store(cli: &Cli) -> anyhow::Result<kleene_store::DuckDbStore> {
