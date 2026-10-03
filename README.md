@@ -472,9 +472,14 @@ Not yet, in the order they are planned:
 
 - **A first release.** Tag `v0.1.0`, publish the binaries, make the
   repository public so the install lines above work for everyone.
-- **Numbers against a real model.** Every figure in the write-up comes from
-  the deterministic suite; the first real runs are one
-  `bench run --record` away from being replayable by everyone after.
+- **Harder packs.** The first real runs (Claude Opus 5.5, 27 September
+  2026) solved every task of every pack in every mode, so they compare cost
+  only: the playbook cuts calls per task (oolong 4.9 to 3.9, legal 12.7 to
+  10.6), the replay gate costs more than it saves at twenty tasks a pack,
+  and the one-call tool-calling baseline is cheapest wherever the context
+  fits in a prompt. The table and the reading are in
+  [the write-up](docs/WRITEUP.md#4-what-the-benchmarks-measured); the
+  per-task rows, the report and the plots are under `plots/`.
 - **Engine gaps** listed in [the write-up](docs/WRITEUP.md#5-honest-gaps):
   proxy thresholds calibrated from a sample instead of declared, and the
   learned cost model persisted as versioned tables rather than sampled per

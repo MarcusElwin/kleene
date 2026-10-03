@@ -198,6 +198,16 @@ fixtures back, so the same run reproduces offline with no key and no cost.
 This is how the first real-model run becomes repeatable for everyone after.
 The recording directory is yours to choose and to check in; it is the same
 `ReplayProvider` mechanism the test suite uses for its wire-format fixtures.
+A replay serves a `frozen` or `plain` run exactly; a `learning` run cannot
+be replayed from a frozen run's fixtures, because the playbook it shows
+changes the prompt and so the fingerprint, so record each mode separately.
+
+A task that ends in an error without a single token spent means the
+provider never answered (no credit, a bad key, a dead endpoint). The run
+stops there with the reason in `bench_runs.note` instead of recording the
+rest of the pack as failures, and `bench run --resume <run-id>` continues
+that run at the first task without a row, keeping the rows before it. The
+run must be the same pack and mode.
 
 ## Reading results
 

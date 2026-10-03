@@ -7,3 +7,6 @@
 # agent worktrees
 .claude/worktrees/
 /.claude/
+
+# recorded model replies from bench runs; re-record with bench run --record
+/fixtures/

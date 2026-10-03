@@ -169,7 +169,8 @@ pub struct Workspace {
 }
 
 impl Workspace {
-    fn create() -> Result<Self, HarnessError> {
+    /// A fresh empty directory under the system temp dir, removed on drop.
+    pub(crate) fn create() -> Result<Self, HarnessError> {
         let path = std::env::temp_dir().join(format!("kleene-ws-{}", kleene_core::RunId::new()));
         std::fs::create_dir_all(&path)
             .map_err(|e| HarnessError::Config(format!("cannot create a workspace: {e}")))?;
