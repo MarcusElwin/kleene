@@ -163,11 +163,26 @@ pub async fn row_groups(
     Ok(out)
 }
 
-/// `length` rows of a split from `offset`, as the datasets-server returns
-/// them (each element is the row object). At most 100 per call.
+/// `length` rows of the default config's split from `offset`, as the
+/// datasets-server returns them (each element is the row object).
 pub async fn rows(
     client: &reqwest::Client,
     repo: &str,
+    split: &str,
+    offset: u64,
+    length: u64,
+) -> anyhow::Result<Vec<serde_json::Value>> {
+    rows_in(client, repo, "default", split, offset, length).await
+}
+
+/// `length` rows of one config's split from `offset`, as the
+/// datasets-server returns them (each element is the row object). The
+/// server hands out at most 100 per call, so this pages; it stops early at
+/// the end of the split.
+pub async fn rows_in(
+    client: &reqwest::Client,
+    repo: &str,
+    config: &str,
     split: &str,
     offset: u64,
     length: u64,
@@ -182,7 +197,7 @@ pub async fn rows(
             .get(url)
             .query(&[
                 ("dataset", repo),
-                ("config", "default"),
+                ("config", config),
                 ("split", split),
                 ("offset", &at.to_string()),
                 ("length", &n.to_string()),

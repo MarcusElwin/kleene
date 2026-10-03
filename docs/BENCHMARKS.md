@@ -74,8 +74,8 @@ a subset, and the edge cases the hidden tests add are all stated in the task
 text.
 
 The external datasets these packs imitate (OOLONG, Terminal-Bench,
-FinanceBench, CUAD, Harvey LAB) are not redistributed. Two of them import
-on demand:
+FinanceBench, CUAD, Harvey LAB) are not redistributed. Three import on
+demand:
 
 - **OOLONG** (Bertsch et al. 2025, MIT): `bench import-oolong <out-dir>`
   downloads questions from the Hugging Face dataset `oolongbench/oolong-synth`
@@ -122,6 +122,24 @@ on demand:
   seed run the same tasks. One practice area
   (`import-lab <checkout>/tasks/antitrust-competition …`, 33 tasks) is the
   other cheap start.
+- **Contract redlining** (UmaiTech, CC BY 4.0): `bench import-redlining
+  <out-dir>` downloads examples from `UmaiTech/legal-contract-qpt5-redlining-1k`
+  (`--dataset 1k`, 992 redlines by a GPT-5 model mix, the default) or
+  `UmaiTech/legal-contract-gpt41-redlining-10k` (`--dataset 10k`, GPT-4.1),
+  synthetic client-protective redlines of clauses from the CUAD contracts:
+  ten contract types, ten US jurisdictions, the liability, termination,
+  warranty, IP and governing-law categories. The default is the held-out
+  `test` split (10%, 100 examples of the 1k set), read from the `alpaca`
+  config; `--split train`, `--limit` and `--offset` pick another slice and
+  `--from-json <file>` builds the pack from rows saved earlier. Each
+  example becomes one task: the task text names the clause category,
+  contract type, jurisdiction and expected risk reduction and quotes the
+  original clause, and asks for `FINAL` over one row with `redline` (the
+  full revised clause) and `rationale`. The oracle is `redline`, which holds
+  the reference redline, its rationale and the specific changes it lists
+  (below). The reference is itself model-written, so the pack measures
+  agreement with a GPT redline, not with a lawyer; it is the dataset's own
+  framing and it is cheap enough to run the whole test split.
 
 ## Modes
 
@@ -180,6 +198,7 @@ model call and is never the solver's own session. Definitions are in
 | `sat` | a 3-SAT verdict is right: `SAT` with a satisfying assignment, or `UNSAT` when brute force agrees |
 | `judge` | a separate `judge` model, given a rubric and an optional reference, answers `PASS` |
 | `oolong` | an OOLONG answer, scored as the paper scores it: a label, date, user id or comparison on exact match (any of the listed values when the dataset lists a tie), a number with partial credit `0.75^|expected − got|`. The task passes only at a score of 1; the score itself is in `detail` (`oolong score 0.562: expected 1542, got 1540`), so a run's mean OOLONG score is a query over `evals.detail` |
+| `redline` | a contract redline: the `redline` cell of the first row must differ from the original clause (an unchanged clause fails outright), and it is scored on `redline recall`, the share of the reference redline's new terms (words of four letters or more that the original lacks) the answer carries. With a judge configured the judge decides, given the original clause, the reference redline with its rationale and the specific changes it lists, and `detail` carries both (`redline recall 0.83; judge: PASS …`); without one the task passes at a recall of 0.50, so an imported redlining pack can be run for free at the cost of a lexical oracle |
 | `human` | a person marks it; the task waits in `needs_review` and counts as unsolved until then |
 
 The shipped packs use `shell` (terminal, coding), `exact` (oolong-like,
@@ -193,7 +212,8 @@ a hedged pass is not a verdict. A rubric-judged verdict is as good as its
 rubric: the memo rubrics name every fact the memo must state, with its
 number, and forbid the superseded and rejected values, so the judge's job
 is checking, not appraising. An imported OOLONG pack uses `oolong`, which
-needs no judge either.
+needs no judge either; an imported redlining pack uses `redline`, which
+uses the judge when there is one and its recall score when there is not.
 
 ## What is recorded
 

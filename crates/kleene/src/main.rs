@@ -271,6 +271,31 @@ enum BenchAction {
         #[arg(long)]
         from_json: Option<PathBuf>,
     },
+    /// Import contract redlining examples (UmaiTech
+    /// legal-contract-*-redlining, CC BY 4.0, synthetic redlines over
+    /// CUAD) from Hugging Face into a pack with the `redline` oracle.
+    ImportRedlining {
+        /// Output directory, e.g. tasks/redlining-1k.
+        out: PathBuf,
+        /// Which dataset: `1k` (GPT-5 mix, 992 examples), `10k` (GPT-4.1)
+        /// or a full Hugging Face repo id in the same layout.
+        #[arg(long, default_value = "1k")]
+        dataset: String,
+        /// Split: test (the held-out 10%) or train.
+        #[arg(long, default_value = "test")]
+        split: String,
+        /// At most this many examples, in dataset order.
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+        /// Skip this many examples first.
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+        /// Read rows from a JSON file (an array of `alpaca`-config row
+        /// objects as the datasets-server returns them) instead of the
+        /// network.
+        #[arg(long)]
+        from_json: Option<PathBuf>,
+    },
     /// Accuracy, calls and dollars per pack and mode over every recorded run.
     Report,
     /// The learning curve of one run as a sparkline and rolling mean.
@@ -295,7 +320,9 @@ enum BenchAction {
 async fn run_bench(cli: &Cli, action: &BenchAction) -> anyhow::Result<()> {
     use anyhow::Context;
     use kleene_harness::learn::bench::{sparkline, BenchOptions, Mode};
-    use kleene_harness::learn::packs::{import_lab, oolong_pack, terminal_pack, OolongRow, Pack};
+    use kleene_harness::learn::packs::{
+        import_lab, oolong_pack, redlining_pack, terminal_pack, OolongRow, Pack, RedlineRow,
+    };
     use kleene_harness::learn::{Learn, LearnConfig};
     match action {
         BenchAction::Build {
@@ -399,6 +426,65 @@ async fn run_bench(cli: &Cli, action: &BenchAction) -> anyhow::Result<()> {
             pack.save(out)?;
             println!(
                 "imported {} OOLONG questions ({dataset} at {context_len} tokens) to {}",
+                pack.tasks.len(),
+                out.join("pack.json").display()
+            );
+            return Ok(());
+        }
+        BenchAction::ImportRedlining {
+            out,
+            dataset,
+            split,
+            limit,
+            offset,
+            from_json,
+        } => {
+            let repo = match dataset.as_str() {
+                "1k" => "UmaiTech/legal-contract-qpt5-redlining-1k".to_string(),
+                "10k" => "UmaiTech/legal-contract-gpt41-redlining-10k".to_string(),
+                other => other.to_string(),
+            };
+            let rows = match from_json {
+                Some(path) => {
+                    let text = std::fs::read_to_string(path)
+                        .with_context(|| format!("reading {}", path.display()))?;
+                    let raw: Vec<serde_json::Value> = serde_json::from_str(&text)
+                        .with_context(|| format!("{} is not a JSON array", path.display()))?;
+                    raw.into_iter()
+                        .map(|r| r.get("row").cloned().unwrap_or(r))
+                        .skip(*offset)
+                        .take(*limit)
+                        .collect()
+                }
+                None => {
+                    let client = reqwest::Client::builder()
+                        .timeout(std::time::Duration::from_secs(600))
+                        .build()?;
+                    eprintln!("{repo} alpaca/{split}: rows {offset}..{}", offset + limit);
+                    hf::rows_in(
+                        &client,
+                        &repo,
+                        "alpaca",
+                        split,
+                        *offset as u64,
+                        *limit as u64,
+                    )
+                    .await?
+                }
+            };
+            let rows: Vec<RedlineRow> = rows
+                .into_iter()
+                .map(serde_json::from_value)
+                .collect::<Result<_, _>>()
+                .context("a row is not an alpaca-format redlining row")?;
+            let name = out
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "redlining".to_string());
+            let pack = redlining_pack(&name, &repo, &rows)?;
+            pack.save(out)?;
+            println!(
+                "imported {} redlining tasks ({repo}, {split}) to {}",
                 pack.tasks.len(),
                 out.join("pack.json").display()
             );
@@ -532,7 +618,8 @@ curve {}",
         BenchAction::Build { .. }
         | BenchAction::Terminal { .. }
         | BenchAction::ImportLab { .. }
-        | BenchAction::ImportOolong { .. } => {}
+        | BenchAction::ImportOolong { .. }
+        | BenchAction::ImportRedlining { .. } => {}
     }
     Ok(())
 }

@@ -62,6 +62,24 @@ pub enum Verify {
         /// Whether the answer is a number, which earns partial credit.
         numeric: bool,
     },
+    /// A contract redline (the UmaiTech `legal-contract-*-redlining`
+    /// datasets): the answer's `redline` cell must be a revision of the
+    /// original clause, and it is scored on how many of the reference
+    /// redline's new terms it carries (`redline recall`). With a judge
+    /// configured the judge decides, reading the reference redline, its
+    /// rationale and the changes it lists; without one the task passes at a
+    /// recall of 0.5 or more.
+    Redline {
+        /// The clause as the counterparty drafted it.
+        original: String,
+        /// The reference redline (a GPT-generated, client-protective
+        /// revision), not ground truth but what the dataset scores against.
+        redline: String,
+        /// The reference's rationale.
+        rationale: String,
+        /// The specific changes the reference lists.
+        changes: Vec<String>,
+    },
     /// A person decides; the task waits in `needs_review`.
     Human,
 }
@@ -85,6 +103,7 @@ impl Verify {
             Verify::Judge { .. } => "judge",
             Verify::Number { .. } => "number",
             Verify::Oolong { .. } => "oolong",
+            Verify::Redline { .. } => "redline",
             Verify::Human => "human",
         }
     }
@@ -119,6 +138,12 @@ impl Verify {
                 answer: want,
                 numeric,
             } => oolong(want, *numeric, answer),
+            Verify::Redline {
+                original,
+                redline,
+                rationale,
+                changes,
+            } => redline_check(original, redline, rationale, changes, answer, judge).await,
             Verify::Human => Verdict {
                 pass: false,
                 detail: "awaiting human review".into(),
@@ -242,6 +267,116 @@ fn oolong(want: &[String], numeric: bool, answer: &Batch) -> Verdict {
     Verdict {
         pass: score >= 1.0 - 1e-9,
         detail: format!("oolong score {score:.3}: {why}"),
+    }
+}
+
+/// The candidate redline: the `redline` (or `redlined_clause`, `clause`,
+/// `revised`) column of the first row, else its first cell.
+fn redline_cell(answer: &Batch) -> Option<String> {
+    let names = answer.schema.names();
+    let col = names
+        .iter()
+        .position(|n| {
+            matches!(
+                n.to_ascii_lowercase().as_str(),
+                "redline" | "redlined_clause" | "redlined" | "clause" | "revised" | "revision"
+            )
+        })
+        .unwrap_or(0);
+    let v = answer.rows.first()?.get(col)?;
+    let text = match v {
+        Value::Null => String::new(),
+        other => other.render(),
+    };
+    let text = text.trim();
+    (!text.is_empty()).then(|| text.to_string())
+}
+
+/// Words of four letters or more, lower-cased, as a set.
+fn terms(text: &str) -> std::collections::BTreeSet<String> {
+    text.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric() && c != '\'')
+        .map(|w| w.trim_matches('\''))
+        .filter(|w| w.len() >= 4)
+        .map(str::to_string)
+        .collect()
+}
+
+/// Whitespace- and case-insensitive text, for "did it change anything".
+fn squash(text: &str) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+/// How much of the reference redline's new vocabulary (terms in the
+/// reference that the original clause lacks) the candidate carries, in
+/// `0..=1`. A reference that only deletes has nothing to recall, and any
+/// changed candidate scores 1.
+pub fn redline_recall(original: &str, reference: &str, candidate: &str) -> f64 {
+    let before = terms(original);
+    let added: Vec<String> = terms(reference).difference(&before).cloned().collect();
+    if added.is_empty() {
+        return 1.0;
+    }
+    let got = terms(candidate);
+    added.iter().filter(|t| got.contains(*t)).count() as f64 / added.len() as f64
+}
+
+/// The rubric the judge grades a redline against.
+pub fn redline_rubric(original: &str, changes: &[String]) -> String {
+    let listed = if changes.is_empty() {
+        String::from("- the changes the reference redline makes")
+    } else {
+        changes
+            .iter()
+            .map(|c| format!("- {c}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    format!(
+        "The answer is a redline of this clause on behalf of the client:\n\n{original}\n\nPASS when the answer's redline is a complete, usable revision of that clause (clause text, not commentary or a diff), drafted in the client's favour, and it makes the substance of these changes, in its own words if it likes:\n{listed}\n\nFAIL when the redline leaves one of those risks unaddressed, drafts against the client, introduces a plain legal error, or is not clause text. Differences in wording, order or added protections beyond the reference do not matter."
+    )
+}
+
+async fn redline_check(
+    original: &str,
+    reference: &str,
+    rationale: &str,
+    changes: &[String],
+    answer: &Batch,
+    judge: Option<(Arc<dyn Provider>, String)>,
+) -> Verdict {
+    let Some(candidate) = redline_cell(answer) else {
+        return Verdict {
+            pass: false,
+            detail: "redline recall 0.00: empty answer".into(),
+        };
+    };
+    if squash(&candidate) == squash(original) {
+        return Verdict {
+            pass: false,
+            detail: "redline recall 0.00: the redline leaves the clause unchanged".into(),
+        };
+    }
+    let recall = redline_recall(original, reference, &candidate);
+    match judge {
+        Some((p, alias)) => {
+            let rubric = redline_rubric(original, changes);
+            let reference = format!("{reference}\n\nRationale: {rationale}");
+            let v = judge_call(p, &alias, &rubric, Some(&reference), answer).await;
+            Verdict {
+                pass: v.pass,
+                detail: format!("redline recall {recall:.2}; judge: {}", v.detail),
+            }
+        }
+        None => Verdict {
+            pass: recall >= 0.5,
+            detail: format!(
+                "redline recall {recall:.2} of the reference's new terms (no judge configured; passes at 0.50)"
+            ),
+        },
     }
 }
 
@@ -665,6 +800,60 @@ mod tests {
             vec![vec![Value::from("location")], vec![Value::from("entity")]],
         );
         assert!(!rt.block_on(tie.check(&outside, &ws, None)).pass);
+    }
+
+    #[test]
+    fn redline_oracle_wants_a_changed_clause_and_scores_recall() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let ws = std::env::temp_dir();
+        let original = "This Agreement shall be governed by the laws of the State of Texas.";
+        let v = Verify::Redline {
+            original: original.into(),
+            redline: "This Agreement shall be governed by the laws of the State of Illinois, without regard to its conflicts of law principles.".into(),
+            rationale: "Aligns governing law with the client.".into(),
+            changes: vec!["modification: Illinois law, conflicts exclusion".into()],
+        };
+        // Unchanged text (whitespace and case aside) is not a redline.
+        let same = batch(
+            &["redline", "rationale"],
+            vec![vec![
+                Value::from(original.to_uppercase()),
+                Value::from("fine"),
+            ]],
+        );
+        let r = rt.block_on(v.check(&same, &ws, None));
+        assert!(!r.pass);
+        assert!(r.detail.contains("unchanged"), "{}", r.detail);
+        // Carrying the reference's new terms passes without a judge.
+        let good = batch(
+            &["rationale", "redline"],
+            vec![vec![
+                Value::from("client is in Illinois"),
+                Value::from("This Agreement shall be governed by the laws of the State of Illinois without regard to conflicts of law principles."),
+            ]],
+        );
+        let r = rt.block_on(v.check(&good, &ws, None));
+        assert!(r.pass, "{}", r.detail);
+        assert!(r.detail.starts_with("redline recall 1.00"), "{}", r.detail);
+        // A change in another direction scores low and fails.
+        let other = batch(
+            &["redline"],
+            vec![vec![Value::from(
+                "This Agreement shall be governed by the laws of the State of Nevada.",
+            )]],
+        );
+        let r = rt.block_on(v.check(&other, &ws, None));
+        assert!(!r.pass);
+        assert!(r.detail.starts_with("redline recall 0.00"), "{}", r.detail);
+        assert!(
+            !rt.block_on(v.check(&batch(&["redline"], vec![]), &ws, None))
+                .pass
+        );
+        assert_eq!(
+            redline_recall("a b", "a b", "something else entirely here"),
+            1.0
+        );
+        assert!(redline_rubric(original, &[]).contains(original));
     }
 
     #[test]

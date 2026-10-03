@@ -793,6 +793,8 @@ pub fn oolong_pack(name: &str, rows: &[OolongRow], pack_dir: &Path) -> Result<Pa
             workspace_from: None,
             verify: Verify::Oolong { answer, numeric },
             difficulty,
+            continues: None,
+            from: None,
         });
     }
     let datasets: std::collections::BTreeSet<&str> =
@@ -814,6 +816,185 @@ pub fn oolong_pack(name: &str, rows: &[OolongRow], pack_dir: &Path) -> Result<Pa
         ),
         license: "OOLONG (Bertsch et al. 2025), MIT, github.com/abertsch72/oolong; downloaded on import, not redistributed".into(),
         kind,
+        tasks,
+    })
+}
+
+/// One example of the UmaiTech `legal-contract-*-redlining-*` datasets in
+/// their `alpaca` config: an instruction, an input naming the clause's
+/// category, contract type and jurisdiction and quoting the original
+/// clause, and the reference output (redlined clause, rationale, specific
+/// changes).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct RedlineRow {
+    /// The instruction ("Redline this contract clause to protect the client's interests…").
+    #[serde(default)]
+    pub instruction: String,
+    /// `Clause Category: …\nContract Type: …\nJurisdiction: …\n\nOriginal Clause:\n…`.
+    pub input: String,
+    /// `Redlined Clause:\n…\n\nRationale:\n…\n\nSpecific Changes:\n- …`.
+    pub output: String,
+    /// Clause category, contract type, jurisdiction and risk reduction.
+    #[serde(default)]
+    pub metadata: RedlineMeta,
+}
+
+/// The metadata the redlining datasets attach to every example.
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+pub struct RedlineMeta {
+    /// CUAD clause category (`liability`, `termination`, `governing law`, …).
+    #[serde(default)]
+    pub clause_category: String,
+    /// `employment_agreement`, `nda`, `license_agreement`, …
+    #[serde(default)]
+    pub contract_type: String,
+    /// The client's jurisdiction (a US state).
+    #[serde(default)]
+    pub jurisdiction: String,
+    /// `low`, `medium` or `high`.
+    #[serde(default)]
+    pub risk_reduction: String,
+}
+
+/// The parts of a redlining example the oracle and the task text need.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct RedlineParts {
+    /// The clause as drafted.
+    pub original: String,
+    /// The reference redline.
+    pub redline: String,
+    /// The reference rationale.
+    pub rationale: String,
+    /// The specific changes the reference lists, one per entry.
+    pub changes: Vec<String>,
+}
+
+/// The text after `heading` up to the next blank-line-separated heading
+/// among `stops`, trimmed.
+fn section<'a>(text: &'a str, heading: &str, stops: &[&str]) -> Option<&'a str> {
+    let start = text.find(heading)? + heading.len();
+    let rest = &text[start..];
+    let end = stops
+        .iter()
+        .filter_map(|h| rest.find(h))
+        .min()
+        .unwrap_or(rest.len());
+    Some(rest[..end].trim())
+}
+
+/// Split a row into its original clause, reference redline, rationale and
+/// changes. Rows whose input or output lack the clause are an error, since
+/// a task without a clause cannot be set.
+pub fn redline_parts(row: &RedlineRow) -> Result<RedlineParts, HarnessError> {
+    let original = section(&row.input, "Original Clause:", &[])
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| HarnessError::Config("a redlining row has no Original Clause".into()))?;
+    let stops = ["Rationale:", "Specific Changes:", "Risk Reduction:"];
+    let redline = section(&row.output, "Redlined Clause:", &stops)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| HarnessError::Config("a redlining row has no Redlined Clause".into()))?;
+    let rationale = section(
+        &row.output,
+        "Rationale:",
+        &["Specific Changes:", "Risk Reduction:"],
+    )
+    .unwrap_or_default();
+    let changes = section(&row.output, "Specific Changes:", &["Risk Reduction:"])
+        .unwrap_or_default()
+        .lines()
+        .map(|l| l.trim().trim_start_matches(['-', '*', '•']).trim())
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect();
+    Ok(RedlineParts {
+        original: original.to_string(),
+        redline: redline.to_string(),
+        rationale: rationale.to_string(),
+        changes,
+    })
+}
+
+/// Build a pack from redlining rows (the UmaiTech `legal-contract-*`
+/// datasets, CC BY 4.0, derived from CUAD). Every row becomes a task with
+/// the clause in the task text and the `redline` oracle holding the
+/// reference; the rows keep their order, so the same rows give the same
+/// pack. `source` names the dataset for the description and license line.
+pub fn redlining_pack(name: &str, source: &str, rows: &[RedlineRow]) -> Result<Pack, HarnessError> {
+    if rows.is_empty() {
+        return Err(HarnessError::Config("no redlining rows to import".into()));
+    }
+    let slug = |s: &str| -> String {
+        s.chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() {
+                    c.to_ascii_lowercase()
+                } else {
+                    '-'
+                }
+            })
+            .collect::<String>()
+            .split('-')
+            .filter(|p| !p.is_empty())
+            .collect::<Vec<_>>()
+            .join("-")
+    };
+    let mut tasks = Vec::with_capacity(rows.len());
+    let mut categories = std::collections::BTreeSet::new();
+    for (i, r) in rows.iter().enumerate() {
+        let parts = redline_parts(r)?;
+        let m = &r.metadata;
+        let category = if m.clause_category.is_empty() {
+            "clause".to_string()
+        } else {
+            m.clause_category.clone()
+        };
+        categories.insert(category.clone());
+        let words = parts.original.split_whitespace().count() as f64;
+        // Longer clauses and more changes are harder: 1200 for a one-line
+        // clause with one change, +100 per doubling of either.
+        let difficulty = 1200.0
+            + 100.0 * (words.max(16.0) / 16.0).log2()
+            + 100.0 * (parts.changes.len().max(1) as f64).log2();
+        let risk = if m.risk_reduction.is_empty() {
+            String::new()
+        } else {
+            format!("Expected risk reduction: {}.\n", m.risk_reduction)
+        };
+        tasks.push(PackTask {
+            id: format!("{:04}-{}", i + 1, slug(&category)),
+            kind: Some(format!("redline_{}", slug(&category).replace('-', "_"))),
+            task: format!(
+                "Redline this {category} clause from a {contract} to protect the client's interests, under {jurisdiction} law. Identify the risks to the client and revise the clause to remove them, keeping it a complete, usable clause.\n{risk}\nOriginal clause:\n{clause}\n\nAnswer with FINAL over one row and two columns: redline (the full revised clause text, not a diff or commentary) and rationale (why each change protects the client).",
+                contract = m.contract_type.replace('_', " "),
+                jurisdiction = if m.jurisdiction.is_empty() { "the client's" } else { m.jurisdiction.as_str() },
+                clause = parts.original,
+            ),
+            context: None,
+            context_file: None,
+            setup: vec![],
+            workspace_from: None,
+            verify: Verify::Redline {
+                original: parts.original,
+                redline: parts.redline,
+                rationale: parts.rationale,
+                changes: parts.changes,
+            },
+            difficulty,
+            continues: None,
+            from: None,
+        });
+    }
+    Ok(Pack {
+        name: name.to_string(),
+        description: format!(
+            "Contract redlining: {} clauses ({}) from {source}, each revised for the client against a GPT-generated reference redline",
+            tasks.len(),
+            categories.iter().cloned().collect::<Vec<_>>().join(", ")
+        ),
+        license: format!(
+            "{source} (UmaiTech, CC BY 4.0; synthetic redlines over CUAD, Hendrycks et al. 2021, CC BY 4.0); downloaded on import, not redistributed"
+        ),
+        kind: "redline".into(),
         tasks,
     })
 }
@@ -1088,6 +1269,76 @@ mod tests {
         );
         assert_eq!(oolong_answer_values("2023-05"), vec!["2023-05"]);
         assert!(oolong_answer_values("[]").is_empty());
+    }
+
+    #[test]
+    fn redlining_rows_become_tasks_with_the_reference_in_the_oracle() {
+        let rows: Vec<RedlineRow> = serde_json::from_str(
+            r#"[{"instruction": "Redline this contract clause to protect the client's interests.",
+                 "input": "Clause Category: governing law\nContract Type: employment_agreement\nJurisdiction: Illinois\n\nOriginal Clause:\nThis Agreement is entered into in the State of Texas and shall be interpreted according to the laws of the State of Texas.",
+                 "output": "Redlined Clause:\nThis Agreement shall be governed by the laws of the State of Illinois, without regard to its conflicts of law principles.\n\nRationale:\nAligns governing law with the client's jurisdiction.\n\nSpecific Changes:\n- modification: Illinois law and a conflict-of-law exclusion.\n",
+                 "metadata": {"clause_category": "governing law", "contract_type": "employment_agreement", "jurisdiction": "Illinois", "risk_reduction": "medium"}},
+                {"input": "Original Clause:\nSupplier's liability is unlimited.",
+                 "output": "Redlined Clause:\nSupplier's liability is capped at fees paid.\n\nRationale:\nCaps exposure.",
+                 "metadata": {"clause_category": "liability"}}]"#,
+        )
+        .unwrap();
+        let pack = redlining_pack(
+            "redlining-1k",
+            "UmaiTech/legal-contract-qpt5-redlining-1k",
+            &rows,
+        )
+        .unwrap();
+        pack.check().unwrap();
+        assert_eq!(pack.tasks.len(), 2);
+        assert_eq!(pack.tasks[0].id, "0001-governing-law");
+        assert_eq!(pack.tasks[0].kind.as_deref(), Some("redline_governing_law"));
+        assert!(pack.tasks[0].task.contains("under Illinois law"));
+        assert!(pack.tasks[0].task.contains("State of Texas"));
+        assert!(pack.tasks[0].task.contains("risk reduction: medium"));
+        match &pack.tasks[0].verify {
+            Verify::Redline {
+                original,
+                redline,
+                rationale,
+                changes,
+            } => {
+                assert!(original.starts_with("This Agreement is entered"));
+                assert!(redline.ends_with("principles."));
+                assert_eq!(
+                    rationale,
+                    "Aligns governing law with the client's jurisdiction."
+                );
+                assert_eq!(
+                    changes,
+                    &["modification: Illinois law and a conflict-of-law exclusion.".to_string()]
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+        // Missing sections degrade gracefully; a missing clause does not.
+        match &pack.tasks[1].verify {
+            Verify::Redline {
+                changes, rationale, ..
+            } => {
+                assert!(changes.is_empty());
+                assert_eq!(rationale, "Caps exposure.");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(pack.tasks[1].difficulty < pack.tasks[0].difficulty);
+        let bad = RedlineRow {
+            input: "no clause here".into(),
+            ..rows[1].clone()
+        };
+        assert!(redlining_pack("x", "y", &[bad]).is_err());
+        // The pack survives a save/load round trip with its oracle intact.
+        let dir = tempfile::tempdir().unwrap();
+        pack.save(dir.path()).unwrap();
+        assert_eq!(
+            Pack::load(dir.path()).unwrap().tasks[0].verify,
+            pack.tasks[0].verify
+        );
     }
 
     #[test]

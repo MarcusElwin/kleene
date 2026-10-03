@@ -555,6 +555,7 @@ modes, oracles, report columns and plots measure is in
 | `bench terminal <out-dir>` | Write the built-in Terminal-Bench-style pack |
 | `bench import-lab <checkout>/tasks <out-dir> [--sample N --seed S]` | Import a Harvey LAB checkout (or one practice area under it) into a pack with the shipped rubrics; `--sample` imports a seeded sample and copies only its documents |
 | `bench import-oolong <out-dir> [--dataset trec_coarse] [--context-len 131072] [--limit 50] [--offset 0] [--split validation\|test] [--from-json <file>]` | Import OOLONG-synth questions from Hugging Face into a pack with the `oolong` oracle; the defaults are the RLM paper's trec_coarse 128k split |
+| `bench import-redlining <out-dir> [--dataset 1k\|10k\|<repo>] [--split test\|train] [--limit 100] [--offset 0] [--from-json <file>]` | Import UmaiTech's contract redlining examples (synthetic redlines over CUAD, CC BY 4.0) from Hugging Face into a pack with the `redline` oracle; the default is the 1k set's held-out test split |
 | `bench report` | Accuracy, calls and dollars per pack and mode |
 | `bench curve <run-id> [--window 5]` | The learning curve of one run as a sparkline and rolling mean |
 | `bench csv` | Every eval row as CSV on stdout |
@@ -562,6 +563,7 @@ modes, oracles, report columns and plots measure is in
 
 ```bash
 kleene bench import-oolong tasks/oolong-trec && kleene bench run tasks/oolong-trec --mode frozen
+kleene bench import-redlining tasks/redlining-1k && kleene bench run tasks/redlining-1k --mode plain
 kleene bench run tasks/oolong-like --mode frozen --record fixtures/oolong
 kleene bench run tasks/oolong-like --mode learning --replay fixtures/oolong
 kleene bench run tasks/terminal --mode plain
