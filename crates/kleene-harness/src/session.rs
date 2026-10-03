@@ -17,10 +17,13 @@ use kleene_core::{
     Batch, Budget, BudgetUsage, CallId, CallKind, Catalog, DataType, Field, FunctionDef, RunId,
     Schema, SessionId, StatementId, TableSource, Value,
 };
+use kleene_exec::CallSink;
 use kleene_exec::ExecError;
 use kleene_llm::{CompletionRequest, Message, Provider, ProviderOptions, StopReason};
 use kleene_store::duckdb::literal;
 use kleene_store::{DuckDbStore, StoreError};
+use kleene_tools::mcp::{McpServerConfig, McpStatus};
+use kleene_tools::skills::Skill;
 use kleene_tools::{catalog_entries, standard_tools, ToolContext, ToolRegistry, WebSearchBackend};
 use kleene_trace::{TraceEvent, Tracer};
 use serde::{Deserialize, Serialize};
@@ -96,6 +99,28 @@ pub struct HarnessConfig {
     /// Off by default so a REPL keeps what it built; benchmark runs turn it
     /// on.
     pub drop_session_tables: bool,
+    /// A shell command run in the workspace when the root session writes
+    /// `FINAL`; a non-zero exit refuses the `FINAL` and renders the output
+    /// back, so a code task cannot end while its tests fail.
+    pub finish_check: Option<String>,
+    /// How many recent turns stay rendered in full in the transcript. Older
+    /// turns are folded: their results move to the session table
+    /// `turns(n, sql, result)` and a one-line stub stays in their place. The
+    /// fold boundary moves in steps of this size so the cached prefix is
+    /// stable between folds.
+    pub keep_turns: usize,
+    /// MCP servers to connect; their tools join the catalog.
+    pub mcp: Vec<McpServerConfig>,
+    /// Skills the sessions can read. `None` discovers them (built-in, the
+    /// user's, the project's); `Some` uses exactly these.
+    pub skills: Option<Vec<Skill>>,
+    /// Where the user's `mcp.json` and `skills/` live; `None` means the
+    /// kleene config directory.
+    pub config_dir: Option<PathBuf>,
+    /// Project instructions for the prompt. `None` reads `KLEENE.md`,
+    /// `AGENTS.md` or `CLAUDE.md` from the workspace root; `Some("")` means
+    /// none.
+    pub instructions: Option<String>,
 }
 
 impl Default for HarnessConfig {
@@ -117,9 +142,18 @@ impl Default for HarnessConfig {
             no_memo: false,
             web_search: None,
             drop_session_tables: false,
+            finish_check: None,
+            keep_turns: 8,
+            mcp: vec![],
+            skills: None,
+            config_dir: None,
+            instructions: None,
         }
     }
 }
+
+/// Characters of a project instructions file that go into the prompt.
+pub const INSTRUCTIONS_MAX_CHARS: usize = 12_000;
 
 /// Watches sessions as they run. Every hook has a no-op default; the
 /// call hooks fire from inside [`LiveSink`], so an observer sees the
@@ -163,6 +197,10 @@ pub struct Turn {
     pub results: Vec<Rendered>,
     /// The user message sent back.
     pub feedback: String,
+    /// The session's `plan` table after this turn, latest status per step
+    /// in first-seen order; empty when there is no plan.
+    #[serde(default)]
+    pub plan: Vec<(String, String)>,
 }
 
 /// Where a session stands.
@@ -237,6 +275,12 @@ pub struct Harness {
     cfg: HarnessConfig,
     tools: Arc<ToolRegistry>,
     tool_entries: Vec<FunctionDef>,
+    /// What connecting each MCP server produced.
+    mcp_status: Vec<McpStatus>,
+    /// The skills every session can read.
+    skills: Arc<Vec<Skill>>,
+    /// Project instructions rendered into the prompt, if any.
+    instructions: Option<String>,
     /// Live sessions, for cancellation and inspection.
     live: std::sync::Mutex<HashMap<SessionId, Arc<LiveSink>>>,
 }
@@ -247,15 +291,53 @@ impl Harness {
     /// Open a harness over a store.
     pub async fn new(store: DuckDbStore, cfg: HarnessConfig) -> Result<Arc<Self>, HarnessError> {
         store.execute(SESSIONS_DDL).await?;
-        let tools = Arc::new(standard_tools());
+        let mut registry = standard_tools();
+        let (mcp_tools, mcp_status) = kleene_tools::mcp::connect_all(&cfg.mcp).await;
+        for t in mcp_tools {
+            registry.register(t);
+        }
+        let tools = Arc::new(registry);
         let tool_entries = catalog_entries(&tools);
+        let config_dir = cfg
+            .config_dir
+            .clone()
+            .unwrap_or_else(kleene_llm::ProviderSettings::dir);
+        let skills = Arc::new(match &cfg.skills {
+            Some(list) => list.clone(),
+            None => kleene_tools::skills::discover(&cfg.workspace, &config_dir),
+        });
+        let instructions = match &cfg.instructions {
+            Some(text) if text.trim().is_empty() => None,
+            Some(text) => Some(text.clone()),
+            None => {
+                kleene_tools::skills::project_instructions(&cfg.workspace, INSTRUCTIONS_MAX_CHARS)
+            }
+        };
         Ok(Arc::new(Self {
             store,
             cfg,
             tools,
             tool_entries,
+            mcp_status,
+            skills,
+            instructions,
             live: std::sync::Mutex::new(HashMap::new()),
         }))
+    }
+
+    /// What connecting each configured MCP server produced.
+    pub fn mcp_status(&self) -> &[McpStatus] {
+        &self.mcp_status
+    }
+
+    /// The skills sessions can read, sorted by name.
+    pub fn skills(&self) -> &[Skill] {
+        &self.skills
+    }
+
+    /// The project instructions in the prompt, if any.
+    pub fn instructions(&self) -> Option<&str> {
+        self.instructions.as_deref()
     }
 
     /// Sessions currently running.
@@ -447,12 +529,14 @@ impl Harness {
         let namespace = (meta.depth > 0).then(|| short_id(meta.id));
         let store_sink =
             StoreSink::with_namespace(self.store.clone(), base_catalog, namespace).await?;
+        let mut tool_ctx = ToolContext::new(self.cfg.workspace.clone())
+            .with_web_search(self.cfg.web_search.clone());
+        tool_ctx.skills = self.skills.clone();
         let sink = Arc::new(LiveSink::new(
             store_sink,
             self.cfg.provider.clone(),
             self.tools.clone(),
-            ToolContext::new(self.cfg.workspace.clone())
-                .with_web_search(self.cfg.web_search.clone()),
+            tool_ctx,
             self.cfg.tracer.clone(),
         ));
         sink.set_meta(meta.clone()).await;
@@ -475,6 +559,16 @@ impl Harness {
                 load_context(&sink, ctx).await?;
             }
             context_summary = Some(ContextSummary::of(ctx, paragraphs(ctx).len() as u64));
+        }
+        sink.store()
+            .create_table("turns", turns_schema(), true)
+            .await?;
+        if fresh {
+            // A root session shares the store's `turns` with earlier runs;
+            // start it empty so the model only sees its own history.
+            self.store
+                .execute(&format!("DELETE FROM {}", sink.store().physical("turns")))
+                .await?;
         }
         let repl = Repl::from_sink(
             sink.clone(),
@@ -510,11 +604,17 @@ impl Harness {
             max_depth: self.cfg.max_depth,
             max_turns: record.max_turns,
             playbook: &self.cfg.playbook,
+            skills: &self.skills,
+            instructions: self.instructions.as_deref(),
         });
+        let check = (meta.depth == 0)
+            .then(|| self.cfg.finish_check.as_deref())
+            .flatten();
         if fresh {
             record.messages.push(Message::user(prompt::task_message(
                 &task,
                 context_summary.as_ref(),
+                check,
             )));
         }
         self.persist(&meta, parent, &task, SessionStatus::Running, None, &record)
@@ -522,6 +622,7 @@ impl Harness {
 
         let started = Instant::now();
         let mut transcript = vec![];
+        let mut last_sql: Option<String> = None;
         let outcome = loop {
             if record.turns >= record.max_turns {
                 break Outcome::TurnsExhausted;
@@ -545,7 +646,7 @@ impl Harness {
                 alias: record.role.model.clone(),
                 model: String::new(),
                 system: system.clone(),
-                messages: record.messages.clone(),
+                messages: fold_messages(&record.messages, self.cfg.keep_turns),
                 tools: vec![],
                 output_schema: None,
                 max_tokens: self.cfg.max_tokens,
@@ -602,25 +703,45 @@ impl Harness {
                     (vec![], prompt::nudge(reason))
                 }
                 Some(sql) => {
-                    let results = repl.submit(sql).await;
+                    let mut results = repl.submit(sql).await;
+                    if let Some(cmd) = check {
+                        if let Some(r) = results.iter_mut().find(|r| r.is_final) {
+                            if let Some(refusal) = self.finish_check(&sink, cmd).await {
+                                r.text = format!("{}\n{refusal}", r.text.trim_end());
+                                r.is_final = false;
+                                r.is_error = true;
+                                r.rows = None;
+                            }
+                        }
+                    }
                     let (budget, used) = sink.budget_state().await;
-                    let feedback = prompt::render_results(
+                    let mut feedback = prompt::render_results(
                         &results,
                         turn_no,
                         record.max_turns,
                         &used,
                         &budget.remaining(&used),
                     );
+                    if last_sql
+                        .as_deref()
+                        .is_some_and(|prev| prev.trim() == sql.trim())
+                    {
+                        feedback.push_str(prompt::REPEATED);
+                    }
                     (results, feedback)
                 }
             };
+            last_sql = sql.clone();
+            let plan = self.read_plan(&sink).await;
             let turn = Turn {
                 n: turn_no,
                 reply,
                 sql,
                 results,
                 feedback: feedback.clone(),
+                plan,
             };
+            self.record_turn(&sink, &turn).await;
             let final_rows = turn
                 .results
                 .iter()
@@ -684,6 +805,82 @@ impl Harness {
             usage,
             transcript,
         })
+    }
+
+    /// Run the finish check; `Some(text)` when it fails, to refuse the
+    /// `FINAL` with.
+    async fn finish_check(&self, sink: &LiveSink, cmd: &str) -> Option<String> {
+        let shell = sink.tools().get("shell")?.clone();
+        let args = [
+            Value::Text(cmd.to_string()),
+            Value::Null,
+            Value::Int(FINISH_CHECK_TIMEOUT_MS),
+        ];
+        let (code, output) = match shell.call(&args, sink.tool_ctx()).await {
+            Ok(b) => {
+                let row = b.rows.first()?;
+                let code = row.get(2).and_then(|v| v.as_int()).unwrap_or(-1);
+                let out = format!(
+                    "{}\n{}",
+                    row.first().map(|v| v.render()).unwrap_or_default(),
+                    row.get(1).map(|v| v.render()).unwrap_or_default()
+                );
+                (code, out)
+            }
+            Err(e) => (-1, e.to_string()),
+        };
+        if code == 0 {
+            return None;
+        }
+        let lines: Vec<&str> = output.lines().filter(|l| !l.trim().is_empty()).collect();
+        let tail = lines[lines.len().saturating_sub(FINISH_CHECK_LINES)..].join("\n");
+        Some(format!(
+            "FINAL refused: the check `{cmd}` exited {code}. Its output ends:\n{tail}\nThe task is not done while this fails: read the failure, fix the code, run `{cmd}` yourself, then FINAL again."
+        ))
+    }
+
+    /// The session's `plan` table, latest status per step, if it has one.
+    async fn read_plan(&self, sink: &LiveSink) -> Vec<(String, String)> {
+        let has_plan = {
+            let cat = sink.catalog();
+            let cat = cat.read().await;
+            cat.table("plan").is_some_and(|t| {
+                let names: Vec<&str> = t.schema.fields.iter().map(|f| f.name.as_str()).collect();
+                names.contains(&"step") && names.contains(&"status")
+            })
+        };
+        if !has_plan {
+            return vec![];
+        }
+        let sql = format!("SELECT step, status FROM {}", sink.store().physical("plan"));
+        let Ok(batch) = self.store.query(&sql).await else {
+            return vec![];
+        };
+        let mut plan: Vec<(String, String)> = vec![];
+        for row in &batch.rows {
+            let step = row.first().map(|v| v.render()).unwrap_or_default();
+            let status = row.get(1).map(|v| v.render()).unwrap_or_default();
+            match plan.iter_mut().find(|(s, _)| *s == step) {
+                Some(entry) => entry.1 = status,
+                None => plan.push((step, status)),
+            }
+        }
+        plan
+    }
+
+    /// Append the turn to the session's `turns` table.
+    async fn record_turn(&self, sink: &LiveSink, turn: &Turn) {
+        let batch = Batch {
+            schema: turns_schema(),
+            rows: vec![vec![
+                Value::Int(i64::from(turn.n)),
+                Value::Text(turn.sql.clone().unwrap_or_default()),
+                Value::Text(turn.feedback.clone()),
+            ]],
+        };
+        if let Err(e) = sink.store().insert("turns", batch).await {
+            tracing::warn!("turns table: {e}");
+        }
     }
 
     async fn persist(
@@ -977,6 +1174,59 @@ fn diff(before: &BudgetUsage, after: &BudgetUsage, wall: std::time::Duration) ->
     }
 }
 
+/// Time the finish check may run.
+const FINISH_CHECK_TIMEOUT_MS: i64 = 300_000;
+/// Lines of check output a refusal shows.
+const FINISH_CHECK_LINES: usize = 40;
+
+/// The schema of the session table `turns(n, sql, result)`.
+fn turns_schema() -> Arc<Schema> {
+    Arc::new(Schema::new(vec![
+        Field::not_null("n", DataType::Int),
+        Field::not_null("sql", DataType::Text),
+        Field::not_null("result", DataType::Text),
+    ]))
+}
+
+/// The transcript as the model sees it: the task, then every turn, with
+/// the results of all but the most recent `keep` turns replaced by a
+/// one-line stub pointing at `turns`. The number of folded turns is a
+/// multiple of `keep`, so the folded prefix only changes every `keep`
+/// turns and stays cacheable in between. `keep == 0` folds nothing.
+pub fn fold_messages(messages: &[Message], keep: usize) -> Vec<Message> {
+    let pairs = messages.len().saturating_sub(1) / 2;
+    if keep == 0 || pairs < 2 * keep {
+        return messages.to_vec();
+    }
+    let folded = (pairs / keep - 1) * keep;
+    let mut out = Vec::with_capacity(messages.len());
+    for (i, m) in messages.iter().enumerate() {
+        if i == 0 || i % 2 == 1 || (i - 1) / 2 >= folded {
+            out.push(m.clone());
+            continue;
+        }
+        let n = (i - 1) / 2 + 1;
+        let text = m
+            .content
+            .iter()
+            .filter_map(|c| match c {
+                kleene_llm::ContentBlock::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let note = if text.contains("Statement failed") {
+            "; a statement failed"
+        } else {
+            ""
+        };
+        out.push(Message::user(format!(
+            "(turn {n} result folded{note}; SELECT result FROM turns WHERE n = {n} shows it)"
+        )));
+    }
+    out
+}
+
 fn is_budget_error(text: &str) -> bool {
     text.contains("budget exceeded") || text.contains("exceeds max depth")
 }
@@ -992,6 +1242,63 @@ pub fn short_id(id: SessionId) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn transcript(turns: usize) -> Vec<Message> {
+        let mut m = vec![Message::user("# Task")];
+        for n in 1..=turns {
+            m.push(Message::assistant(format!("```sql\nSELECT {n}\n```")));
+            m.push(Message::user(if n == 2 {
+                "x\nStatement failed; later statements in that reply were not run.\nturn"
+                    .to_string()
+            } else {
+                format!("{n}\n1 row\nturn {n}/30")
+            }));
+        }
+        m
+    }
+
+    fn text_of(m: &Message) -> String {
+        m.content
+            .iter()
+            .filter_map(|c| match c {
+                kleene_llm::ContentBlock::Text { text } => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn folding_keeps_recent_turns_and_moves_in_steps() {
+        // Fewer than 2 * keep turns: nothing folds.
+        let m = transcript(15);
+        assert_eq!(fold_messages(&m, 8), m);
+        // 16 turns, keep 8: the first 8 results fold, replies stay.
+        let m = transcript(16);
+        let f = fold_messages(&m, 8);
+        assert_eq!(f.len(), m.len());
+        assert_eq!(text_of(&f[0]), "# Task");
+        assert_eq!(text_of(&f[1]), "```sql\nSELECT 1\n```");
+        assert_eq!(
+            text_of(&f[2]),
+            "(turn 1 result folded; SELECT result FROM turns WHERE n = 1 shows it)"
+        );
+        assert_eq!(
+            text_of(&f[4]),
+            "(turn 2 result folded; a statement failed; SELECT result FROM turns WHERE n = 2 shows it)"
+        );
+        assert!(text_of(&f[16]).starts_with("(turn 8"), "turn 8 is folded");
+        assert_eq!(text_of(&f[18]), "9\n1 row\nturn 9/30", "turn 9 is kept");
+        // Up to 23 turns the same 8 stay folded (a stable prefix); at 24 the
+        // next 8 fold.
+        let f23 = fold_messages(&transcript(23), 8);
+        assert!(text_of(&f23[16]).starts_with("(turn 8"));
+        assert!(text_of(&f23[18]).starts_with("9\n"));
+        let f24 = fold_messages(&transcript(24), 8);
+        assert!(text_of(&f24[32]).starts_with("(turn 16"));
+        assert!(text_of(&f24[34]).starts_with("17\n"));
+        // keep 0 disables folding.
+        assert_eq!(fold_messages(&m, 0), m);
+    }
 
     #[test]
     fn budgets_intersect_dimensionwise() {

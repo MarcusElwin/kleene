@@ -314,6 +314,9 @@ Files under the working directory:
 | `.kleene/run.duckdb` | the store: your tables, `memo`, `trace_*`, `kleene_sessions`, learning and bench tables |
 | `.kleene/daemon.sock` | the daemon's Unix socket (`--socket` on `daemon`, `tui`, `attach`) |
 | `~/.config/kleene/config.toml` | provider and web search keys written by `kleene setup` or `/setup` (`KLEENE_CONFIG_DIR` moves it) |
+| `~/.config/kleene/mcp.json`, `.kleene/mcp.json` | MCP servers, per user and per project (`kleene mcp add`, `/mcp add`); the project file wins on a name clash |
+| `~/.config/kleene/skills/<name>/SKILL.md`, `.kleene/skills/<name>/SKILL.md` | skills, per user and per project (also `~/.agents/skills`, `.agents/skills`, `.claude/skills`); a project skill replaces a user or built-in one of the same name |
+| `KLEENE.md`, `AGENTS.md` or `CLAUDE.md` | project instructions at the workspace root, the first found, rendered into every session's prompt |
 
 `.kleene/` is git-ignored in this repository; add it to yours.
 
@@ -361,7 +364,7 @@ streamed.
 
 ```
 kleene run <task|@file> [--context <file>] [--max-turns 30] [--max-depth 2]
-              [--budget-calls N] [--budget-dollars X] [-q|--quiet]
+              [--budget-calls N] [--budget-dollars X] [--check <cmd>] [-q|--quiet]
 ```
 
 | Flag | Meaning |
@@ -370,9 +373,14 @@ kleene run <task|@file> [--context <file>] [--max-turns 30] [--max-depth 2]
 | `--max-turns` | Turn cap for the root session (default 30); `resume` grants more |
 | `--max-depth` | Deepest child session allowed (default 2); `0` disables `rlm` and `spawn` |
 | `--budget-calls`, `--budget-dollars` | Budget for the whole run including children; a statement whose estimate exceeds what is left is refused with its plan |
+| `--check <cmd>` | A shell command run in the workspace whenever the root session writes `FINAL`; a non-zero exit refuses the `FINAL`, renders the output back and the session continues. Give a code task its test command (`--check 'python3 -m unittest -q'`) and it cannot end red |
 | `-q` | Print only the final relation |
 
-The run id is printed with the result and stored in `trace_runs`.
+The run id is printed with the result and stored in `trace_runs`. The
+session's earlier turns are folded into its table `turns(n, sql, result)`
+once more than sixteen have run (the last eight stay in the prompt in
+full), a table named `plan(step, status)` is shown by the UI as the task's
+plan, and the skills and MCP tools below are in every session's catalog.
 
 ### `kleene resume <run-id>`
 
@@ -475,8 +483,14 @@ Slash commands, with completion (type `/`, `Tab` completes, `↑`/`↓` pick):
 | `/plans` | show or hide `EXPLAIN` plans under statements |
 | `/theme [flavour]` | next Catppuccin flavour, or `mocha`, `macchiato`, `frappé`, `latte` |
 | `/setup` | the setup wizard over the stream: add or change model provider and web search keys; saving reloads the daemon |
+| `/mcp` | the configured MCP servers with their state and tools |
+| `/mcp add <name> <command> [args...]` | add a server to the user's `mcp.json` and reload; `/mcp remove <name>` drops it |
+| `/skills [name]` | the loaded skills with their source and description, or one skill in full |
 | `/clear` | clear the stream |
 | `/quit` | detach; the daemon and its runs keep going |
+
+A session that keeps a `plan` table shows it under its latest turn, one
+line per step with `✓` done, `◐` doing and `○` todo.
 
 Keys:
 
@@ -510,10 +524,41 @@ Run the engine in the foreground on a Unix socket (`--socket`, default
 `.kleene/daemon.sock`). Clients speak newline-delimited JSON: `Subscribe`
 with a cursor for replay, `StartRun`, `Submit` (REPL statements in a
 client-owned session), `Query` (SQL over the store), `Cancel`, `CancelRun`,
-`ListRuns`, `Reload` (re-read the keys; `/setup` sends it after saving),
-`Detach`. Two clients see the same event stream; a client that
+`ListRuns`, `ListMcp`, `ListSkills`, `Reload` (re-read the keys, `mcp.json`
+and the skills; `/setup` and `/mcp add` send it after saving), `Detach`.
+Two clients see the same event stream; a client that
 reconnects resumes from its last cursor. See
 [`ARCHITECTURE.md`](ARCHITECTURE.md#processes).
+
+### `kleene mcp`
+
+Model Context Protocol servers. `kleene mcp` (or `kleene mcp list`)
+connects every configured server and prints its state, its tools' catalog
+names and its command line. `kleene mcp add <name> <command> [args...]
+[--env KEY=VALUE] [--project]` writes the server to the user's `mcp.json`
+(the project's `.kleene/mcp.json` with `--project`); `kleene mcp remove
+<name> [--project]` drops it. A server's tools join every session's catalog
+as `<name>_<tool>`: read-only ones (`readOnlyHint`) are table functions
+used in `FROM`, the rest run as `CALL`. The format of `mcp.json` is the one
+every MCP client reads:
+
+```json
+{ "mcpServers": { "fs": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "."] } } }
+```
+
+A server that fails to start is reported and contributes no tools; nothing
+else changes. Only stdio servers are supported.
+
+### `kleene skills`
+
+`kleene skills` lists every skill a session in this workspace can read:
+the six built into the binary (`code-task`, `create-skill`,
+`run-benchmark`, `add-mcp-server`, `plan-queries`, `long-context`), the
+user's and the project's. `kleene skills <name>` prints one in full. A
+skill is a directory with a `SKILL.md` (frontmatter `name` and
+`description`, then Markdown); the prompt carries only the names and
+descriptions, and the model reads a body with `SELECT text FROM
+skill('name')`. The `create-skill` skill explains how to write one.
 
 ### `kleene learn`
 

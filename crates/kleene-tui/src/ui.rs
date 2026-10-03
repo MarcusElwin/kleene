@@ -581,6 +581,32 @@ fn session_lines(app: &App, s: &SessionNode, depth: usize, out: &mut Vec<Line<'s
             ));
         }
     }
+    // The plan as of the newest turn that had one.
+    if let Some(plan) = s
+        .turns_done
+        .iter()
+        .rev()
+        .map(|t| &t.plan)
+        .find(|p| !p.is_empty())
+    {
+        out.push(Line::from(""));
+        out.push(Line::from(Span::styled(
+            format!("{pad_text}plan"),
+            Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
+        )));
+        for (step, status) in plan {
+            let (mark, style) = match status.trim().to_ascii_lowercase().as_str() {
+                "done" => ("✓", Style::default().fg(t.ok)),
+                "doing" => ("◐", Style::default().fg(t.accent)),
+                _ => ("○", t.dim()),
+            };
+            out.push(Line::from(vec![
+                Span::styled(format!("{pad_text}  {mark} "), style),
+                Span::styled(step.clone(), style),
+                Span::styled(format!("  {status}"), t.dim()),
+            ]));
+        }
+    }
     // Children ran inside earlier turns, so they come before the live one.
     for child in &s.children {
         if let Some(c) = m.sessions.get(child) {
@@ -955,6 +981,7 @@ mod tests {
                 is_error: false,
                 is_final: false,
             }],
+            plan: vec![],
         });
         app
     }

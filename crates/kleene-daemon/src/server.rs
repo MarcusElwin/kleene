@@ -187,6 +187,7 @@ impl Observer for LogObserver {
                     is_final: r.is_final,
                 })
                 .collect(),
+            plan: turn.plan.clone(),
         });
     }
 }
@@ -250,6 +251,9 @@ impl Daemon {
         let mut cfg = self.config();
         cfg.provider = Some(provider);
         cfg.web_search = web_search;
+        let config_dir = cfg.config_dir.clone().unwrap_or_else(ProviderSettings::dir);
+        cfg.mcp = kleene_tools::mcp::load_all(&cfg.workspace, &config_dir).0;
+        cfg.skills = None;
         let harness = Harness::new(self.store.clone(), cfg.clone())
             .await
             .map_err(|e| e.to_string())?;
@@ -257,6 +261,18 @@ impl Daemon {
         if let Some(w) = &cfg.web_search {
             summary.push(format!("web search {}", w.provider));
         }
+        for m in harness.mcp_status() {
+            summary.push(format!(
+                "mcp {} {}",
+                m.server,
+                if m.state == "connected" {
+                    format!("({} tools)", m.tools.len())
+                } else {
+                    m.state.clone()
+                }
+            ));
+        }
+        summary.push(format!("{} skills", harness.skills().len()));
         *self.live.write().unwrap_or_else(|e| e.into_inner()) = (harness, cfg);
         Ok(format!("reloaded: {}", summary.join(", ")))
     }
@@ -399,6 +415,7 @@ impl Daemon {
                 max_turns,
                 max_depth,
                 budget_calls,
+                check,
             } => {
                 let (live_harness, live_cfg) = {
                     let live = self.live.read().unwrap_or_else(|e| e.into_inner());
@@ -420,10 +437,14 @@ impl Daemon {
                         ..cfg.budget
                     };
                 }
+                if check.is_some() {
+                    cfg.finish_check = check;
+                }
                 let harness = if cfg.workspace == live_cfg.workspace
                     && cfg.max_turns == live_cfg.max_turns
                     && cfg.max_depth == live_cfg.max_depth
                     && cfg.budget == live_cfg.budget
+                    && cfg.finish_check == live_cfg.finish_check
                 {
                     live_harness
                 } else {
@@ -565,6 +586,63 @@ impl Daemon {
                     }
                     None => ServerMessage::Error {
                         message: format!("no live run {run}"),
+                    },
+                }
+            }
+            ClientRequest::ListMcp => {
+                let harness = self.harness();
+                let rows = harness
+                    .mcp_status()
+                    .iter()
+                    .map(|m| {
+                        vec![
+                            m.server.clone(),
+                            m.state.clone(),
+                            m.tools.join(", "),
+                            m.command.clone(),
+                        ]
+                    })
+                    .collect();
+                ServerMessage::Table {
+                    columns: ["server", "state", "tools", "command"]
+                        .iter()
+                        .map(|c| c.to_string())
+                        .collect(),
+                    rows,
+                    tag: Some("mcp".into()),
+                }
+            }
+            ClientRequest::ListSkills { name } => {
+                let harness = self.harness();
+                match name {
+                    None => ServerMessage::Table {
+                        columns: ["name", "source", "description"]
+                            .iter()
+                            .map(|c| c.to_string())
+                            .collect(),
+                        rows: harness
+                            .skills()
+                            .iter()
+                            .map(|s| vec![s.name.clone(), s.source.clone(), s.description.clone()])
+                            .collect(),
+                        tag: Some("skills".into()),
+                    },
+                    Some(name) => match harness
+                        .skills()
+                        .iter()
+                        .find(|s| s.name.eq_ignore_ascii_case(name.trim()))
+                    {
+                        Some(s) => ServerMessage::Table {
+                            columns: vec!["text".into()],
+                            rows: vec![vec![format!(
+                                "{} ({}, {})\n\n{}",
+                                s.name, s.source, s.path, s.body
+                            )]],
+                            tag: Some("skill".into()),
+                        },
+                        None => ServerMessage::Error {
+                            message: format!("no skill named {name:?}; /skills lists them"),
+                        },
                     },
                 }
             }

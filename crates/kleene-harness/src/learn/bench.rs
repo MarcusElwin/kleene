@@ -212,10 +212,11 @@ impl Learn {
                 .task(&id)
                 .await?
                 .ok_or_else(|| HarnessError::Corrupt("task vanished".into()))?;
+            let check = pt.check.as_deref();
             let (verdict, calls, tokens, dollars, turns, depth, wall_ms) = match mode {
-                Mode::Plain => self.bench_plain(&task, &workspace).await,
+                Mode::Plain => self.bench_plain(&task, &workspace, check).await,
                 Mode::Learning | Mode::Frozen => {
-                    self.bench_kleene(&task, &workspace, mode == Mode::Learning)
+                    self.bench_kleene(&task, &workspace, mode == Mode::Learning, check)
                         .await?
                 }
             };
@@ -378,6 +379,7 @@ impl Learn {
         task: &Task,
         workspace: &Path,
         learning: bool,
+        check: Option<&str>,
     ) -> Result<(Verdict, u64, u64, f64, u32, i64, u64), HarnessError> {
         let playbook: Vec<PlaybookExample> = if learning {
             self.playbook_for(&task.kind).await?
@@ -385,7 +387,7 @@ impl Learn {
             vec![]
         };
         let report = self
-            .run_task_in(task, playbook, false, Some(workspace))
+            .run_task_checked(task, playbook, Some(workspace), check)
             .await?;
         let verdict = self.judge_in(task, &report, workspace).await;
         if learning {
@@ -415,6 +417,7 @@ impl Learn {
         &self,
         task: &Task,
         workspace: &Path,
+        check: Option<&str>,
     ) -> (Verdict, u64, u64, f64, u32, i64, u64) {
         let Some(provider) = self.harness_cfg().provider.clone() else {
             return (
@@ -437,6 +440,7 @@ impl Learn {
             max_turns: self.harness_cfg().max_turns,
             budget: self.harness_cfg().budget.clone(),
             max_tokens: self.harness_cfg().max_tokens,
+            check: check.map(str::to_string),
         };
         let r = plain::run(&cfg, &task.task, task.context.as_deref()).await;
         let verdict = match &r.answer {

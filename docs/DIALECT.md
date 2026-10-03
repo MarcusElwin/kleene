@@ -89,16 +89,37 @@ model and prompt fingerprint) across sessions and runs.
 
 ## Tools
 
-Pure table functions usable in `FROM`: `files(glob)`, `lines(path)`,
-`read(path)`, `grep(pattern [, glob])`, `chunks(text, size [, overlap])`,
-`env(name)`, `git_log([n])`, `git_diff([ref])`, `git_blame(path)`. Volatile
-tools run as statements: `CALL shell('cmd' [, cwd, timeout_ms]) [FROM query]`,
-`CALL write_file(path, text)`, `CALL append_file(path, text)`,
-`CALL patch(path, old, new)` (one exact occurrence, after the file was read
-in this session), `CALL mkdir(path)`, `CALL remove(path)`,
-`CALL web_fetch(url)`, `CALL web_search(q [, n])`. A tool's output relation is
-rendered back to the model; the full table with columns and volatility is
-in `kleene-tools`'s crate docs. Roles restrict which tools a session may use.
+Pure table functions usable in `FROM`: `files(glob)`, `lines(path [, from,
+to])`, `read(path)`, `grep(pattern [, glob])`, `search(query [, glob, n])`
+(files ranked by BM25 against the query's words, with the best line of
+each), `chunks(text, size [, overlap])`, `env(name)`, `git_log([n])`,
+`git_diff([ref])`, `git_blame(path)`, `skill(name)` (the body of a loaded
+skill). Volatile tools run as statements: `CALL shell('cmd' [, cwd,
+timeout_ms]) [FROM query]`, `CALL write_file(path, text)`,
+`CALL append_file(path, text)`, `CALL patch(path, old, new)` (one occurrence,
+exact or else ignoring whitespace and typographic quotes, after the file was
+read in this session; returns the unified diff), `CALL mkdir(path)`,
+`CALL remove(path)`, `CALL web_fetch(url)`, `CALL web_search(q [, n])`. A
+tool's output relation is rendered back to the model; the full table with
+columns and volatility is in `kleene-tools`'s crate docs. Roles restrict
+which tools a session may use.
+
+Tools of a connected MCP server (`kleene mcp`) appear as `<server>_<tool>`
+with the same split: a tool the server marks read-only is a table function,
+any other is `VOLATILE` and runs through `CALL`. Arguments are positional,
+required ones first in the server's order, then the optional ones by name;
+each result row is one text item the server returned.
+
+Two tables have a meaning to the harness. `turns(n, sql, result)` holds
+every earlier turn of the session: once more than sixteen turns have run,
+the results of all but the last eight are replaced in the transcript by a
+one-line stub and live only there. `plan(step, status)`, if the model
+creates it, is the task's plan: the latest row per step counts, statuses
+are `todo`, `doing` and `done`, and the UI renders it under the session.
+
+When a run has a finish check (`kleene run --check`, a pack task's `check`),
+a `FINAL` runs the command first; a non-zero exit refuses the `FINAL` with
+the output's tail, and the session continues.
 
 ## Delegation
 

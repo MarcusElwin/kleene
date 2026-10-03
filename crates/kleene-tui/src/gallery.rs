@@ -215,6 +215,7 @@ fn app_mid_run(width: usize) -> App {
         reply: "Let me look at the shape of the context first.\n\n```sql\nSELECT COUNT(*) AS rows, MIN(ordinal) AS lo, MAX(ordinal) AS hi FROM ctx;\n```".into(),
         sql: Some("SELECT COUNT(*) AS rows, MIN(ordinal) AS lo, MAX(ordinal) AS hi FROM ctx".into()),
         results: vec![out("rows | lo | hi\n-----+----+---\n60   | 0  | 59\n1 row")],
+        plan: vec![],
     });
     // Turn 2.
     let t2 = StatementId::new();
@@ -347,6 +348,7 @@ fn app_mid_run(width: usize) -> App {
         reply: "```sql\nSELECT ordinal, text FROM ctx WHERE ordinal IN (14, 22, 41);\nFINAL FROM (SELECT 'Osprey' AS project);\n```".into(),
         sql: Some("SELECT ordinal, text FROM ctx WHERE ordinal IN (14, 22, 41);\nFINAL FROM (SELECT 'Osprey' AS project)".into()),
         results: vec![out("ordinal | text\n--------+------\n14      | Meeting notes 2026-03-15. Project Osprey: the migration…\n3 rows"), out("FINAL\nproject\n-------\nOsprey\n1 row")],
+        plan: vec![],
     });
     push(
         &mut app,
@@ -363,6 +365,11 @@ fn app_mid_run(width: usize) -> App {
         reply: "Only some notes mention hours. A cheap proxy filters those, then a worker extracts project and hours as JSON.\n\n```sql\nCREATE TABLE hours AS\nSELECT ordinal, llm_json('Extract project and hours from: ' || text, '{\"project\":\"string\",\"hours\":\"number\"}') AS h\nFROM ctx WHERE mentions_hours(text);\n```".into(),
         sql: Some(sql2.into()),
         results: vec![out("28 rows")],
+        plan: vec![
+            ("peek at the context".into(), "done".into()),
+            ("extract hours per note".into(), "doing".into()),
+            ("sum per project".into(), "todo".into()),
+        ],
     });
     // Turn 3: streaming right now.
     let t3 = StatementId::new();

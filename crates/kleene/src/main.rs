@@ -58,6 +58,10 @@ enum Command {
         /// Dollar budget for the whole run.
         #[arg(long)]
         budget_dollars: Option<f64>,
+        /// A shell command (run in the workspace) that must exit 0 before a
+        /// FINAL is accepted, e.g. the project's test command.
+        #[arg(long)]
+        check: Option<String>,
         /// Print only the final relation.
         #[arg(long, short = 'q')]
         quiet: bool,
@@ -162,11 +166,51 @@ enum Command {
         #[arg(long)]
         show: bool,
     },
+    /// MCP servers: list, add or remove them in mcp.json.
+    Mcp {
+        #[command(subcommand)]
+        action: Option<McpAction>,
+    },
+    /// The skills sessions can read: list them, or print one.
+    Skills {
+        /// A skill to print in full.
+        name: Option<String>,
+    },
     /// Start the engine daemon in the foreground.
     Daemon {
         /// Socket path. Default: `.kleene/daemon.sock`.
         #[arg(long)]
         socket: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum McpAction {
+    /// Connect every configured server and list its state and tools (default).
+    List,
+    /// Add a server to the user's mcp.json (or the project's with --project).
+    Add {
+        /// Server name; its tools appear as `<name>_<tool>`.
+        name: String,
+        /// Program to run.
+        command: String,
+        /// Its arguments.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+        /// KEY=VALUE environment variables for the server.
+        #[arg(long = "env")]
+        env: Vec<String>,
+        /// Write .kleene/mcp.json in the workspace instead of the user file.
+        #[arg(long)]
+        project: bool,
+    },
+    /// Remove a server from the user's mcp.json (or the project's with --project).
+    Remove {
+        /// Server name.
+        name: String,
+        /// Edit .kleene/mcp.json in the workspace instead of the user file.
+        #[arg(long)]
+        project: bool,
     },
 }
 
@@ -679,6 +723,7 @@ fn start_request(
         max_turns: None,
         max_depth: None,
         budget_calls: None,
+        check: None,
     }))
 }
 
@@ -712,11 +757,148 @@ async fn daemon_config(cli: &Cli) -> anyhow::Result<kleene_harness::HarnessConfi
         }
     };
     Ok(kleene_harness::HarnessConfig {
+        mcp: mcp_servers(&workspace),
         workspace,
         provider,
         web_search: web_search_from_env(),
         ..kleene_harness::HarnessConfig::default()
     })
+}
+
+/// The MCP servers configured for a workspace: the user's `mcp.json` and
+/// the project's `.kleene/mcp.json`. An unreadable file is reported and
+/// skipped.
+fn mcp_servers(workspace: &std::path::Path) -> Vec<kleene_tools::mcp::McpServerConfig> {
+    let (servers, errors) =
+        kleene_tools::mcp::load_all(workspace, &kleene_llm::ProviderSettings::dir());
+    for e in errors {
+        eprintln!("kleene: mcp.json: {e}");
+    }
+    servers
+}
+
+/// `kleene mcp ...`.
+async fn mcp_command(cli: &Cli, action: Option<McpAction>) -> anyhow::Result<()> {
+    let workspace = cli
+        .workspace
+        .clone()
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let [user_path, project_path] =
+        kleene_tools::mcp::config_paths(&workspace, &kleene_llm::ProviderSettings::dir());
+    match action.unwrap_or(McpAction::List) {
+        McpAction::List => {
+            let servers = mcp_servers(&workspace);
+            if servers.is_empty() {
+                println!(
+                    "no MCP servers configured; add one with `kleene mcp add <name> <command> [args...]` ({} or {})",
+                    user_path.display(),
+                    project_path.display()
+                );
+                return Ok(());
+            }
+            let (_, status) = kleene_tools::mcp::connect_all(&servers).await;
+            let mut rows = vec![];
+            for m in status {
+                rows.push(vec![
+                    kleene_core::Value::Text(m.server),
+                    kleene_core::Value::Text(m.state),
+                    kleene_core::Value::Text(m.tools.join(", ")),
+                    kleene_core::Value::Text(m.command),
+                ]);
+            }
+            let batch = kleene_core::Batch {
+                schema: std::sync::Arc::new(kleene_core::Schema::new(
+                    ["server", "state", "tools", "command"]
+                        .iter()
+                        .map(|c| kleene_core::Field::new(*c, kleene_core::DataType::Text))
+                        .collect(),
+                )),
+                rows,
+            };
+            print!("{}", batch.render_table(100));
+            Ok(())
+        }
+        McpAction::Add {
+            name,
+            command,
+            args,
+            env,
+            project,
+        } => {
+            let mut env_map = std::collections::BTreeMap::new();
+            for kv in env {
+                let (k, v) = kv
+                    .split_once('=')
+                    .ok_or_else(|| anyhow::anyhow!("--env takes KEY=VALUE, got {kv:?}"))?;
+                env_map.insert(k.to_string(), v.to_string());
+            }
+            let path = if project { &project_path } else { &user_path };
+            kleene_tools::mcp::add_server(
+                path,
+                &kleene_tools::mcp::McpServerConfig {
+                    name: name.clone(),
+                    command,
+                    args,
+                    env: env_map,
+                },
+            )?;
+            println!("added {name} to {}", path.display());
+            Ok(())
+        }
+        McpAction::Remove { name, project } => {
+            let path = if project { &project_path } else { &user_path };
+            if kleene_tools::mcp::remove_server(path, &name)? {
+                println!("removed {name} from {}", path.display());
+            } else {
+                println!("no server named {name} in {}", path.display());
+            }
+            Ok(())
+        }
+    }
+}
+
+/// `kleene skills [name]`.
+fn skills_command(cli: &Cli, name: Option<String>) -> anyhow::Result<()> {
+    let workspace = cli
+        .workspace
+        .clone()
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let skills = kleene_tools::skills::discover(&workspace, &kleene_llm::ProviderSettings::dir());
+    match name {
+        None => {
+            let rows = skills
+                .iter()
+                .map(|s| {
+                    vec![
+                        kleene_core::Value::Text(s.name.clone()),
+                        kleene_core::Value::Text(s.source.clone()),
+                        kleene_core::Value::Text(s.description.clone()),
+                    ]
+                })
+                .collect();
+            let batch = kleene_core::Batch {
+                schema: std::sync::Arc::new(kleene_core::Schema::new(
+                    ["name", "source", "description"]
+                        .iter()
+                        .map(|c| kleene_core::Field::new(*c, kleene_core::DataType::Text))
+                        .collect(),
+                )),
+                rows,
+            };
+            print!("{}", batch.render_table(200));
+            Ok(())
+        }
+        Some(name) => match skills
+            .iter()
+            .find(|s| s.name.eq_ignore_ascii_case(name.trim()))
+        {
+            Some(s) => {
+                println!("{} ({}, {})\n\n{}", s.name, s.source, s.path, s.body);
+                Ok(())
+            }
+            None => anyhow::bail!("no skill named {name:?}; `kleene skills` lists them"),
+        },
+    }
 }
 
 /// Connect to the daemon, spawning one in the background if the socket is
@@ -773,6 +955,7 @@ async fn open_harness(
     max_turns: u32,
     max_depth: u32,
     budget: kleene_core::Budget,
+    finish_check: Option<String>,
     quiet: bool,
 ) -> anyhow::Result<(
     std::sync::Arc<kleene_harness::Harness>,
@@ -805,9 +988,19 @@ async fn open_harness(
         budget,
         observer: Some(std::sync::Arc::new(pretty::Printer::new(quiet))),
         web_search: web_search_from_env(),
+        finish_check,
         ..kleene_harness::HarnessConfig::default()
     };
+    let cfg = kleene_harness::HarnessConfig {
+        mcp: mcp_servers(&cfg.workspace),
+        ..cfg
+    };
     let harness = kleene_harness::Harness::new(store, cfg).await?;
+    for m in harness.mcp_status() {
+        if m.state != "connected" {
+            eprintln!("kleene: mcp server {}: {}", m.server, m.state);
+        }
+    }
     Ok((harness, trace))
 }
 
@@ -904,6 +1097,7 @@ async fn main() -> anyhow::Result<()> {
             max_depth,
             budget_calls,
             budget_dollars,
+            check,
             quiet,
         }) => {
             let task_text = match task.strip_prefix('@') {
@@ -920,7 +1114,7 @@ async fn main() -> anyhow::Result<()> {
                 ..kleene_core::Budget::unbounded()
             };
             let (harness, trace) =
-                open_harness(&cli, *max_turns, *max_depth, budget, *quiet).await?;
+                open_harness(&cli, *max_turns, *max_depth, budget, check.clone(), *quiet).await?;
             let report = harness.run(&task_text, context).await?;
             trace.flush().await;
             let code = pretty::report(&report);
@@ -940,6 +1134,7 @@ async fn main() -> anyhow::Result<()> {
                 *max_turns,
                 2,
                 kleene_core::Budget::unbounded(),
+                None,
                 *quiet,
             )
             .await?;
@@ -1029,6 +1224,8 @@ async fn main() -> anyhow::Result<()> {
             );
             Ok(())
         }
+        Some(Command::Mcp { action }) => mcp_command(&cli, action.clone()).await,
+        Some(Command::Skills { name }) => skills_command(&cli, name.clone()),
         Some(Command::Daemon { socket }) => {
             let socket = socket_path(&cli, socket);
             let store = open_store(&cli)?;

@@ -186,6 +186,8 @@ The commands the popup lists:
 | `/plans` | show or hide `EXPLAIN` plans under statements (also `Ctrl-P`) |
 | `/theme [flavour]` | next Catppuccin flavour, or `mocha`, `macchiato`, `frappé`, `latte` (also `Ctrl-T`) |
 | `/setup` | add or change API keys: model providers and web search; the daemon reloads them |
+| `/mcp [add <name> <cmd> ...]` | the MCP servers and their tools; add or remove one in `mcp.json` |
+| `/skills [name]` | the loaded skills, or one in full |
 | `/clear`, `/quit` | clear the stream (`Ctrl-L`); detach, the daemon and its runs keep going (`Ctrl-C`) |
 
 `Tab` completes a command, `Up`/`Down` walk the input history, `PageUp`/`PageDown`
@@ -428,6 +430,8 @@ The full table of crates, what each owns and its key types is in
 | `kleene daemon` | the engine as a server on a Unix socket | [docs](docs/CLI.md#kleene-daemon) |
 | `kleene learn …` | the continual loop: tasks, oracles, ratings, curriculum, playbook | [docs](docs/CLI.md#kleene-learn) |
 | `kleene bench …` | task packs under learning, frozen and plain-agent modes | [docs](docs/CLI.md#kleene-bench) |
+| `kleene mcp …` | MCP servers: list them with their tools, add or remove one | [docs](docs/CLI.md#kleene-mcp) |
+| `kleene skills [name]` | the skills sessions can read, built-in, per user and per project | [docs](docs/CLI.md#kleene-skills) |
 
 Every flag: `kleene <command> --help`, or [`docs/CLI.md`](docs/CLI.md#commands).
 
@@ -466,7 +470,13 @@ on `main`; the repository is private and no version has been tagged yet.
 Since M7: the rename to Kleene, `kleene setup` and the config file, streamed
 replies, the one-stream Catppuccin TUI with slash commands and `/setup`,
 `web_search` over Brave, Tavily, Exa or Linkup, the curl installer, the
-Homebrew formula and the release workflow.
+Homebrew formula and the release workflow. Then the coding loop: a finish
+check that refuses `FINAL` while the tests fail (`--check`, a pack task's
+`check`), `patch` with fuzzy matching and a diff, `lines` ranges, ranked
+`search`, the `turns` table that folds old results out of the prompt, the
+`plan` table the UI renders, skills (`SKILL.md`, six built in, `/skills`),
+project instructions from `AGENTS.md`, MCP servers as catalog tools
+(`mcp.json`, `/mcp`), and a plain baseline on native tool calling.
 
 Not yet, in the order they are planned:
 

@@ -241,10 +241,11 @@ What the numbers say:
 - Threshold calibration from a sample is not built; thresholds are declared.
 - The learned cost model persists only in-session (sampled selectivity), not
   as versioned tables.
-- The `plain` baseline parses JSON actions from text rather than native tool
-  use, which keeps it provider-agnostic but is not identical to a vendor
-  agent loop, and a model that writes several actions per reply (Haiku)
-  gets only its first one run.
+- The `plain` baseline now uses native tool calling (every `tool_use`
+  block of a reply runs, the answer comes through a `final` tool) and the
+  coding pack's tasks carry a `check` that refuses a `FINAL` while
+  `python3 -m unittest -q` fails; the Haiku 4.5 numbers in section 4.1
+  predate both and have not been rerun.
 - Output schemas the model writes for `llm_json` are rewritten into the
   provider's accepted subset, but only the shapes seen so far (field maps,
   open objects, `minItems`); a schema outside that still fails the call.
