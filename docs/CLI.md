@@ -558,7 +558,7 @@ modes, oracles, report columns and plots measure is in
 | `bench curve <run-id> [--window 5]` | The learning curve of one run as a sparkline and rolling mean |
 | `bench csv` | Every eval row as CSV on stdout |
 | `bench plot <out-dir>` | The write-up's plots as SVG files: `learning_curve`, `cost_parity`, `calls_vs_difficulty`, `estimate_accuracy` (the planner's estimated calls against actuals, from `trace_statements`) and `plan_space` (join orders against relations joined) |
-| `bench results <evals.csv>... [--out plots/results] [--readme README.md] [--plot <pack>]...` | Results from several models side by side: reads `bench csv` files (every row names its model), writes `results.md` (pass rate, $/task and calls per pack, mode and model; a model not run on a pack and mode is blank) and one pass-rate-against-cost Pareto SVG per pack; `--plot` limits which packs' plots the Markdown shows (default all); `--readme` replaces the block between `<!-- bench-results:begin -->` and `<!-- bench-results:end -->` in that document |
+| `bench results <evals.csv>... [--out plots/results] [--readme README.md] [--plot <pack>]...` | Results from several models side by side: reads `bench csv` files (every row names its model), writes `results.md` (one row per pack, mode and model with pass rate, $/task, calls, tokens and seconds as columns; a model not run on a pack and mode keeps a blank row) and one pass-rate-against-cost Pareto SVG per pack; `--plot` limits which packs' plots the Markdown shows (default all); `--readme` replaces the block between `<!-- bench-results:begin -->` and `<!-- bench-results:end -->` in that document |
 
 ```bash
 kleene bench run tasks/oolong-like --mode frozen --record fixtures/oolong

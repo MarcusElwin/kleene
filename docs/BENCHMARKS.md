@@ -214,13 +214,13 @@ kleene bench results plots/evals.csv plots/haiku-2026-10-01/evals.csv \
 reads every CSV given, groups the rows by pack, mode and `model`, and
 writes to `--out`:
 
-- `results.md`: the summary table (one row per pack and mode; for every
-  model its pass rate as `solved/tasks (percent)`, mean dollars per task
-  and mean calls per task) followed by one collapsible `<details>` block
-  per pack holding that pack's plot and the full table (tasks, pass,
-  $/task, total $, calls, tokens, depth and seconds per task). A model
-  that has not been run on a pack in a mode has blank cells, not zeros,
-  so the table can be published before every model has run every pack.
+- `results.md`: the summary table, one row per pack, mode and model with
+  the metrics as columns (tasks, pass rate as `solved/tasks (percent)`,
+  mean dollars per task, total dollars, mean calls, mean tokens and mean
+  seconds per task), followed by one collapsible `<details>` block per
+  plotted pack holding its plot. A model that has not been run on a pack
+  in a mode keeps its row with blank metrics, not zeros, so the table can
+  be published before every model has run every pack.
 - `<pack>-pareto.svg`: dollars per task against pass rate, one point per
   model and mode (one colour per model, the mode written at the point)
   and a dashed line through the Pareto frontier, the points no other point
@@ -228,8 +228,8 @@ writes to `--out`:
   choice at its budget; a point below and to the right of the line is
   dominated by one that is both cheaper and more often right.
 
-`--plot <pack>` (repeatable) limits which packs' plots the Markdown shows;
-every SVG is still written. The README shows the hard packs only: on the
+`--plot <pack>` (repeatable) limits which packs get a `<details>` block
+in the Markdown; every SVG is still written. The README shows the hard packs only: on the
 four original packs every mode scored the same, so their points sit on one
 horizontal line and the table says it all.
 

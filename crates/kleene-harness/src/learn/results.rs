@@ -245,66 +245,35 @@ impl Results {
             .get(&(pack.to_string(), mode.to_string(), model.to_string()))
     }
 
-    /// The summary table: one row per pack and mode, and for every model
-    /// its pass rate, dollars per task and calls per task. A model that
-    /// has not run that pack in that mode has blank cells.
+    /// The summary table: one row per pack, mode and model, with the
+    /// metrics as columns. Every model has a row for every pack and mode
+    /// any model ran, so a model that has not run one shows a row with
+    /// blank metrics rather than disappearing.
     pub fn summary_markdown(&self) -> String {
-        let mut out = String::from("| Pack | Mode |");
-        for m in &self.models {
-            let name = display_name(m);
-            let _ = write!(out, " {name} pass | {name} $/task | {name} calls |");
-        }
-        out.push_str("\n|---|---|");
-        for _ in &self.models {
-            out.push_str("---:|---:|---:|");
-        }
-        out.push('\n');
+        let mut out = String::from(
+            "| Pack | Mode | Model | Tasks | Pass | $/task | Total $ | Calls/task | Tokens/task | Seconds/task |\n|---|---|---|---:|---:|---:|---:|---:|---:|---:|\n",
+        );
         for pack in self.packs() {
             for mode in self.modes(&pack) {
-                let _ = write!(out, "| `{pack}` | {mode} |");
                 for m in &self.models {
+                    let _ = write!(out, "| `{pack}` | {mode} | {} |", display_name(m));
                     match self.cell(&pack, &mode, m) {
                         Some(c) => {
-                            let _ = write!(
+                            let _ = writeln!(
                                 out,
-                                " {} | {} | {} |",
+                                " {} | {} | {} | {} | {} | {} | {} |",
+                                c.tasks,
                                 pass(c),
                                 money(c.dollars_per_task()),
-                                one_decimal(c.calls_per_task())
+                                money(c.dollars),
+                                one_decimal(c.calls_per_task()),
+                                thousands(c.tokens_per_task()),
+                                one_decimal(c.seconds_per_task())
                             );
                         }
-                        None => out.push_str(" | | |"),
+                        None => out.push_str(" | | | | | | |\n"),
                     }
                 }
-                out.push('\n');
-            }
-        }
-        out
-    }
-
-    /// The full table for one pack: every metric per mode and model.
-    pub fn pack_markdown(&self, pack: &str) -> String {
-        let mut out = String::from(
-            "| Model | Mode | Tasks | Pass | $/task | Total $ | Calls/task | Tokens/task | Depth | Seconds/task |\n|---|---|---:|---:|---:|---:|---:|---:|---:|---:|\n",
-        );
-        for m in &self.models {
-            for mode in self.modes(pack) {
-                let Some(c) = self.cell(pack, &mode, m) else {
-                    continue;
-                };
-                let _ = writeln!(
-                    out,
-                    "| {} | {mode} | {} | {} | {} | {} | {} | {} | {} | {} |",
-                    display_name(m),
-                    c.tasks,
-                    pass(c),
-                    money(c.dollars_per_task()),
-                    money(c.dollars),
-                    one_decimal(c.calls_per_task()),
-                    thousands(c.tokens_per_task()),
-                    two_decimals(c.mean_depth()),
-                    one_decimal(c.seconds_per_task())
-                );
             }
         }
         out
@@ -357,12 +326,12 @@ impl Results {
     }
 
     /// The whole results section as Markdown: the summary table, then one
-    /// collapsible block per pack with its full table and, for the packs in
-    /// `plotted` (every pack when empty), its plot. `image_dir` is where
-    /// the SVGs are, relative to the document the Markdown goes in. Packs
-    /// where every mode scores the same (the four original packs on Opus
-    /// 5.5) have nothing to show on a Pareto plot, so the README plots the
-    /// hard packs only.
+    /// collapsible block per plotted pack (every pack when `plotted` is
+    /// empty) holding its plot. `image_dir` is where the SVGs are,
+    /// relative to the document the Markdown goes in. Packs where every
+    /// mode scores the same (the four original packs on Opus 5.5) have
+    /// nothing to show on a Pareto plot, so the README plots the hard
+    /// packs only.
     pub fn markdown(&self, image_dir: &str, plotted: &[String]) -> String {
         let mut out = String::new();
         out.push_str(&self.summary_markdown());
@@ -378,25 +347,18 @@ impl Results {
         );
         let dir = image_dir.trim_end_matches('/');
         for pack in self.packs() {
+            if !(plotted.is_empty() || plotted.contains(&pack)) {
+                continue;
+            }
             let image = if dir.is_empty() {
                 Self::pareto_file(&pack)
             } else {
                 format!("{dir}/{}", Self::pareto_file(&pack))
             };
-            let with_plot = plotted.is_empty() || plotted.contains(&pack);
             let _ = write!(
                 out,
-                "<details>\n<summary><code>{pack}</code>: {} per model and mode</summary>\n\n",
-                if with_plot {
-                    "pass rate against cost per task, and every metric"
-                } else {
-                    "every metric"
-                }
+                "<details>\n<summary><code>{pack}</code>: pass rate against cost per task, every model and mode</summary>\n\n![{pack}: pass rate against cost]({image})\n\n</details>\n\n"
             );
-            if with_plot {
-                let _ = write!(out, "![{pack}: pass rate against cost]({image})\n\n");
-            }
-            let _ = write!(out, "{}\n</details>\n\n", self.pack_markdown(&pack));
         }
         out
     }
@@ -509,10 +471,6 @@ fn one_decimal(v: f64) -> String {
     format!("{v:.1}")
 }
 
-fn two_decimals(v: f64) -> String {
-    format!("{v:.2}")
-}
-
 fn thousands(v: f64) -> String {
     let whole = format!("{:.0}", v.round());
     let mut out = String::new();
@@ -570,20 +528,27 @@ r4,terminal,plain,claude-opus-5-5,0,\"x,y\",terminal,true,1,100,0.01,0,1,500\n";
         let lines: Vec<&str> = md.lines().collect();
         assert_eq!(
             lines[0],
-            "| Pack | Mode | Claude Haiku 4.5 pass | Claude Haiku 4.5 $/task | Claude Haiku 4.5 calls | Claude Opus 5.5 pass | Claude Opus 5.5 $/task | Claude Opus 5.5 calls |"
+            "| Pack | Mode | Model | Tasks | Pass | $/task | Total $ | Calls/task | Tokens/task | Seconds/task |"
         );
-        // Opus never ran memo frozen: blank cells, not zeros.
-        assert_eq!(
-            lines[3],
-            "| `memo` | frozen | 1/2 (50%) | $0.200 | 20.0 | | | |"
-        );
-        // Haiku never ran memo learning.
+        // Haiku never ran memo learning: a row with blank metrics, not zeros.
         assert_eq!(
             lines[2],
-            "| `memo` | learning | | | | 1/1 (100%) | $0.400 | 4.0 |"
+            "| `memo` | learning | Claude Haiku 4.5 | | | | | | | |"
         );
-        let pack = r.pack_markdown("memo");
-        assert!(pack.contains("| Claude Haiku 4.5 | frozen | 2 | 1/2 (50%) | $0.200 | $0.400 | 20.0 | 2,000 | 0.50 | 3.0 |"), "{pack}");
+        assert_eq!(
+            lines[3],
+            "| `memo` | learning | Claude Opus 5.5 | 1 | 1/1 (100%) | $0.400 | $0.400 | 4.0 | 800 | 3.0 |"
+        );
+        assert_eq!(
+            lines[4],
+            "| `memo` | frozen | Claude Haiku 4.5 | 2 | 1/2 (50%) | $0.200 | $0.400 | 20.0 | 2,000 | 3.0 |"
+        );
+        assert_eq!(
+            lines[5],
+            "| `memo` | frozen | Claude Opus 5.5 | | | | | | | |"
+        );
+        // Two packs, memo in three modes and terminal in one, two models.
+        assert_eq!(lines.len(), 2 + (3 + 1) * 2);
     }
 
     #[test]
@@ -603,12 +568,10 @@ r4,terminal,plain,claude-opus-5-5,0,\"x,y\",terminal,true,1,100,0.01,0,1,500\n";
         assert!(md.contains("![terminal: pass rate against cost]"));
         assert!(md.contains("<details>"));
         assert!(md.contains("Claude Opus 5.5 is `claude-opus-5-5`"));
-        // Only the packs asked for get a plot; the others keep their table.
+        // Only the packs asked for get a plot; the others have no block.
         let md = r.markdown("plots/results", &["memo".to_string()]);
         assert!(md.contains("![memo: pass rate against cost]"));
-        assert!(!md.contains("![terminal"), "{md}");
-        assert!(md
-            .contains("<summary><code>terminal</code>: every metric per model and mode</summary>"));
+        assert!(!md.contains("terminal</code>"), "{md}");
     }
 
     #[test]
