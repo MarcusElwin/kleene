@@ -424,6 +424,13 @@ fn gallery() {
         "/Users/marcus/.config/kleene/config.toml".into(),
     );
     key(&mut s, KeyCode::Char(' '));
+    for _ in 0..3 {
+        key(&mut s, KeyCode::Down);
+    }
+    key(&mut s, KeyCode::Char(' '));
+    key(&mut s, KeyCode::Up);
+    key(&mut s, KeyCode::Up);
+    key(&mut s, KeyCode::Up);
     shots.push(("setup-choose", render_setup(&s, w, h)));
     key(&mut s, KeyCode::Enter);
     for c in "sk-ant-api03-3QkZv7wLx0mN1pR8sT2uV4wX6yZ8".chars() {
@@ -431,6 +438,13 @@ fn gallery() {
     }
     shots.push(("setup-credentials", render_setup(&s, w, h)));
     key(&mut s, KeyCode::Enter);
+    key(&mut s, KeyCode::Enter);
+    assert_eq!(s.step, Step::Fields(1));
+    key(&mut s, KeyCode::Enter);
+    for c in "BSA3qLm9xP2vR7tW1yZ5cE8gH0jK4nQ6".chars() {
+        key(&mut s, KeyCode::Char(c));
+    }
+    shots.push(("setup-web-search", render_setup(&s, w, h)));
     key(&mut s, KeyCode::Enter);
     assert_eq!(s.step, Step::Review);
     shots.push(("setup-review", render_setup(&s, w, h)));
