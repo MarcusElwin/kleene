@@ -76,7 +76,10 @@ async fn terminal_pack_runs_shell_tasks_from_sql_and_shell_oracles_judge_them() 
     assert!(summary.contains("frozen"), "{summary}");
     let csv = l.bench_csv().await.unwrap();
     assert_eq!(csv.lines().count(), 4, "{csv}");
-    assert!(csv.starts_with("run,pack,mode,seq,task"));
+    // The model column is there even though the scripted provider cannot
+    // name one, so the header is stable for `bench results`.
+    assert!(csv.starts_with("run,pack,mode,model,seq,task"), "{csv}");
+    assert!(csv.lines().nth(1).unwrap().contains(",frozen,,0,"), "{csv}");
     let curve = l.bench_curve(&report.run).await.unwrap();
     assert_eq!(curve.iter().filter(|(_, s)| *s).count(), 2);
     // The plots draw from the same tables: the curve and the cost-parity

@@ -158,6 +158,7 @@ columns are the raw material for every report and plot:
 |---|---|
 | `run` | the run id; one `bench run` invocation |
 | `pack`, `mode` | which pack, which of the three modes |
+| `model` | the model the `root` alias resolved to when the row was written (NULL under the replay and test providers, which cannot name one) |
 | `seq` | position in the stream, 0-based; the x axis of the learning curve |
 | `task`, `kind` | the task's id within the pack and its kind |
 | `solved` | the oracle's verdict |
@@ -177,7 +178,7 @@ was adopted after which replay and what was reverted.
 
 ## What `bench report` shows
 
-`bench report` groups `evals` by pack and mode over every recorded run:
+`bench report` groups `evals` by pack, mode and model over every recorded run:
 
 | Column | Definition |
 |---|---|
@@ -197,6 +198,54 @@ comparison.
 solve rate: at each position the fraction solved over the last `window`
 tasks, drawn as a sparkline and listed as numbers. This is the learning
 curve of that run.
+
+## Results across models
+
+Runs on different models usually live in different stores (one per
+machine, per day, per pack and mode), so the comparison across models
+starts from their `bench csv` exports rather than from a merged database:
+
+```bash
+kleene bench results plots/evals.csv plots/haiku-2026-10-01/evals.csv \
+  --out plots/results --readme README.md \
+  --plot coding --plot memo-rubric --plot logbook-hard
+```
+
+reads every CSV given, groups the rows by pack, mode and `model`, and
+writes to `--out`:
+
+- `results.md`: the summary table (one row per pack and mode; for every
+  model its pass rate as `solved/tasks (percent)`, mean dollars per task
+  and mean calls per task) followed by one collapsible `<details>` block
+  per pack holding that pack's plot and the full table (tasks, pass,
+  $/task, total $, calls, tokens, depth and seconds per task). A model
+  that has not been run on a pack in a mode has blank cells, not zeros,
+  so the table can be published before every model has run every pack.
+- `<pack>-pareto.svg`: dollars per task against pass rate, one point per
+  model and mode (one colour per model, the mode written at the point)
+  and a dashed line through the Pareto frontier, the points no other point
+  beats on both axes. Reading it: a point on the line is a defensible
+  choice at its budget; a point below and to the right of the line is
+  dominated by one that is both cheaper and more often right.
+
+`--plot <pack>` (repeatable) limits which packs' plots the Markdown shows;
+every SVG is still written. The README shows the hard packs only: on the
+four original packs every mode scored the same, so their points sit on one
+horizontal line and the table says it all.
+
+With `--readme`, the Markdown also replaces the block between
+`<!-- bench-results:begin -->` and `<!-- bench-results:end -->` in that
+document, with image links relative to it; the README's results section
+is maintained this way, so a new model is a new CSV and a re-run of the
+command, never a hand-edited table. Models are shown by a readable form
+of their id (`claude-opus-5-5` as Claude Opus 5.5, a trailing date
+dropped) and the mapping is printed under the table.
+
+The `model` column is written by `bench run` from the provider's answer for
+the `root` alias (the router's first candidate). CSVs exported before the
+column existed need it added by hand, as `plots/evals.csv` (Opus 5.5) and
+`plots/haiku-2026-10-01/evals.csv` (Haiku 4.5) were; the command refuses a
+CSV without it rather than guessing.
 
 ## The five plots
 

@@ -18,6 +18,9 @@ use std::path::Path;
 const DDL: &[&str] = &[
     "CREATE TABLE IF NOT EXISTS evals (run VARCHAR, pack VARCHAR, mode VARCHAR, seq INTEGER, task VARCHAR, kind VARCHAR, solved BOOLEAN, detail VARCHAR, calls BIGINT, tokens BIGINT, dollars DOUBLE, depth INTEGER, turns INTEGER, wall_ms BIGINT, recorded_at TIMESTAMP)",
     "CREATE TABLE IF NOT EXISTS bench_runs (run VARCHAR PRIMARY KEY, pack VARCHAR, mode VARCHAR, tasks INTEGER, solved INTEGER, dollars DOUBLE, started_at TIMESTAMP, finished_at TIMESTAMP, note VARCHAR)",
+    // Added after the first runs: the model the `root` alias resolved to,
+    // so one store (or one CSV) can hold results from several models.
+    "ALTER TABLE evals ADD COLUMN IF NOT EXISTS model VARCHAR",
 ];
 
 /// How a pack is run.
@@ -196,6 +199,13 @@ impl Learn {
         };
         let n = limit.unwrap_or(pack.tasks.len()).min(pack.tasks.len());
         let first = rows.len();
+        // The model behind the solver, as the provider reports it; a replay
+        // or test provider cannot say, and the row's `model` stays NULL.
+        let model: Option<String> = self
+            .harness_cfg()
+            .provider
+            .as_ref()
+            .and_then(|p| p.model_for("root"));
         // Workspaces a later task continues, by the id of the task that left them.
         let mut held: HashMap<String, Workspace> = HashMap::new();
         for (seq, pt) in pack.tasks.iter().enumerate().take(n).skip(first) {
@@ -263,14 +273,19 @@ impl Learn {
                 .await?;
             self.store()
                 .execute(&format!(
-                    "INSERT INTO evals VALUES ({}, {}, {}, {seq}, {}, {}, {}, {}, {calls}, {tokens}, {dollars}, {depth}, {turns}, {wall_ms}, now())",
+                    "INSERT INTO evals (run, pack, mode, seq, task, kind, solved, detail, calls, tokens, dollars, depth, turns, wall_ms, recorded_at, model) \
+                     VALUES ({}, {}, {}, {seq}, {}, {}, {}, {}, {calls}, {tokens}, {dollars}, {depth}, {turns}, {wall_ms}, now(), {})",
                     s(&run),
                     s(&pack.name),
                     s(mode.label()),
                     s(&pt.id),
                     s(&task.kind),
                     verdict.pass,
-                    s(&verdict.detail)
+                    s(&verdict.detail),
+                    model
+                        .as_deref()
+                        .map(s)
+                        .unwrap_or_else(|| "NULL".to_string())
                 ))
                 .await?;
             rows.push(EvalRow {
@@ -460,16 +475,16 @@ impl Learn {
         )
     }
 
-    /// Summary per (pack, mode) over every recorded run: tasks, accuracy,
-    /// calls and dollars per task.
+    /// Summary per (pack, mode, model) over every recorded run: tasks,
+    /// accuracy, calls and dollars per task.
     pub async fn bench_summary(&self) -> Result<Batch, HarnessError> {
         self.init_bench().await?;
         Ok(self
             .store()
             .query(
-                "SELECT pack, mode, COUNT(*) AS tasks, ROUND(AVG(CASE WHEN solved THEN 1.0 ELSE 0.0 END), 3) AS accuracy, \
+                "SELECT pack, mode, model, COUNT(*) AS tasks, ROUND(AVG(CASE WHEN solved THEN 1.0 ELSE 0.0 END), 3) AS accuracy, \
                  ROUND(AVG(calls), 2) AS calls_per_task, ROUND(SUM(dollars), 4) AS dollars, ROUND(AVG(tokens)) AS tokens_per_task, \
-                 ROUND(AVG(depth), 2) AS depth FROM evals GROUP BY pack, mode ORDER BY pack, mode",
+                 ROUND(AVG(depth), 2) AS depth FROM evals GROUP BY pack, mode, model ORDER BY pack, mode, model",
             )
             .await?)
     }
@@ -498,10 +513,10 @@ impl Learn {
         self.init_bench().await?;
         let b = self
             .store()
-            .query("SELECT run, pack, mode, seq, task, kind, solved, calls, tokens, dollars, depth, turns, wall_ms FROM evals ORDER BY run, seq")
+            .query("SELECT run, pack, mode, model, seq, task, kind, solved, calls, tokens, dollars, depth, turns, wall_ms FROM evals ORDER BY run, seq")
             .await?;
         let mut out = String::from(
-            "run,pack,mode,seq,task,kind,solved,calls,tokens,dollars,depth,turns,wall_ms\n",
+            "run,pack,mode,model,seq,task,kind,solved,calls,tokens,dollars,depth,turns,wall_ms\n",
         );
         for row in &b.rows {
             let cells: Vec<String> = row
