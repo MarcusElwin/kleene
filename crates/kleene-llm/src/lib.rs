@@ -51,6 +51,14 @@ pub trait Provider: Send + Sync {
     fn name(&self) -> &str;
     /// What this backend can do; the planner and harness consult it.
     fn capabilities(&self) -> Capabilities;
+    /// The concrete model an alias resolves to, when the backend knows it:
+    /// the router answers from its first candidate, a single-model adapter
+    /// from its configuration. `None` means the backend cannot say, which
+    /// is what the replay and test providers answer. The bench records it
+    /// on every eval row so results from several models can be compared.
+    fn model_for(&self, _alias: &str) -> Option<String> {
+        None
+    }
     /// One request, one response.
     async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse, ProviderError>;
     /// Streamed response. The default buffers `complete` into a single final

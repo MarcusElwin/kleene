@@ -245,6 +245,28 @@ enum BenchAction {
         /// Output directory.
         out: PathBuf,
     },
+    /// Put results from several models side by side: from `bench csv` files
+    /// (each row names its model), write `results.md` with a pass-rate,
+    /// cost and calls table per pack and mode and model, and one
+    /// pass-rate-against-cost (Pareto) SVG per pack. With `--readme`, also
+    /// replace the block between `<!-- bench-results:begin -->` and
+    /// `<!-- bench-results:end -->` in that document.
+    Results {
+        /// `evals` CSV files, one or more; a model missing from a pack and
+        /// mode leaves its cells blank.
+        #[arg(required = true)]
+        csv: Vec<PathBuf>,
+        /// Output directory for `results.md` and the SVGs.
+        #[arg(long, default_value = "plots/results")]
+        out: PathBuf,
+        /// Markdown document whose generated block to replace in place.
+        #[arg(long)]
+        readme: Option<PathBuf>,
+        /// Packs whose Pareto plot goes into the Markdown (repeatable);
+        /// default every pack. Every SVG is written regardless.
+        #[arg(long)]
+        plot: Vec<String>,
+    },
 }
 
 async fn run_bench(cli: &Cli, action: &BenchAction) -> anyhow::Result<()> {
@@ -394,6 +416,41 @@ curve {}",
                 let path = out.join(&name);
                 std::fs::write(&path, svg)?;
                 println!("{}", path.display());
+            }
+        }
+        BenchAction::Results {
+            csv,
+            out,
+            readme,
+            plot,
+        } => {
+            use kleene_harness::learn::results::{parse_csv, relative_dir, splice, Results};
+            let mut rows = vec![];
+            for path in csv {
+                let text = std::fs::read_to_string(path)
+                    .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?;
+                rows.extend(parse_csv(&text, &path.display().to_string())?);
+            }
+            let results = Results::from_rows(&rows);
+            std::fs::create_dir_all(out)?;
+            for (name, svg) in results.pareto_svgs() {
+                let path = out.join(&name);
+                std::fs::write(&path, svg)?;
+                println!("{}", path.display());
+            }
+            let image_dir = match readme {
+                Some(doc) => relative_dir(doc, out),
+                None => String::new(),
+            };
+            let markdown = results.markdown(&image_dir, plot);
+            let md_path = out.join("results.md");
+            std::fs::write(&md_path, &markdown)?;
+            println!("{}", md_path.display());
+            if let Some(doc) = readme {
+                let text = std::fs::read_to_string(doc)
+                    .map_err(|e| anyhow::anyhow!("{}: {e}", doc.display()))?;
+                std::fs::write(doc, splice(&text, &markdown)?)?;
+                println!("{}", doc.display());
             }
         }
         BenchAction::Build { .. }
