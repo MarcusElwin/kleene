@@ -63,8 +63,7 @@ The script downloads release assets through the GitHub API with the same
 token, which works for private and public repositories alike.
 
 **Until the first release exists** there is nothing for the installer to
-download and it says so. Publishing one is: move `ci/release.yml` to
-`.github/workflows/release.yml`, then `git tag v0.1.0 && git push origin
+download and it says so. Publishing one is `git tag v0.1.0 && git push origin
 v0.1.0`. The workflow builds the four targets, attaches the tarballs and
 checksums, and prints the values the Homebrew formula needs. Meanwhile,
 build from a checkout: `cargo install --path crates/kleene`.

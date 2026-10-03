@@ -12,7 +12,7 @@
 #   brew install --HEAD marcuselwin/kleene/kleene   # cargo build, ~10 min
 #
 # The stable stanzas download release binaries; the release workflow
-# (ci/release.yml) prints the version and the four sha256 values to paste
+# (.github/workflows/release.yml) prints the version and the four sha256 values to paste
 # below after every tagged release. `--HEAD` clones the repository and builds
 # with cargo, which also works while the repository is private, provided git
 # can authenticate (gh auth setup-git, or an SSH remote).
