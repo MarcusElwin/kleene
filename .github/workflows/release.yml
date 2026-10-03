@@ -1,0 +1,115 @@
+name: Release
+
+# Tag a version (`git tag v0.1.0 && git push --tags`) and this builds the
+# `kleene` binary for macOS (Apple silicon and Intel) and Linux (x86_64
+# and aarch64), attaches tarballs with SHA-256 checksums to a GitHub
+# release, and prints the values the Homebrew formula needs.
+#
+# DuckDB is compiled from source inside the build, so each target takes ten
+# to fifteen minutes; the cargo cache keeps re-runs on the same toolchain
+# fast. Lives under ci/ until a human moves it to .github/workflows/.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and publish (e.g. v0.1.0)"
+        required: true
+
+env:
+  CARGO_TERM_COLOR: always
+  BIN: kleene
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-22.04
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-22.04-arm
+          - target: aarch64-apple-darwin
+            os: macos-14
+          - target: x86_64-apple-darwin
+            os: macos-13
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+      - name: Build
+        run: cargo build --release --locked -p kleene --target ${{ matrix.target }}
+      - name: Smoke test
+        run: |
+          ./target/${{ matrix.target }}/release/$BIN --version
+          ./target/${{ matrix.target }}/release/$BIN repl -c "SELECT 1 + 1 AS two"
+      - name: Package
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          VERSION="${TAG#v}"
+          NAME="$BIN-$VERSION-${{ matrix.target }}"
+          mkdir -p "dist/$NAME"
+          cp "target/${{ matrix.target }}/release/$BIN" "dist/$NAME/"
+          cp README.md LICENSE* "dist/$NAME/" 2>/dev/null || true
+          cp -r docs/DIALECT.md "dist/$NAME/" 2>/dev/null || true
+          tar -C dist -czf "dist/$NAME.tar.gz" "$NAME"
+          (cd dist && shasum -a 256 "$NAME.tar.gz" > "$NAME.tar.gz.sha256")
+          echo "asset=dist/$NAME.tar.gz" >> "$GITHUB_OUTPUT"
+          echo "checksum=dist/$NAME.tar.gz.sha256" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            ${{ steps.package.outputs.asset }}
+            ${{ steps.package.outputs.checksum }}
+          if-no-files-found: error
+
+  release:
+    name: publish
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          cd dist
+          cat *.sha256 > SHA256SUMS
+          echo "## SHA-256" >> notes.md
+          echo '```' >> notes.md
+          cat SHA256SUMS >> notes.md
+          echo '```' >> notes.md
+          echo >> notes.md
+          echo "Install with \`curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh\` or \`brew install ${{ github.repository_owner }}/kleene/kleene\`." >> notes.md
+      - name: Formula values
+        run: |
+          echo "Homebrew formula (Formula/kleene.rb in the tap): set version to ${GITHUB_REF_NAME#v} and these sha256 values:"
+          cat dist/SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          generate_release_notes: true
+          body_path: dist/notes.md
+          files: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
