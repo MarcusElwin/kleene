@@ -186,6 +186,7 @@ impl RouterConfig {
         };
         let mut pricing = Pricing::new();
         for (model, input, output) in [
+            ("claude-opus-5-5", 4.0, 20.0),
             ("claude-opus-5", 5.0, 25.0),
             ("claude-sonnet-5", 2.0, 10.0),
             ("claude-haiku-4-5", 1.0, 5.0),
@@ -206,7 +207,7 @@ impl RouterConfig {
         }
         .with_alias(
             "root",
-            vec![Candidate::new("anthropic", "claude-opus-5")],
+            vec![Candidate::new("anthropic", "claude-opus-5-5")],
             opts("high"),
         )
         .with_alias(
@@ -988,7 +989,7 @@ cache_read_per_mtok = 0.5
         let cfg = RouterConfig::default_for_anthropic();
         let r = Router::new(cfg.clone());
         for (alias, model) in [
-            ("root", "claude-opus-5"),
+            ("root", "claude-opus-5-5"),
             ("worker", "claude-sonnet-5"),
             ("proxy", "claude-haiku-4-5"),
             ("judge", "claude-sonnet-5"),
@@ -1004,6 +1005,7 @@ cache_read_per_mtok = 0.5
             cache_read_tokens: 1_000_000,
             ..Default::default()
         };
+        assert!((cfg.pricing.cost("claude-opus-5-5", &usage).unwrap() - 24.4).abs() < 1e-9);
         assert!((cfg.pricing.cost("claude-opus-5", &usage).unwrap() - 30.5).abs() < 1e-9);
         assert!((cfg.pricing.cost("claude-sonnet-5", &usage).unwrap() - 12.2).abs() < 1e-9);
         assert!((cfg.pricing.cost("claude-haiku-4-5", &usage).unwrap() - 6.1).abs() < 1e-9);

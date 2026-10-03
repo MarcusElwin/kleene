@@ -440,6 +440,34 @@ async fn shell(command: &str, answer: &Batch, workspace: &std::path::Path) -> Ve
     }
 }
 
+/// The answer as the judge reads it: every cell in full (the table
+/// renderer cuts long cells, and a memo is one long cell), at most fifty
+/// rows, one `column: value` line per cell.
+pub fn render_for_judge(answer: &Batch) -> String {
+    let names = answer.schema.names();
+    let mut out = String::new();
+    for (i, row) in answer.rows.iter().take(50).enumerate() {
+        out.push_str(&format!("row {}:\n", i + 1));
+        for (j, v) in row.iter().enumerate() {
+            let name = names
+                .get(j)
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("col{j}"));
+            out.push_str(&format!("  {name}: {}\n", v.render()));
+        }
+    }
+    if answer.rows.len() > 50 {
+        out.push_str(&format!(
+            "({} more rows not shown)\n",
+            answer.rows.len() - 50
+        ));
+    }
+    if answer.rows.is_empty() {
+        out.push_str("(no rows)\n");
+    }
+    out
+}
+
 async fn judge_call(
     provider: Arc<dyn Provider>,
     alias: &str,
@@ -452,7 +480,7 @@ async fn judge_call(
         reference
             .map(|r| format!("Reference answer:\n{r}\n"))
             .unwrap_or_default(),
-        answer.render_table(50)
+        render_for_judge(answer)
     );
     let req = CompletionRequest {
         alias: kleene_core::ModelAlias(alias.to_string()),
@@ -474,7 +502,7 @@ async fn judge_call(
                 .trim()
                 .to_ascii_uppercase();
             Verdict {
-                pass: first.starts_with("PASS"),
+                pass: first.starts_with("PASS") && !first.contains("FAIL"),
                 detail: text.lines().take(2).collect::<Vec<_>>().join(" "),
             }
         }
@@ -637,5 +665,22 @@ mod tests {
             vec![vec![Value::from("location")], vec![Value::from("entity")]],
         );
         assert!(!rt.block_on(tie.check(&outside, &ws, None)).pass);
+    }
+
+    #[test]
+    fn judge_sees_long_cells_in_full() {
+        let memo = "x".repeat(400);
+        let b = Batch {
+            schema: Arc::new(kleene_core::Schema::new(vec![kleene_core::Field::new(
+                "memo",
+                kleene_core::DataType::Text,
+            )])),
+            rows: vec![vec![Value::Text(memo.clone())]],
+        };
+        let shown = render_for_judge(&b);
+        assert!(shown.contains(&memo), "{shown}");
+        assert!(shown.starts_with("row 1:\n  memo: "), "{shown}");
+        let empty = Batch { rows: vec![], ..b };
+        assert!(render_for_judge(&empty).contains("(no rows)"));
     }
 }

@@ -1,0 +1,122 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="420" viewBox="0 0 720 420" font-family="system-ui, sans-serif" font-size="12">
+<rect width="720" height="420" fill="#ffffff"/>
+<text x="360" y="22" text-anchor="middle" font-size="15" font-weight="600">Accuracy at cost parity</text>
+<line x1="64" y1="368" x2="696" y2="368" stroke="#444"/>
+<line x1="64" y1="40" x2="64" y2="368" stroke="#444"/>
+<text x="64" y="384" text-anchor="middle" fill="#444">0.01</text>
+<text x="58" y="372" text-anchor="end" fill="#444">0</text>
+<line x1="64" y1="368" x2="696" y2="368" stroke="#eee"/>
+<text x="222" y="384" text-anchor="middle" fill="#444">0.33</text>
+<text x="58" y="290" text-anchor="end" fill="#444">0.25</text>
+<line x1="64" y1="286" x2="696" y2="286" stroke="#eee"/>
+<text x="380" y="384" text-anchor="middle" fill="#444">0.66</text>
+<text x="58" y="208" text-anchor="end" fill="#444">0.50</text>
+<line x1="64" y1="204" x2="696" y2="204" stroke="#eee"/>
+<text x="538" y="384" text-anchor="middle" fill="#444">0.98</text>
+<text x="58" y="126" text-anchor="end" fill="#444">0.75</text>
+<line x1="64" y1="122" x2="696" y2="122" stroke="#eee"/>
+<text x="696" y="384" text-anchor="middle" fill="#444">1.30</text>
+<text x="58" y="44" text-anchor="end" fill="#444">1</text>
+<line x1="64" y1="40" x2="696" y2="40" stroke="#eee"/>
+<text x="380" y="408" text-anchor="middle" fill="#222">cumulative dollars</text>
+<text transform="translate(14 204) rotate(-90)" text-anchor="middle" fill="#222">cumulative accuracy</text>
+<polyline fill="none" stroke="#1f77b4" stroke-width="2" points="103.5,40.0 112.3,204.0 125.8,258.7 169.1,286.0 178.4,302.4 193.6,313.3 293.0,274.3 307.4,286.0 385.0,295.1 412.0,302.4 423.3,308.4 484.7,313.3"/>
+<circle cx="103.5" cy="40.0" r="3" fill="#1f77b4"/>
+<circle cx="112.3" cy="204.0" r="3" fill="#1f77b4"/>
+<circle cx="125.8" cy="258.7" r="3" fill="#1f77b4"/>
+<circle cx="169.1" cy="286.0" r="3" fill="#1f77b4"/>
+<circle cx="178.4" cy="302.4" r="3" fill="#1f77b4"/>
+<circle cx="193.6" cy="313.3" r="3" fill="#1f77b4"/>
+<circle cx="293.0" cy="274.3" r="3" fill="#1f77b4"/>
+<circle cx="307.4" cy="286.0" r="3" fill="#1f77b4"/>
+<circle cx="385.0" cy="295.1" r="3" fill="#1f77b4"/>
+<circle cx="412.0" cy="302.4" r="3" fill="#1f77b4"/>
+<circle cx="423.3" cy="308.4" r="3" fill="#1f77b4"/>
+<circle cx="484.7" cy="313.3" r="3" fill="#1f77b4"/>
+<rect x="496" y="46" width="10" height="10" fill="#1f77b4"/>
+<text x="510" y="55" fill="#222">coding frozen</text>
+<polyline fill="none" stroke="#d62728" stroke-width="2" points="104.2,40.0 108.1,40.0 108.1,149.3 113.4,204.0 124.1,236.8 124.1,258.7 127.9,274.3 136.7,286.0 205.1,295.1 215.9,302.4 224.4,308.4 290.0,313.3"/>
+<circle cx="104.2" cy="40.0" r="3" fill="#d62728"/>
+<circle cx="108.1" cy="40.0" r="3" fill="#d62728"/>
+<circle cx="108.1" cy="149.3" r="3" fill="#d62728"/>
+<circle cx="113.4" cy="204.0" r="3" fill="#d62728"/>
+<circle cx="124.1" cy="236.8" r="3" fill="#d62728"/>
+<circle cx="124.1" cy="258.7" r="3" fill="#d62728"/>
+<circle cx="127.9" cy="274.3" r="3" fill="#d62728"/>
+<circle cx="136.7" cy="286.0" r="3" fill="#d62728"/>
+<circle cx="205.1" cy="295.1" r="3" fill="#d62728"/>
+<circle cx="215.9" cy="302.4" r="3" fill="#d62728"/>
+<circle cx="224.4" cy="308.4" r="3" fill="#d62728"/>
+<circle cx="290.0" cy="313.3" r="3" fill="#d62728"/>
+<rect x="496" y="62" width="10" height="10" fill="#d62728"/>
+<text x="510" y="71" fill="#222">coding learning</text>
+<polyline fill="none" stroke="#2ca02c" stroke-width="2" points="69.3,40.0 81.1,204.0 94.8,258.7 176.7,286.0 183.9,236.8 201.0,258.7 227.7,274.3 239.2,245.0 278.3,258.7 379.7,269.6 472.3,278.5 536.7,258.7 539.7,267.1 591.8,250.9 614.9,236.8 628.6,245.0 639.8,252.2 662.1,258.7 673.1,247.2 696.0,236.8"/>
+<circle cx="69.3" cy="40.0" r="3" fill="#2ca02c"/>
+<circle cx="81.1" cy="204.0" r="3" fill="#2ca02c"/>
+<circle cx="94.8" cy="258.7" r="3" fill="#2ca02c"/>
+<circle cx="176.7" cy="286.0" r="3" fill="#2ca02c"/>
+<circle cx="183.9" cy="236.8" r="3" fill="#2ca02c"/>
+<circle cx="201.0" cy="258.7" r="3" fill="#2ca02c"/>
+<circle cx="227.7" cy="274.3" r="3" fill="#2ca02c"/>
+<circle cx="239.2" cy="245.0" r="3" fill="#2ca02c"/>
+<circle cx="278.3" cy="258.7" r="3" fill="#2ca02c"/>
+<circle cx="379.7" cy="269.6" r="3" fill="#2ca02c"/>
+<circle cx="472.3" cy="278.5" r="3" fill="#2ca02c"/>
+<circle cx="536.7" cy="258.7" r="3" fill="#2ca02c"/>
+<circle cx="539.7" cy="267.1" r="3" fill="#2ca02c"/>
+<circle cx="591.8" cy="250.9" r="3" fill="#2ca02c"/>
+<circle cx="614.9" cy="236.8" r="3" fill="#2ca02c"/>
+<circle cx="628.6" cy="245.0" r="3" fill="#2ca02c"/>
+<circle cx="639.8" cy="252.2" r="3" fill="#2ca02c"/>
+<circle cx="662.1" cy="258.7" r="3" fill="#2ca02c"/>
+<circle cx="673.1" cy="247.2" r="3" fill="#2ca02c"/>
+<circle cx="696.0" cy="236.8" r="3" fill="#2ca02c"/>
+<rect x="496" y="78" width="10" height="10" fill="#2ca02c"/>
+<text x="510" y="87" fill="#222">memo-rubric frozen</text>
+<polyline fill="none" stroke="#ff7f0e" stroke-width="2" points="115.6,40.0 120.8,40.0 136.5,40.0 149.8,122.0 154.5,105.6 160.2,149.3 167.5,133.7 174.0,163.0 177.0,185.8 180.0,171.2 184.6,159.3 187.8,149.3 195.5,166.2 198.8,180.6 217.6,193.1 220.4,183.5 223.8,194.4 227.1,185.8 232.4,178.1 237.1,187.6"/>
+<circle cx="115.6" cy="40.0" r="3" fill="#ff7f0e"/>
+<circle cx="120.8" cy="40.0" r="3" fill="#ff7f0e"/>
+<circle cx="136.5" cy="40.0" r="3" fill="#ff7f0e"/>
+<circle cx="149.8" cy="122.0" r="3" fill="#ff7f0e"/>
+<circle cx="154.5" cy="105.6" r="3" fill="#ff7f0e"/>
+<circle cx="160.2" cy="149.3" r="3" fill="#ff7f0e"/>
+<circle cx="167.5" cy="133.7" r="3" fill="#ff7f0e"/>
+<circle cx="174.0" cy="163.0" r="3" fill="#ff7f0e"/>
+<circle cx="177.0" cy="185.8" r="3" fill="#ff7f0e"/>
+<circle cx="180.0" cy="171.2" r="3" fill="#ff7f0e"/>
+<circle cx="184.6" cy="159.3" r="3" fill="#ff7f0e"/>
+<circle cx="187.8" cy="149.3" r="3" fill="#ff7f0e"/>
+<circle cx="195.5" cy="166.2" r="3" fill="#ff7f0e"/>
+<circle cx="198.8" cy="180.6" r="3" fill="#ff7f0e"/>
+<circle cx="217.6" cy="193.1" r="3" fill="#ff7f0e"/>
+<circle cx="220.4" cy="183.5" r="3" fill="#ff7f0e"/>
+<circle cx="223.8" cy="194.4" r="3" fill="#ff7f0e"/>
+<circle cx="227.1" cy="185.8" r="3" fill="#ff7f0e"/>
+<circle cx="232.4" cy="178.1" r="3" fill="#ff7f0e"/>
+<circle cx="237.1" cy="187.6" r="3" fill="#ff7f0e"/>
+<rect x="496" y="94" width="10" height="10" fill="#ff7f0e"/>
+<text x="510" y="103" fill="#222">memo-rubric learning</text>
+<polyline fill="none" stroke="#9467bd" stroke-width="2" points="64.0,40.0 69.7,204.0 74.4,258.7 76.7,286.0 82.2,236.8 116.5,258.7 121.5,274.3 139.8,286.0 156.5,295.1 165.3,302.4 167.4,308.4 171.3,286.0 179.7,267.1 190.8,274.3 204.3,258.7 206.5,245.0 212.5,252.2 224.2,240.4 226.1,229.9 231.7,236.8"/>
+<circle cx="64.0" cy="40.0" r="3" fill="#9467bd"/>
+<circle cx="69.7" cy="204.0" r="3" fill="#9467bd"/>
+<circle cx="74.4" cy="258.7" r="3" fill="#9467bd"/>
+<circle cx="76.7" cy="286.0" r="3" fill="#9467bd"/>
+<circle cx="82.2" cy="236.8" r="3" fill="#9467bd"/>
+<circle cx="116.5" cy="258.7" r="3" fill="#9467bd"/>
+<circle cx="121.5" cy="274.3" r="3" fill="#9467bd"/>
+<circle cx="139.8" cy="286.0" r="3" fill="#9467bd"/>
+<circle cx="156.5" cy="295.1" r="3" fill="#9467bd"/>
+<circle cx="165.3" cy="302.4" r="3" fill="#9467bd"/>
+<circle cx="167.4" cy="308.4" r="3" fill="#9467bd"/>
+<circle cx="171.3" cy="286.0" r="3" fill="#9467bd"/>
+<circle cx="179.7" cy="267.1" r="3" fill="#9467bd"/>
+<circle cx="190.8" cy="274.3" r="3" fill="#9467bd"/>
+<circle cx="204.3" cy="258.7" r="3" fill="#9467bd"/>
+<circle cx="206.5" cy="245.0" r="3" fill="#9467bd"/>
+<circle cx="212.5" cy="252.2" r="3" fill="#9467bd"/>
+<circle cx="224.2" cy="240.4" r="3" fill="#9467bd"/>
+<circle cx="226.1" cy="229.9" r="3" fill="#9467bd"/>
+<circle cx="231.7" cy="236.8" r="3" fill="#9467bd"/>
+<rect x="496" y="110" width="10" height="10" fill="#9467bd"/>
+<text x="510" y="119" fill="#222">memo-rubric plain</text>
+</svg>

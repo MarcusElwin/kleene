@@ -1,0 +1,180 @@
+{
+  "name": "coding",
+  "description": "Four three-step coding episodes over small Python projects: implement a module against visible tests, extend it, then fix a bug report; each step continues the previous step's workspace and is graded by the grader's own hidden unit tests",
+  "license": "original projects, MIT",
+  "kind": "code_implement",
+  "tasks": [
+    {
+      "id": "ledger-1-parse",
+      "kind": "code_implement",
+      "task": "Implement parse_transactions(text) in ledger/parse.py so that tests/test_parse.py passes. Rules: text is CSV; blank lines and lines starting with '#' are skipped; the first remaining line is the header, and the columns date, description, amount, currency may come in any order; each row becomes a dict with keys date, description, amount (a float rounded to 2 decimals), currency. Amounts may have thousands separators (commas) and may be wrapped in parentheses to mean negative, or carry a leading minus; descriptions may be quoted with commas inside (use the csv module). Dates are 'YYYY-MM-DD' or 'DD/MM/YYYY' and are always returned as 'YYYY-MM-DD'. An empty currency means 'USD'; currencies are returned upper-cased. A bad amount or date raises ValueError whose message contains the 1-based line number in the input (counting every line, including skipped ones). data/transactions.csv is a sample that must parse to 8 rows. The workspace is a small Python 3 project (no third-party packages; the standard library only); explore it with files, read and grep, edit with write_file or patch, and run its tests with CALL shell('python3 -m unittest -q'). Do not edit anything under tests/ (the grader uses its own copies). Finish with FINAL over one row with columns done (true) and note (one line on what you changed).",
+      "setup": [],
+      "verify": {
+        "kind": "shell",
+        "command": "sh .grader/run.sh 1"
+      },
+      "difficulty": 1200.0,
+      "workspace_from": "workspaces/ledger"
+    },
+    {
+      "id": "ledger-2-report",
+      "kind": "code_implement",
+      "task": "Implement the three functions in ledger/report.py over the transaction dicts that parse_transactions returns, so that tests/test_report.py passes. monthly_totals(transactions) returns a dict from 'YYYY-MM' to the sum of amounts that month rounded to 2 decimals, in key order, with no entry for months without transactions. top_expenses(transactions, n) returns the n transactions with the most negative amounts (largest outflow first); ties are broken by earlier date, then description alphabetically; if fewer than n exist all are returned, and n <= 0 returns []. balance_by_currency(transactions) returns a dict from currency to its net amount rounded to 2 decimals, keys sorted. This continues your earlier work in the same workspace: the files you wrote before are still there. The workspace is a small Python 3 project (no third-party packages; the standard library only); explore it with files, read and grep, edit with write_file or patch, and run its tests with CALL shell('python3 -m unittest -q'). Do not edit anything under tests/ (the grader uses its own copies). Finish with FINAL over one row with columns done (true) and note (one line on what you changed).",
+      "setup": [
+        "sh .grader/ensure.sh 1",
+        "cp .grader/visible/test_report.py tests/"
+      ],
+      "verify": {
+        "kind": "shell",
+        "command": "sh .grader/run.sh 2"
+      },
+      "difficulty": 1250.0,
+      "continues": "ledger-1-parse"
+    },
+    {
+      "id": "ledger-3-cli",
+      "kind": "code_fix",
+      "task": "Bug report for the command line in ledger/__main__.py (run as python3 -m ledger data/transactions.csv --rates data/rates.json [--base EUR] [--month 2026-01]). It prints one line per month, 'YYYY-MM<TAB>total' with the total in the base currency. Three things are wrong: (1) the currency conversion is inverted: rates.json maps each currency to its value in USD, so an amount in currency c is worth amount * rates[c] / rates[base] in the base currency, and today EUR rows come out too small; (2) totals print with floating-point noise like 0.30000000000000004, and must always print with exactly two decimals; (3) a missing or unreadable CSV or rates file, or a currency absent from rates.json, crashes with a traceback, and must instead print 'error: <reason>' on stderr (naming the unknown currency when that is the reason) and exit with status 2. Fix all three without changing the output format otherwise. With the sample data and rates the correct output is '2026-01\\t1848.84' then '2026-02\\t332.58'. This continues your earlier work in the same workspace: the files you wrote before are still there. The workspace is a small Python 3 project (no third-party packages; the standard library only); explore it with files, read and grep, edit with write_file or patch, and run its tests with CALL shell('python3 -m unittest -q'). Do not edit anything under tests/ (the grader uses its own copies). Finish with FINAL over one row with columns done (true) and note (one line on what you changed).",
+      "setup": [
+        "sh .grader/ensure.sh 1",
+        "sh .grader/ensure.sh 2",
+        "cp -R .grader/start/step3/. ."
+      ],
+      "verify": {
+        "kind": "shell",
+        "command": "sh .grader/run.sh 3"
+      },
+      "difficulty": 1350.0,
+      "continues": "ledger-2-report"
+    },
+    {
+      "id": "textstats-1-tokenize",
+      "kind": "code_implement",
+      "task": "Implement tokenize(text) and word_counts(text) in textstats/core.py so that tests/test_tokenize.py passes. A token is a maximal run of Unicode letters or digits in the lower-cased text, where an apostrophe is allowed inside a token (so \"doesn't\" and \"it's\" are single tokens) but an apostrophe at either end of a run is stripped (\"'tis\" gives \"tis\", \"dogs'\" gives \"dogs\"). Everything else separates tokens, including hyphens and underscores (\"well-known\" is two tokens, \"snake_case\" is two). Tokens shorter than 2 characters are dropped. word_counts returns a dict from token to count. The workspace is a small Python 3 project (no third-party packages; the standard library only); explore it with files, read and grep, edit with write_file or patch, and run its tests with CALL shell('python3 -m unittest -q'). Do not edit anything under tests/ (the grader uses its own copies). Finish with FINAL over one row with columns done (true) and note (one line on what you changed).",
+      "setup": [],
+      "verify": {
+        "kind": "shell",
+        "command": "sh .grader/run.sh 1"
+      },
+      "difficulty": 1200.0,
+      "workspace_from": "workspaces/textstats"
+    },
+    {
+      "id": "textstats-2-ranking",
+      "kind": "code_implement",
+      "task": "Add three functions to textstats/core.py so that tests/test_ranking.py passes. load_stopwords(path) returns a set of lower-cased, stripped words from a UTF-8 file with one word per line, ignoring blank lines and lines starting with '#'. top_words(text, n, stopwords=None) returns a list of (word, count) for the n most frequent tokens of text, most frequent first, ties broken alphabetically, with stopwords excluded; if fewer than n words exist all are returned and n <= 0 gives []. ngrams(tokens, n) returns the list of consecutive n-tuples of the token list; n < 1 raises ValueError, n greater than the number of tokens gives [], and n equal to it gives one tuple. This continues your earlier work in the same workspace: the files you wrote before are still there. The workspace is a small Python 3 project (no third-party packages; the standard library only); explore it with files, read and grep, edit with write_file or patch, and run its tests with CALL shell('python3 -m unittest -q'). Do not edit anything under tests/ (the grader uses its own copies). Finish with FINAL over one row with columns done (true) and note (one line on what you changed).",
+      "setup": [
+        "sh .grader/ensure.sh 1",
+        "cp .grader/visible/test_ranking.py tests/"
+      ],
+      "verify": {
+        "kind": "shell",
+        "command": "sh .grader/run.sh 2"
+      },
+      "difficulty": 1250.0,
+      "continues": "textstats-1-tokenize"
+    },
+    {
+      "id": "textstats-3-summary",
+      "kind": "code_fix",
+      "task": "Bug report for summarize(path) in textstats/summary.py, which returns a dict with lines, words, unique and top (the top three words as (word, count) pairs) for a text file. Users report wrong results on files exported from Windows tools: a file that starts with a UTF-8 byte-order mark and uses CRLF line endings gets its accented words mangled and its lines over-counted. The rules: the file is UTF-8, possibly with a BOM, which must not count as text; lines counts lines the way a reader would (CRLF or LF, a final line without a trailing newline still counts, and an empty file has 0 lines and top == []); words is the token count and unique the distinct token count using textstats.core.tokenize. Fix it. data/sample.txt has 3 lines and its top word is ('the', 5). This continues your earlier work in the same workspace: the files you wrote before are still there. The workspace is a small Python 3 project (no third-party packages; the standard library only); explore it with files, read and grep, edit with write_file or patch, and run its tests with CALL shell('python3 -m unittest -q'). Do not edit anything under tests/ (the grader uses its own copies). Finish with FINAL over one row with columns done (true) and note (one line on what you changed).",
+      "setup": [
+        "sh .grader/ensure.sh 1",
+        "sh .grader/ensure.sh 2",
+        "cp -R .grader/start/step3/. ."
+      ],
+      "verify": {
+        "kind": "shell",
+        "command": "sh .grader/run.sh 3"
+      },
+      "difficulty": 1300.0,
+      "continues": "textstats-2-ranking"
+    },
+    {
+      "id": "inventory-1-stock",
+      "kind": "code_implement",
+      "task": "Implement the Inventory class in inventory/store.py so that tests/test_stock.py passes (InsufficientStock is already defined there; keep its message format). add(sku, qty) receives units; remove(sku, qty) ships units and raises InsufficientStock(sku, requested, available) when qty exceeds what is on hand (an unknown sku has 0 available), leaving stock unchanged; stock(sku) returns units on hand, 0 for an unknown sku; skus() returns the sorted list of skus with stock above 0. Quantities must be positive integers: add and remove raise ValueError for 0, negatives, floats, strings or booleans. The workspace is a small Python 3 project (no third-party packages; the standard library only); explore it with files, read and grep, edit with write_file or patch, and run its tests with CALL shell('python3 -m unittest -q'). Do not edit anything under tests/ (the grader uses its own copies). Finish with FINAL over one row with columns done (true) and note (one line on what you changed).",
+      "setup": [],
+      "verify": {
+        "kind": "shell",
+        "command": "sh .grader/run.sh 1"
+      },
+      "difficulty": 1150.0,
+      "workspace_from": "workspaces/inventory"
+    },
+    {
+      "id": "inventory-2-reservations",
+      "kind": "code_implement",
+      "task": "Add reservations to Inventory in inventory/store.py so that tests/test_reservations.py passes. reserve(order_id, sku, qty) holds qty units for an order without changing stock; reserved(sku) is the total held across open orders; available(sku) is stock minus reserved; reserving beyond what is available raises InsufficientStock with available set to the free quantity; reserving the same sku again for the same order replaces that order's earlier hold on it (so the check is against what is free once the earlier hold is set aside). remove(sku, qty) must now check against available, not stock. release(order_id) drops all holds of an order and ignores unknown orders. fulfil(order_id) ships every hold of the order (stock goes down) and releases it; an unknown order raises KeyError. This continues your earlier work in the same workspace: the files you wrote before are still there. The workspace is a small Python 3 project (no third-party packages; the standard library only); explore it with files, read and grep, edit with write_file or patch, and run its tests with CALL shell('python3 -m unittest -q'). Do not edit anything under tests/ (the grader uses its own copies). Finish with FINAL over one row with columns done (true) and note (one line on what you changed).",
+      "setup": [
+        "sh .grader/ensure.sh 1",
+        "cp .grader/visible/test_reservations.py tests/"
+      ],
+      "verify": {
+        "kind": "shell",
+        "command": "sh .grader/run.sh 2"
+      },
+      "difficulty": 1300.0,
+      "continues": "inventory-1-stock"
+    },
+    {
+      "id": "inventory-3-events",
+      "kind": "code_fix",
+      "task": "Bug report for inventory/events.py. low_stock(inv, threshold) should return (sku, available) pairs for the skus with stock on hand whose available quantity is strictly below the threshold, least available first with ties by sku; today it uses <= and returns bare skus in arbitrary order. apply_events(inv, lines) replays JSON-lines events (each an object with id, ts, type in add/remove/reserve/release/fulfil, and sku, qty, order as the type needs) into an Inventory and returns how many it applied; today it applies them in file order and applies duplicates. It must apply events in ascending ts (an ISO timestamp string; ties keep file order), skip any event whose id was already seen, ignore blank lines, and raise ValueError for an unknown type. data/events.jsonl is a sample: applying it should count 6 events and leave bolt at 12 on hand with 7 available and nut at 3. This continues your earlier work in the same workspace: the files you wrote before are still there. The workspace is a small Python 3 project (no third-party packages; the standard library only); explore it with files, read and grep, edit with write_file or patch, and run its tests with CALL shell('python3 -m unittest -q'). Do not edit anything under tests/ (the grader uses its own copies). Finish with FINAL over one row with columns done (true) and note (one line on what you changed).",
+      "setup": [
+        "sh .grader/ensure.sh 1",
+        "sh .grader/ensure.sh 2",
+        "cp -R .grader/start/step3/. ."
+      ],
+      "verify": {
+        "kind": "shell",
+        "command": "sh .grader/run.sh 3"
+      },
+      "difficulty": 1350.0,
+      "continues": "inventory-2-reservations"
+    },
+    {
+      "id": "scheduler-1-intervals",
+      "kind": "code_implement",
+      "task": "Implement scheduler/intervals.py so that tests/test_intervals.py passes. parse_time('HH:MM') returns minutes from midnight; hours may be one or two digits, minutes exactly two; '24:00' is allowed (1440) but nothing past it, minutes above 59 are rejected, and any other shape raises ValueError. parse_interval('HH:MM-HH:MM') returns (start, end) and raises ValueError unless the end is strictly after the start. merge(intervals) returns the sorted list of non-overlapping (start, end) tuples covering the same minutes, joining intervals that overlap or touch (an interval ending at 600 and one starting at 600 become one). The workspace is a small Python 3 project (no third-party packages; the standard library only); explore it with files, read and grep, edit with write_file or patch, and run its tests with CALL shell('python3 -m unittest -q'). Do not edit anything under tests/ (the grader uses its own copies). Finish with FINAL over one row with columns done (true) and note (one line on what you changed).",
+      "setup": [],
+      "verify": {
+        "kind": "shell",
+        "command": "sh .grader/run.sh 1"
+      },
+      "difficulty": 1150.0,
+      "workspace_from": "workspaces/scheduler"
+    },
+    {
+      "id": "scheduler-2-free",
+      "kind": "code_implement",
+      "task": "Add free_slots and format_interval to scheduler/intervals.py so that tests/test_free.py passes. free_slots(busy, day_start, day_end, min_len) returns the (start, end) gaps of at least min_len minutes inside [day_start, day_end) that no busy interval covers, in order; busy may be unsorted or overlapping and may extend outside the day (clip it); an empty busy list gives the whole day when it is long enough, and a day whose end is not after its start gives []. format_interval((start, end)) returns 'HH:MM-HH:MM' with two-digit hours and minutes (1440 prints as 24:00). This continues your earlier work in the same workspace: the files you wrote before are still there. The workspace is a small Python 3 project (no third-party packages; the standard library only); explore it with files, read and grep, edit with write_file or patch, and run its tests with CALL shell('python3 -m unittest -q'). Do not edit anything under tests/ (the grader uses its own copies). Finish with FINAL over one row with columns done (true) and note (one line on what you changed).",
+      "setup": [
+        "sh .grader/ensure.sh 1",
+        "cp .grader/visible/test_free.py tests/"
+      ],
+      "verify": {
+        "kind": "shell",
+        "command": "sh .grader/run.sh 2"
+      },
+      "difficulty": 1250.0,
+      "continues": "scheduler-1-intervals"
+    },
+    {
+      "id": "scheduler-3-overlap",
+      "kind": "code_fix",
+      "task": "Bug report for scheduler/overlap.py. overlaps(a, b) says two intervals that merely touch (one ends at 600, the other starts at 600) overlap; they do not. total_busy(intervals) double-counts minutes covered by more than one interval; every minute must count once (merge first). parse_span('HH:MM-HH:MM') rejects spans that run past midnight; a span whose end is at or before its start must instead end on the next day, so '22:00-02:00' is (1320, 1560) and '10:00-10:00' is (600, 2040), while a text without exactly one '-' still raises ValueError. Fix all three. This continues your earlier work in the same workspace: the files you wrote before are still there. The workspace is a small Python 3 project (no third-party packages; the standard library only); explore it with files, read and grep, edit with write_file or patch, and run its tests with CALL shell('python3 -m unittest -q'). Do not edit anything under tests/ (the grader uses its own copies). Finish with FINAL over one row with columns done (true) and note (one line on what you changed).",
+      "setup": [
+        "sh .grader/ensure.sh 1",
+        "sh .grader/ensure.sh 2",
+        "cp -R .grader/start/step3/. ."
+      ],
+      "verify": {
+        "kind": "shell",
+        "command": "sh .grader/run.sh 3"
+      },
+      "difficulty": 1300.0,
+      "continues": "scheduler-2-free"
+    }
+  ]
+}

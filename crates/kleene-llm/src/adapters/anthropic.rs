@@ -109,8 +109,10 @@ impl AnthropicProvider {
         }
     }
 
-    /// Whether the `thinking` parameter is sent for this model. Haiku models
-    /// do not accept adaptive thinking, so it is omitted for them.
+    /// Whether the `thinking` and `output_config.effort` parameters are sent
+    /// for this model. Haiku models accept neither adaptive thinking nor
+    /// effort (the API answers "This model does not support the effort
+    /// parameter"), so both are omitted for them.
     pub fn supports_thinking(model: &str) -> bool {
         !model.starts_with("claude-haiku")
     }
@@ -150,10 +152,15 @@ impl AnthropicProvider {
         if let Some(schema) = &req.output_schema {
             output_config.insert(
                 "format".into(),
-                json!({"type": "json_schema", "schema": schema}),
+                json!({"type": "json_schema", "schema": normalize_schema(schema)}),
             );
         }
-        if let Some(effort) = &req.options.effort {
+        if let Some(effort) = req
+            .options
+            .effort
+            .as_ref()
+            .filter(|_| Self::supports_thinking(&req.model))
+        {
             output_config.insert("effort".into(), json!(effort));
         }
         if !output_config.is_empty() {
@@ -528,7 +535,7 @@ impl Provider for AnthropicProvider {
         let text = resp
             .text()
             .await
-            .map_err(|e| ProviderError::Network(e.to_string()))?;
+            .map_err(|e| ProviderError::Network(http::describe(&e)))?;
         Self::parse_response(&text)
     }
 
@@ -540,6 +547,73 @@ impl Provider for AnthropicProvider {
         body["stream"] = json!(true);
         let resp = http::send(&self.backoff, || self.request(&body)).await?;
         Ok(Self::decode_stream(resp.bytes_stream()))
+    }
+}
+
+/// Rewrite a model-written JSON schema into the subset the structured
+/// output API accepts. Models write `{"hours": "number"}` for an object
+/// with one numeric field, leave `type` off an object that has
+/// `properties`, forget `additionalProperties: false`, and put `minItems`
+/// above 1 on arrays; the API rejects each of those with a 400, and a
+/// statement that calls `llm_json` per row then fails on every row. The
+/// rewrite: a bare type name becomes `{"type": name}`; a map of fields
+/// without a type becomes an object with those properties; an object gets
+/// `additionalProperties: false` and, when `required` is absent, every
+/// property required; an array's `minItems` is clamped to 1. Everything
+/// else is left as written.
+pub fn normalize_schema(schema: &Value) -> Value {
+    const TYPES: [&str; 7] = [
+        "string", "number", "integer", "boolean", "array", "object", "null",
+    ];
+    match schema {
+        Value::String(t) if TYPES.contains(&t.as_str()) => json!({ "type": t }),
+        Value::Object(map) => {
+            let mut map = map.clone();
+            let has_type = map.contains_key("type");
+            let combinator = ["anyOf", "oneOf", "allOf", "enum", "const", "$ref"]
+                .iter()
+                .any(|k| map.contains_key(*k));
+            if !has_type && !combinator {
+                if map.contains_key("properties") {
+                    map.insert("type".into(), json!("object"));
+                } else if map.contains_key("items") {
+                    map.insert("type".into(), json!("array"));
+                } else if !map.is_empty()
+                    && map.values().all(|v| {
+                        matches!(v, Value::String(t) if TYPES.contains(&t.as_str()))
+                            || v.is_object()
+                    })
+                {
+                    // A shorthand field map: every value is a type or a schema.
+                    let props = std::mem::take(&mut map);
+                    map.insert("type".into(), json!("object"));
+                    map.insert("properties".into(), Value::Object(props));
+                }
+            }
+            let ty = map.get("type").and_then(|t| t.as_str()).map(str::to_string);
+            if ty.as_deref() == Some("object") {
+                if let Some(Value::Object(props)) = map.get("properties").cloned() {
+                    let keys: Vec<Value> = props.keys().map(|k| json!(k)).collect();
+                    let props: Map<String, Value> = props
+                        .into_iter()
+                        .map(|(k, v)| (k, normalize_schema(&v)))
+                        .collect();
+                    map.insert("properties".into(), Value::Object(props));
+                    map.entry("required").or_insert(Value::Array(keys));
+                }
+                map.insert("additionalProperties".into(), json!(false));
+            }
+            if ty.as_deref() == Some("array") {
+                if let Some(items) = map.get("items").cloned() {
+                    map.insert("items".into(), normalize_schema(&items));
+                }
+                if map.get("minItems").and_then(|m| m.as_u64()).unwrap_or(0) > 1 {
+                    map.insert("minItems".into(), json!(1));
+                }
+            }
+            Value::Object(map)
+        }
+        other => other.clone(),
     }
 }
 
@@ -629,7 +703,8 @@ mod tests {
             body["output_config"],
             json!({
                 "format": {"type": "json_schema",
-                           "schema": {"type": "object", "properties": {"ok": {"type": "boolean"}}}},
+                           "schema": {"type": "object", "properties": {"ok": {"type": "boolean"}},
+                                      "required": ["ok"], "additionalProperties": false}},
                 "effort": "low"
             })
         );
@@ -672,13 +747,63 @@ mod tests {
     }
 
     #[test]
-    fn thinking_is_omitted_for_haiku() {
+    fn thinking_and_effort_are_omitted_for_haiku() {
         let mut r = req();
+        r.options.effort = Some("low".into());
         r.model = "claude-haiku-4-5".into();
         let body = AnthropicProvider::build_body(&r);
         assert!(body.get("thinking").is_none());
+        assert!(body.pointer("/output_config/effort").is_none());
         r.model = "claude-opus-5".into();
-        assert!(AnthropicProvider::build_body(&r).get("thinking").is_some());
+        let body = AnthropicProvider::build_body(&r);
+        assert!(body.get("thinking").is_some());
+        assert_eq!(body.pointer("/output_config/effort"), Some(&json!("low")));
+    }
+
+    #[test]
+    fn model_written_schemas_are_normalised() {
+        // A bare field map becomes a closed object with every field required.
+        let got = normalize_schema(&json!({"hours": "number", "person": "string"}));
+        assert_eq!(
+            got,
+            json!({
+                "type": "object",
+                "properties": {"hours": {"type": "number"}, "person": {"type": "string"}},
+                "required": ["hours", "person"],
+                "additionalProperties": false
+            })
+        );
+        // An object with properties but no type, and an array with minItems 6.
+        let got = normalize_schema(&json!({
+            "properties": {"rows": {"type": "array", "minItems": 6, "items": {"id": "integer"}}}
+        }));
+        assert_eq!(got["type"], "object");
+        assert_eq!(got["additionalProperties"], false);
+        assert_eq!(got["required"], json!(["rows"]));
+        assert_eq!(got["properties"]["rows"]["minItems"], 1);
+        assert_eq!(got["properties"]["rows"]["items"]["type"], "object");
+        assert_eq!(
+            got["properties"]["rows"]["items"]["properties"]["id"]["type"],
+            "integer"
+        );
+        // A well-formed schema with an explicit required list is left alone
+        // apart from the closed-object marker.
+        let well = json!({"type": "object", "properties": {"a": {"type": "string"}}, "required": [], "additionalProperties": false});
+        assert_eq!(normalize_schema(&well), well);
+        // Combinators are not mistaken for field maps.
+        let any = json!({"anyOf": [{"type": "string"}, {"type": "null"}]});
+        assert_eq!(normalize_schema(&any), any);
+    }
+
+    #[test]
+    fn the_body_carries_the_normalised_schema() {
+        let mut r = req();
+        r.output_schema = Some(json!({"answer": "boolean"}));
+        let body = AnthropicProvider::build_body(&r);
+        assert_eq!(
+            body.pointer("/output_config/format/schema/additionalProperties"),
+            Some(&json!(false))
+        );
     }
 
     #[test]

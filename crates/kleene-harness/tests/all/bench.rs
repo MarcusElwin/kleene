@@ -8,7 +8,7 @@ use kleene_harness::learn::packs::{terminal_pack, Pack};
 use kleene_harness::learn::{Learn, LearnConfig};
 use kleene_harness::testing::ScriptedProvider;
 use kleene_harness::HarnessConfig;
-use kleene_store::DuckDbStore;
+use kleene_store::{DuckDbStore, Store};
 use std::sync::Arc;
 
 async fn learn(store: DuckDbStore, provider: Arc<ScriptedProvider>) -> Learn {
@@ -16,6 +16,8 @@ async fn learn(store: DuckDbStore, provider: Arc<ScriptedProvider>) -> Learn {
         workspace: std::env::temp_dir(),
         provider: Some(provider),
         max_turns: 4,
+        // What `kleene bench` sets: sessions leave no tables behind.
+        drop_session_tables: true,
         ..HarnessConfig::default()
     };
     Learn::new(
@@ -47,7 +49,7 @@ async fn terminal_pack_runs_shell_tasks_from_sql_and_shell_oracles_judge_them() 
             ),
             (
                 "How many lines does it have",
-                "```sql\nFINAL FROM (SELECT COUNT(*) AS lines FROM lines('data.txt'))\n```",
+                "```sql\nCREATE TABLE scratch AS SELECT 1 AS x;\nFINAL FROM (SELECT COUNT(*) AS lines FROM lines('data.txt'))\n```",
             ),
         ],
         "```sql\nFINAL FROM (SELECT 'no idea' AS answer)\n```",
@@ -59,6 +61,11 @@ async fn terminal_pack_runs_shell_tasks_from_sql_and_shell_oracles_judge_them() 
         .await
         .unwrap();
     assert_eq!(report.rows.len(), 3, "{report:?}");
+    // The solver's scratch table went with its session: the shared store
+    // lists no session tables to the runs that follow.
+    let tables = store.tables().await.unwrap();
+    assert!(!tables.iter().any(|t| t == "scratch"), "{tables:?}");
+    assert!(!tables.iter().any(|t| t == "ctx"), "{tables:?}");
     let by_id = |id: &str| report.rows.iter().find(|r| r.task == id).unwrap();
     assert!(by_id("create-file").solved, "{:?}", by_id("create-file"));
     assert!(by_id("count-lines").solved, "{:?}", by_id("count-lines"));
@@ -96,7 +103,18 @@ async fn terminal_pack_runs_shell_tasks_from_sql_and_shell_oracles_judge_them() 
     );
     assert!(by_name("cost_parity.svg").contains("terminal frozen"));
     assert!(by_name("estimate_accuracy.svg").contains("no data yet"));
-    assert!(by_name("calls_vs_difficulty.svg").contains("no data yet"));
+    // A pack task is an attempt, so the difficulty plot has its points.
+    assert!(
+        by_name("calls_vs_difficulty.svg").contains("<circle"),
+        "{}",
+        by_name("calls_vs_difficulty.svg")
+    );
+    let attempts = store
+        .query("SELECT solver, COUNT(*) FROM attempts GROUP BY solver")
+        .await
+        .unwrap();
+    assert_eq!(attempts.rows[0][0].render(), "bench:frozen");
+    assert_eq!(attempts.rows[0][1].render(), "3");
 }
 
 #[tokio::test]
@@ -141,7 +159,8 @@ async fn plain_agent_baseline_uses_tools_through_json_actions() {
 #[tokio::test]
 async fn learning_mode_adopts_a_playbook_and_frozen_does_not() {
     let dir = tempfile::tempdir().unwrap();
-    let pack = Pack::from_generator("puzzles", "puzzle", 3, 0.2, 5, &std::env::temp_dir()).unwrap();
+    let pack =
+        Pack::from_generator("puzzles", "puzzle", 3, 0.2, 5, &std::env::temp_dir(), false).unwrap();
     pack.save(dir.path()).unwrap();
     let mut rules = vec![];
     for k in 2..=8 {
@@ -211,6 +230,7 @@ async fn a_sampled_run_exports_outputs_in_the_lab_results_layout() {
                 limit: None,
                 sample: Some((2, 3)),
                 outputs: Some(out.path().to_path_buf()),
+                resume: None,
             },
         )
         .await
@@ -251,4 +271,182 @@ async fn a_sampled_run_exports_outputs_in_the_lab_results_layout() {
             assert!(d.join("output/memo.docx").is_file(), "deliverable exported");
         }
     }
+}
+
+/// A provider that is never reachable: every call fails before a token is
+/// spent, the way a key without credit or a dead endpoint does.
+struct DeadProvider;
+
+#[async_trait::async_trait]
+impl kleene_llm::Provider for DeadProvider {
+    fn name(&self) -> &str {
+        "dead"
+    }
+
+    fn capabilities(&self) -> kleene_llm::Capabilities {
+        kleene_llm::Capabilities {
+            streaming: false,
+            tools: false,
+            json_schema: true,
+            prompt_cache: false,
+            reasoning_control: false,
+            cost_reported: true,
+        }
+    }
+
+    async fn complete(
+        &self,
+        _req: kleene_llm::CompletionRequest,
+    ) -> Result<kleene_llm::CompletionResponse, kleene_llm::ProviderError> {
+        Err(kleene_llm::ProviderError::Other(
+            "Your credit balance is too low to access the API".into(),
+        ))
+    }
+}
+
+#[tokio::test]
+async fn a_run_stops_when_the_provider_never_answers_and_resumes_where_it_stopped() {
+    let dir = tempfile::tempdir().unwrap();
+    let pack = terminal_pack();
+    pack.save(dir.path()).unwrap();
+    let loaded = Pack::load(dir.path()).unwrap();
+    let store = DuckDbStore::in_memory().unwrap();
+    // The first two tasks run against a working provider, the third against
+    // a dead one: the run must stop there, not record the rest as failures.
+    let working = Arc::new(ScriptedProvider::new(
+        vec![],
+        "```sql\nFINAL FROM (SELECT 'no idea' AS answer)\n```",
+    ));
+    let l = learn(store.clone(), working.clone()).await;
+    let partial = l
+        .bench(dir.path(), &loaded, Mode::Frozen, Some(2))
+        .await
+        .unwrap();
+    assert_eq!(partial.rows.len(), 2);
+    let run = partial.run.clone();
+
+    let dead_cfg = HarnessConfig {
+        workspace: std::env::temp_dir(),
+        provider: Some(Arc::new(DeadProvider)),
+        max_turns: 4,
+        ..HarnessConfig::default()
+    };
+    let dead = Learn::new(
+        store.clone(),
+        dead_cfg,
+        LearnConfig {
+            replay_sample: 0,
+            ..LearnConfig::default()
+        },
+    )
+    .await
+    .unwrap();
+    let err = dead
+        .bench_from(dir.path(), &loaded, Mode::Frozen, None, Some(&run))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("aborted at task 3"), "{err}");
+    assert!(err.contains("credit balance"), "{err}");
+    assert!(err.contains(&format!("--resume {run}")), "{err}");
+    let evals = store
+        .query(&format!("SELECT COUNT(*) FROM evals WHERE run = '{run}'"))
+        .await
+        .unwrap();
+    assert_eq!(evals.rows[0][0].render(), "2", "the dead task left no row");
+    let note = store
+        .query(&format!("SELECT note FROM bench_runs WHERE run = '{run}'"))
+        .await
+        .unwrap();
+    assert!(note.rows[0][0].render().contains("aborted at task 3"));
+
+    // Resumed with a working provider, the run finishes with every task in
+    // order and the earlier rows intact.
+    let full = l
+        .bench_from(dir.path(), &loaded, Mode::Frozen, None, Some(&run))
+        .await
+        .unwrap();
+    assert_eq!(full.run, run);
+    assert_eq!(full.rows.len(), 6);
+    assert_eq!(
+        full.rows.iter().map(|r| r.seq).collect::<Vec<_>>(),
+        (0..6).collect::<Vec<_>>()
+    );
+    assert_eq!(working.calls(), 2 + 4);
+    let note = store
+        .query(&format!("SELECT note FROM bench_runs WHERE run = '{run}'"))
+        .await
+        .unwrap();
+    assert_eq!(note.rows[0][0].render(), "NULL");
+
+    // A different pack or mode cannot continue the run.
+    let err = l
+        .bench_from(dir.path(), &loaded, Mode::Plain, None, Some(&run))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("not terminal in plain mode"), "{err}");
+}
+
+#[tokio::test]
+async fn episode_steps_inherit_the_workspace_and_resume_rebuilds_it() {
+    let dir = tempfile::tempdir().unwrap();
+    // Step one writes a.txt; step two continues in the same directory and
+    // its setup can see (or repair) what step one left; a third task is a
+    // lazy generator reference.
+    std::fs::write(
+        dir.path().join("pack.json"),
+        r#"{"name": "ep", "description": "", "kind": "shell", "tasks": [
+          {"id": "s1", "task": "Step one: write a.txt", "verify": {"kind": "shell", "command": "test -f a.txt"}},
+          {"id": "s2", "continues": "s1", "task": "Step two: write b.txt",
+           "setup": ["test -f a.txt || echo ref > a.txt"],
+           "verify": {"kind": "shell", "command": "test -f b.txt && cat a.txt"}},
+          {"id": "s3", "from": {"generator": "puzzle", "dial": 0.1, "seed": 2}}
+        ]}"#,
+    )
+    .unwrap();
+    let pack = Pack::load(dir.path()).unwrap();
+    assert!(pack.tasks[2].task.contains("divisible"));
+    let p = Arc::new(ScriptedProvider::new(
+        vec![
+            (
+                "Step one",
+                "```sql\nCALL write_file('a.txt', 'x');\nFINAL FROM (SELECT true AS done)\n```",
+            ),
+            (
+                "Step two",
+                "```sql\nCALL write_file('b.txt', 'y');\nFINAL FROM (SELECT true AS done)\n```",
+            ),
+        ],
+        "```sql\nFINAL FROM (SELECT 0 AS total)\n```",
+    ));
+    let store = DuckDbStore::in_memory().unwrap();
+    let l = learn(store.clone(), p).await;
+    let report = l
+        .bench(dir.path(), &pack, Mode::Frozen, Some(2))
+        .await
+        .unwrap();
+    assert!(report.rows[0].solved, "{:?}", report.rows[0]);
+    assert!(report.rows[1].solved, "{:?}", report.rows[1]);
+    // Step two ran where step one's a.txt was: the oracle read the model's file.
+    assert_eq!(report.rows[1].detail, "exit 0: x", "{:?}", report.rows[1]);
+    // A run cut after step one and resumed has no workspace for step two
+    // to inherit, so the chain is rebuilt from its setups (which install
+    // the reference a.txt) and step two still passes.
+    let first = l
+        .bench(dir.path(), &pack, Mode::Frozen, Some(1))
+        .await
+        .unwrap();
+    assert_eq!(first.rows.len(), 1);
+    let resumed = l
+        .bench_from(dir.path(), &pack, Mode::Frozen, Some(2), Some(&first.run))
+        .await
+        .unwrap();
+    assert_eq!(resumed.rows.len(), 2);
+    assert!(resumed.rows[1].solved, "{:?}", resumed.rows[1]);
+    assert_eq!(
+        resumed.rows[1].detail, "exit 0: ref",
+        "{:?}",
+        resumed.rows[1]
+    );
 }

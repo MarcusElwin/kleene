@@ -552,6 +552,10 @@ Aim for a task the agent solves about half the time. Reply with JSON only: {{\"t
                     .map(|p| (p, self.cfg.judge_alias.clone()));
                 task.verify.check(answer, workspace, judge).await
             }
+            Outcome::Failed { error } => Verdict {
+                pass: false,
+                detail: format!("no FINAL: error: {error}"),
+            },
             other => Verdict {
                 pass: false,
                 detail: format!("no FINAL: {}", other.tag()),
@@ -805,13 +809,22 @@ Aim for a task the agent solves about half the time. Reply with JSON only: {{\"t
             let Some(task) = self.task(id).await? else {
                 continue;
             };
-            let br = self.run_task(&task, baseline.clone(), true).await?;
-            if self.judge(&task, &br).await.pass {
+            // Each arm gets its own empty workspace: a replay that writes
+            // files (a terminal task) must not land in the user's directory,
+            // and its oracle must judge what that arm produced.
+            let bw = packs::Workspace::create()?;
+            let br = self
+                .run_task_in(&task, baseline.clone(), true, Some(bw.path()))
+                .await?;
+            if self.judge_in(&task, &br, bw.path()).await.pass {
                 b_solved += 1;
             }
             b_cost += br.root.usage.dollars;
-            let cr = self.run_task(&task, vec![candidate.clone()], true).await?;
-            if self.judge(&task, &cr).await.pass {
+            let cw = packs::Workspace::create()?;
+            let cr = self
+                .run_task_in(&task, vec![candidate.clone()], true, Some(cw.path()))
+                .await?;
+            if self.judge_in(&task, &cr, cw.path()).await.pass {
                 c_solved += 1;
             }
             c_cost += cr.root.usage.dollars;

@@ -35,6 +35,8 @@ pub const GENERATORS: &[&str] = &[
     "repo",
     "statements",
     "contracts",
+    "logbook",
+    "memo",
 ];
 
 /// A small deterministic PRNG (xorshift64*), so tasks are reproducible.
@@ -87,6 +89,8 @@ pub fn generate(
         "repo" => repo(dial, &mut rng, workspace)?,
         "statements" => statements(dial, &mut rng),
         "contracts" => contracts(dial, &mut rng),
+        "logbook" => logbook(dial, &mut rng),
+        "memo" => memo(dial, &mut rng),
         _ => return None,
     })
 }
@@ -307,6 +311,436 @@ Answer with FINAL over one row per present category with column category (exactl
         verify: Verify::Exact { rows },
         dial,
         difficulty: difficulty_prior(dial),
+    }
+}
+
+/// A long work log: hundreds to thousands of dated entries in several
+/// phrasings, with entries about the same projects that carry numbers
+/// that are not hours, and (above dial 0.3) corrections that amend an
+/// earlier entry. Five question shapes, chosen by the seed. The dial sets
+/// the entry count (300 at 0, 1800 at 1), the span of dates, and the
+/// correction and distractor rates; at dial 0.9 a context is about 150,000
+/// characters, so it cannot be answered by reading it once.
+fn logbook(dial: f64, rng: &mut Rng) -> GeneratedTask {
+    let projects = ["Heron", "Kestrel", "Osprey", "Plover", "Sandpiper", "Tern"];
+    let people = [
+        "Amara", "Bao", "Chidi", "Dana", "Eitan", "Farah", "Gita", "Hugo",
+    ];
+    let fillers = [
+        "The coffee machine is broken again.",
+        "Parking closes at 22:00.",
+        "Design review moved rooms.",
+        "All-hands cancelled next week.",
+        "Remember to submit expense reports by Friday.",
+        "The build server was slow all afternoon.",
+    ];
+    let n_projects = 3 + (dial * 3.0).round() as usize;
+    let n_people = 4 + (dial * 4.0).round() as usize;
+    let entries = 300 + (dial * 1500.0).round() as usize;
+    let span_days = 60 + (dial * 120.0).round() as usize;
+    let month_name = |m: usize| {
+        [
+            "January", "February", "March", "April", "May", "June", "July",
+        ][m - 1]
+    };
+    // Day d (0-based) of 2026 from 1 January; months with their lengths.
+    let date_of = |d: usize| -> (usize, usize) {
+        let lens = [31, 28, 31, 30, 31, 30, 31];
+        let (mut m, mut rem) = (1, d);
+        for len in lens {
+            if rem < len {
+                break;
+            }
+            rem -= len;
+            m += 1;
+        }
+        (m, rem + 1)
+    };
+    // Every hours entry: (date index, person, project, hours), in log order.
+    let mut log: Vec<(usize, usize, usize, i64)> = vec![];
+    let mut lines: Vec<String> = vec![];
+    let mut day = 0usize;
+    for _ in 0..entries {
+        // Days advance at most one at a time so the log stays dated in order.
+        if rng.unit() < span_days as f64 / entries as f64 {
+            day = (day + 1).min(span_days - 1);
+        }
+        let (m, dd) = date_of(day);
+        let date = format!("2026-{m:02}-{dd:02}");
+        let p = rng.below(n_projects as u64) as usize;
+        let who = rng.below(n_people as u64) as usize;
+        let roll = rng.unit();
+        let distractor_rate = 0.08 + 0.12 * dial;
+        let correction_rate = if dial > 0.3 { 0.01 + 0.03 * dial } else { 0.0 };
+        if roll < correction_rate && !log.is_empty() {
+            // Amend an earlier entry: the log line names it by date, person
+            // and project, and gives the new hours.
+            let i = rng.below(log.len() as u64) as usize;
+            let (d0, who0, p0, h0) = log[i];
+            let mut h1 = 1 + rng.below(9) as i64;
+            if h1 == h0 {
+                h1 = if h0 < 9 { h0 + 1 } else { h0 - 1 };
+            }
+            log[i].3 = h1;
+            let (m0, dd0) = date_of(d0);
+            lines.push(format!(
+                "{date}. Correction: the entry of 2026-{m0:02}-{dd0:02} for {} on project {} should read {h1} hours, not {h0}.",
+                people[who0], projects[p0]
+            ));
+            continue;
+        }
+        if roll < correction_rate + distractor_rate {
+            let n = 2 + rng.below(12) as i64;
+            let which = rng.below(4);
+            lines.push(match which {
+                0 => format!(
+                    "{date}. Project {}: planning session with {n} attendees; {} took notes.",
+                    projects[p], people[who]
+                ),
+                1 => format!(
+                    "{date}. {} booked room {n} for the {} sync.",
+                    people[who], projects[p]
+                ),
+                2 => format!(
+                    "{date}. Project {} budget review: {n} open action items, owner {}.",
+                    projects[p], people[who]
+                ),
+                _ => format!(
+                    "{date}. {} estimated the {} backlog at {n} days of work.",
+                    people[who], projects[p]
+                ),
+            });
+            continue;
+        }
+        let h = 1 + rng.below(9) as i64;
+        log.push((day, who, p, h));
+        let filler = if rng.unit() < 0.2 + 0.4 * dial {
+            format!(" {}", fillers[rng.below(fillers.len() as u64) as usize])
+        } else {
+            String::new()
+        };
+        let template = rng.below(4);
+        lines.push(match template {
+            0 => format!(
+                "{date}. Project {}: {} logged {h} hours.{filler}",
+                projects[p], people[who]
+            ),
+            1 => format!(
+                "{date}. {} spent {h} hours on {} today.{filler}",
+                people[who], projects[p]
+            ),
+            2 => format!(
+                "{date}. Time entry, {}, project {}: {h}h.{filler}",
+                people[who], projects[p]
+            ),
+            _ => format!(
+                "{date}. {} worked {h} hours on project {}.{filler}",
+                people[who], projects[p]
+            ),
+        });
+    }
+    let question = rng.below(5);
+    let target_project = rng.below(n_projects as u64) as usize;
+    let months_seen: Vec<usize> = {
+        let mut v: Vec<usize> = log.iter().map(|e| date_of(e.0).0).collect();
+        v.sort();
+        v.dedup();
+        v
+    };
+    let target_month = months_seen[rng.below(months_seen.len() as u64) as usize];
+    let mut sum: HashMap<usize, i64> = HashMap::new();
+    let (kind, task, rows): (&str, String, Vec<Vec<String>>) = match question {
+        0 => {
+            for e in &log {
+                *sum.entry(e.2).or_default() += e.3;
+            }
+            (
+                "logbook_hours_by_project",
+                "ctx holds a work log, one entry per row. Entries that record time say how many hours a person logged on a project, in a few phrasings; other entries mention projects and numbers that are not hours (attendees, room numbers, action items, estimates). A later entry beginning 'Correction:' replaces the hours of the earlier entry it names (same date, person and project). Answer with FINAL over one row per project: columns project (the project name) and total_hours (an integer, corrections applied).".into(),
+                sum.iter().map(|(p, h)| vec![projects[*p].to_string(), h.to_string()]).collect(),
+            )
+        }
+        1 => {
+            for e in log.iter().filter(|e| e.2 == target_project) {
+                *sum.entry(e.1).or_default() += e.3;
+            }
+            (
+                "logbook_hours_by_person",
+                format!("ctx holds a work log, one entry per row. Entries that record time say how many hours a person logged on a project, in a few phrasings; other entries mention projects and numbers that are not hours. A later entry beginning 'Correction:' replaces the hours of the earlier entry it names. For project {} only, answer with FINAL over one row per person who logged time on it: columns person (the name) and total_hours (an integer, corrections applied).", projects[target_project]),
+                sum.iter().map(|(w, h)| vec![people[*w].to_string(), h.to_string()]).collect(),
+            )
+        }
+        2 => {
+            for e in &log {
+                *sum.entry(e.1).or_default() += e.3;
+            }
+            let mut best: Vec<(i64, String)> = sum
+                .iter()
+                .map(|(w, h)| (*h, people[*w].to_string()))
+                .collect();
+            best.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+            let (h, w) = best[0].clone();
+            (
+                "logbook_top_person",
+                "ctx holds a work log, one entry per row. Entries that record time say how many hours a person logged on a project, in a few phrasings; other entries mention people and numbers that are not hours. A later entry beginning 'Correction:' replaces the hours of the earlier entry it names. Who logged the most hours in total across every project? Answer with FINAL over one row: columns person (the name) and total_hours (an integer, corrections applied). Break a tie by the name that sorts first.".into(),
+                vec![vec![w, h.to_string()]],
+            )
+        }
+        3 => {
+            for e in log.iter().filter(|e| date_of(e.0).0 == target_month) {
+                *sum.entry(e.2).or_default() += e.3;
+            }
+            (
+                "logbook_hours_by_project_month",
+                format!("ctx holds a work log, one entry per row, each starting with its date (YYYY-MM-DD). Entries that record time say how many hours a person logged on a project, in a few phrasings; other entries mention projects and numbers that are not hours. A later entry beginning 'Correction:' replaces the hours of the earlier entry it names; the correction counts for the month of the entry it corrects. For {} 2026 only, answer with FINAL over one row per project with time logged that month: columns project (the project name) and total_hours (an integer).", month_name(target_month)),
+                sum.iter().map(|(p, h)| vec![projects[*p].to_string(), h.to_string()]).collect(),
+            )
+        }
+        _ => {
+            let mut who: Vec<usize> = log
+                .iter()
+                .filter(|e| e.2 == target_project)
+                .map(|e| e.1)
+                .collect();
+            who.sort();
+            who.dedup();
+            (
+                "logbook_people_on_project",
+                format!("ctx holds a work log, one entry per row. Entries that record time say how many hours a person logged on a project, in a few phrasings; other entries mention people and projects without recording time (attendees, room bookings, reviews, estimates) and do not count. How many distinct people logged time on project {}? Answer with FINAL over one row with column people (an integer).", projects[target_project]),
+                vec![vec![who.len().to_string()]],
+            )
+        }
+    };
+    let mut rows = rows;
+    rows.sort();
+    GeneratedTask {
+        generator: "logbook".into(),
+        kind: kind.into(),
+        task,
+        context: Some(lines.join("\n\n")),
+        verify: Verify::Exact { rows },
+        dial,
+        difficulty: difficulty_prior(0.5 + 0.5 * dial),
+    }
+}
+
+/// A rubric-judged memo: a synthetic services agreement with planted
+/// commercial terms among boilerplate, a rejected-draft near miss, and
+/// (above dial 0.4) an amendment that supersedes one of the terms. The
+/// task asks for a short written memo answering three questions about the
+/// terms; the oracle is a `judge` model with a rubric that names each
+/// required fact and forbids the superseded or rejected values, plus a
+/// reference memo. The dial sets the contract length and whether an
+/// amendment is present.
+fn memo(dial: f64, rng: &mut Rng) -> GeneratedTask {
+    let customers = [
+        "Alder Logistics",
+        "Brightwater Foods",
+        "Cobalt Analytics",
+        "Dunmore Health",
+    ];
+    let suppliers = ["Ferrule Systems", "Greyline Services", "Halyard Software"];
+    let states = ["Delaware", "New York", "California", "Texas", "Washington"];
+    let customer = customers[rng.below(customers.len() as u64) as usize];
+    let supplier = suppliers[rng.below(suppliers.len() as u64) as usize];
+    let state = states[rng.below(states.len() as u64) as usize];
+    let convenience_notice = [30, 45, 60, 90, 120][rng.below(5) as usize];
+    let cure_days = [10, 15, 30, 45][rng.below(4) as usize];
+    let cap_months = [6, 12, 24][rng.below(3) as usize];
+    let net_days = [15, 30, 45, 60][rng.below(4) as usize];
+    let late_pct = [1.0, 1.5, 2.0][rng.below(3) as usize];
+    let term_years = 1 + rng.below(4) as usize;
+    let renewal_notice = [30, 60, 90][rng.below(3) as usize];
+    let rejected_cap = if cap_months == 12 { 24 } else { 12 };
+    // Facts: (key, clause text, memo sentence, rubric line).
+    let mut facts: Vec<(&str, String, String, String)> = vec![
+        (
+            "convenience",
+            format!("Either party may terminate this Agreement for convenience on {convenience_notice} days' written notice to the other party."),
+            format!("Either party may terminate for convenience on {convenience_notice} days' written notice."),
+            format!("states that either party may terminate for convenience on {convenience_notice} days' written notice (the number of days must be {convenience_notice})"),
+        ),
+        (
+            "breach",
+            format!("Either party may terminate this Agreement for material breach if the breach is not cured within {cure_days} days of written notice describing it."),
+            format!("Termination for material breach requires written notice and a {cure_days}-day cure period."),
+            format!("states that termination for breach requires a cure period of {cure_days} days after written notice"),
+        ),
+        (
+            "cap",
+            format!("Each party's aggregate liability under this Agreement shall not exceed the fees paid by the Customer in the {cap_months} months preceding the claim."),
+            format!("Each party's aggregate liability is capped at the fees paid in the {cap_months} months before the claim."),
+            format!("states that liability is capped at the fees paid in the {cap_months} months preceding the claim (not {rejected_cap} months)"),
+        ),
+        (
+            "payment",
+            format!("The Customer shall pay each invoice within {net_days} days of receipt; overdue amounts bear interest at {late_pct}% per month."),
+            format!("Invoices are due within {net_days} days of receipt, and overdue amounts bear interest at {late_pct}% per month."),
+            format!("states that invoices are due {net_days} days from receipt and that late interest is {late_pct}% per month"),
+        ),
+        (
+            "law",
+            format!("This Agreement is governed by the laws of the State of {state}, without regard to its conflict of laws rules."),
+            format!("The Agreement is governed by {state} law."),
+            format!("states that the governing law is that of {state}"),
+        ),
+        (
+            "term",
+            format!("The initial term is {term_years} year{} from the Effective Date and renews automatically for successive one-year periods unless either party gives {renewal_notice} days' notice of non-renewal before the end of the current term.", if term_years == 1 { "" } else { "s" }),
+            format!("The initial term is {term_years} year{}, renewing automatically for one-year periods unless a party gives {renewal_notice} days' notice of non-renewal.", if term_years == 1 { "" } else { "s" }),
+            format!("states an initial term of {term_years} year{} with automatic one-year renewals and a {renewal_notice}-day non-renewal notice", if term_years == 1 { "" } else { "s" }),
+        ),
+    ];
+    let boilerplate = [
+        "The parties agree that headings are for convenience only.",
+        "Notices shall be delivered in writing to the addresses set out in Schedule 1.",
+        "This Agreement constitutes the entire agreement between the parties and supersedes all prior discussions.",
+        "If any provision is held invalid, the remainder shall continue in effect.",
+        "Each party shall bear its own costs in connection with this Agreement.",
+        "The Supplier shall deliver the Services in accordance with Schedule 2.",
+        "Nothing in this Agreement creates a partnership or agency between the parties.",
+        "Each party shall keep the other's Confidential Information in confidence and use it only for the purposes of this Agreement.",
+        "The Supplier shall maintain insurance customary for providers of similar services.",
+        "Neither party is liable for delay caused by events beyond its reasonable control.",
+        "This Agreement may be executed in counterparts, each of which is an original.",
+        "The Customer shall provide the access and information the Supplier reasonably needs to perform the Services.",
+    ];
+    // An amendment supersedes one fact above dial 0.4: the memo must give
+    // the amended value and must not present the original as current.
+    let amended = if dial > 0.4 {
+        Some(rng.below(3) as usize)
+    } else {
+        None
+    };
+    let mut amendment_clause = None;
+    if let Some(i) = amended {
+        let (key, clause, sentence, rubric) = match i {
+            0 => {
+                let n2 = if convenience_notice == 90 {
+                    180
+                } else {
+                    convenience_notice * 2
+                };
+                (
+                    "convenience",
+                    format!("Amendment No. 1. Section {{sec}} is deleted and replaced as follows: either party may terminate this Agreement for convenience on {n2} days' written notice."),
+                    format!("Either party may terminate for convenience on {n2} days' written notice (as amended by Amendment No. 1; the original {convenience_notice}-day notice no longer applies)."),
+                    format!("states that either party may terminate for convenience on {n2} days' written notice, the period set by Amendment No. 1, and does not present the original {convenience_notice} days as the current notice period"),
+                )
+            }
+            1 => {
+                let m2 = cap_months * 2;
+                (
+                    "cap",
+                    format!("Amendment No. 1. Section {{sec}} is deleted and replaced as follows: each party's aggregate liability shall not exceed the fees paid by the Customer in the {m2} months preceding the claim."),
+                    format!("Each party's aggregate liability is capped at the fees paid in the {m2} months before the claim (as amended by Amendment No. 1; the original {cap_months}-month cap no longer applies)."),
+                    format!("states that liability is capped at the fees paid in the {m2} months preceding the claim, the cap set by Amendment No. 1, and does not present the original {cap_months} months as the current cap"),
+                )
+            }
+            _ => {
+                let d2 = net_days + 15;
+                (
+                    "payment",
+                    format!("Amendment No. 1. Section {{sec}} is deleted and replaced as follows: the Customer shall pay each invoice within {d2} days of receipt; overdue amounts bear interest at {late_pct}% per month."),
+                    format!("Invoices are due within {d2} days of receipt (as amended by Amendment No. 1; the original {net_days}-day term no longer applies), and overdue amounts bear interest at {late_pct}% per month."),
+                    format!("states that invoices are due {d2} days from receipt, the term set by Amendment No. 1, and does not present the original {net_days} days as the current payment term; late interest is {late_pct}% per month"),
+                )
+            }
+        };
+        let f = facts.iter_mut().find(|f| f.0 == key).expect("fact");
+        f.2 = sentence;
+        f.3 = rubric;
+        amendment_clause = Some(clause);
+    }
+    // Lay the contract out: boilerplate with the facts at random positions,
+    // numbered as sections; the near miss and the amendment go last.
+    let length = 12 + (dial * 24.0).round() as usize;
+    let mut clauses: Vec<String> = (0..length)
+        .map(|_| boilerplate[rng.below(boilerplate.len() as u64) as usize].to_string())
+        .collect();
+    let mut positions: Vec<usize> = vec![];
+    for f in &facts {
+        let pos = rng.below(clauses.len() as u64) as usize;
+        clauses.insert(pos, f.1.clone());
+        for p in positions.iter_mut() {
+            if *p >= pos {
+                *p += 1;
+            }
+        }
+        positions.push(pos);
+    }
+    let mut numbered: Vec<String> = clauses
+        .iter()
+        .enumerate()
+        .map(|(i, c)| format!("Section {}. {c}", i + 1))
+        .collect();
+    numbered.insert(
+        0,
+        format!(
+            "MASTER SERVICES AGREEMENT between {customer} (the \"Customer\") and {supplier} (the \"Supplier\"), effective 1 March 2026 (the \"Effective Date\")."
+        ),
+    );
+    numbered.push(format!(
+        "Schedule 3 (negotiation history, not part of the operative terms). The Customer proposed a liability cap of the fees paid in the {rejected_cap} months preceding the claim; the proposal was rejected and does not form part of this Agreement."
+    ));
+    if let Some(clause) = amendment_clause {
+        let idx = amended.expect("amended index");
+        let key = ["convenience", "cap", "payment"][idx];
+        let fi = facts.iter().position(|f| f.0 == key).expect("fact");
+        let sec = positions[fi] + 1;
+        numbered.push(format!(
+            "{} Dated 15 June 2026 and signed by both parties.",
+            clause.replace("{sec}", &sec.to_string())
+        ));
+    }
+    // Ask three of the six facts.
+    let mut asked: Vec<usize> = vec![];
+    while asked.len() < 3 {
+        let i = rng.below(facts.len() as u64) as usize;
+        if !asked.contains(&i) {
+            asked.push(i);
+        }
+    }
+    asked.sort();
+    let questions: Vec<&str> = asked
+        .iter()
+        .map(|&i| match facts[i].0 {
+            "convenience" => "how either party can terminate the agreement for convenience, and on how much notice",
+            "breach" => "what happens if a party is in material breach, including any cure period",
+            "cap" => "what the current cap on each party's liability is",
+            "payment" => "when invoices are due and what interest overdue amounts bear",
+            "law" => "which law governs the agreement",
+            _ => "how long the initial term is and how renewal and non-renewal work",
+        })
+        .collect();
+    let reference = asked
+        .iter()
+        .map(|&i| facts[i].2.clone())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let rubric = format!(
+        "The answer is a memo about the agreement between {customer} and {supplier}. PASS only if every line below holds; FAIL if any does not.\n- {}\n- The memo does not attribute to the agreement any term it does not contain (a term from the rejected proposal in Schedule 3, or an invented number, is a FAIL).\n- Wording may differ from the reference; only the facts matter.",
+        asked
+            .iter()
+            .map(|&i| facts[i].3.clone())
+            .collect::<Vec<_>>()
+            .join("\n- ")
+    );
+    let task = format!(
+        "ctx holds a services agreement, one section per row, including its schedules and any amendment. Read it as a lawyer would: a later amendment replaces the section it names, and a negotiation schedule is not an operative term. Write a short memo for the Customer that answers, with the specific numbers and periods from the agreement: (1) {}; (2) {}; (3) {}. Answer with FINAL over one row with a single column memo holding the memo text.",
+        questions[0], questions[1], questions[2]
+    );
+    GeneratedTask {
+        generator: "memo".into(),
+        kind: "memo_contract_terms".into(),
+        task,
+        context: Some(numbered.join("\n\n")),
+        verify: Verify::Judge {
+            rubric,
+            reference: Some(reference),
+        },
+        dial,
+        difficulty: difficulty_prior(0.4 + 0.6 * dial),
     }
 }
 
@@ -626,6 +1060,121 @@ mod tests {
         let easy = generate("sat3", 0.0, 1, &ws).unwrap();
         let hard = generate("sat3", 1.0, 1, &ws).unwrap();
         assert!(hard.context.unwrap().lines().count() > easy.context.unwrap().lines().count());
+    }
+
+    /// `5h.`: digits then the short unit.
+    fn is_hours_short(w: &str) -> bool {
+        w.strip_suffix("h.")
+            .is_some_and(|d| !d.is_empty() && d.chars().all(|c| c.is_ascii_digit()))
+    }
+
+    /// Recount a logbook context the way a careful reader would, applying
+    /// corrections, to check the generator's answer for the per-project
+    /// question against its own text.
+    fn recount_logbook(ctx: &str) -> HashMap<String, i64> {
+        let mut entries: Vec<(String, String, String, i64)> = vec![];
+        for line in ctx.split("\n\n") {
+            let (date, rest) = line.split_once(". ").unwrap();
+            if let Some(c) = rest.strip_prefix("Correction: the entry of ") {
+                // "<date> for <who> on project <p> should read <h1> hours, not <h0>."
+                let (d0, tail) = c.split_once(" for ").unwrap();
+                let (who, tail) = tail.split_once(" on project ").unwrap();
+                let (p, tail) = tail.split_once(" should read ").unwrap();
+                let (h1, tail) = tail.split_once(" hours, not ").unwrap();
+                let h0: i64 = tail.trim_end_matches('.').parse().unwrap();
+                let e = entries
+                    .iter_mut()
+                    .find(|e| e.0 == d0 && e.1 == who && e.2 == p && e.3 == h0)
+                    .expect("a correction names an entry");
+                e.3 = h1.parse().unwrap();
+                continue;
+            }
+            let words: Vec<&str> = rest.split_whitespace().collect();
+            let hours = words
+                .iter()
+                .position(|w| *w == "hours" || *w == "hours." || is_hours_short(w));
+            let Some(hi) = hours else { continue };
+            let h: i64 = words[if is_hours_short(words[hi]) {
+                hi
+            } else {
+                hi - 1
+            }]
+            .trim_end_matches("h.")
+            .parse()
+            .unwrap_or_else(|_| panic!("no hours in {line}"));
+            let cap = |w: &str| w.trim_matches(|c: char| !c.is_alphanumeric()).to_string();
+            let (who, p) = if rest.starts_with("Project ") {
+                (cap(words[2]), cap(words[1]))
+            } else if rest.starts_with("Time entry") {
+                (cap(words[2]), cap(words[4]))
+            } else if words[1] == "spent" {
+                (cap(words[0]), cap(words[5]))
+            } else {
+                (cap(words[0]), cap(words[6]))
+            };
+            entries.push((date.to_string(), who, p, h));
+        }
+        let mut sum = HashMap::new();
+        for e in entries {
+            *sum.entry(e.2).or_insert(0) += e.3;
+        }
+        sum
+    }
+
+    #[test]
+    fn logbook_answers_match_a_recount_of_their_own_text() {
+        let ws = std::env::temp_dir();
+        let mut checked = 0;
+        for seed in 1..40u64 {
+            for dial in [0.0, 0.9] {
+                let t = generate("logbook", dial, seed, &ws).unwrap();
+                if t.kind != "logbook_hours_by_project" {
+                    continue;
+                }
+                let recount = recount_logbook(t.context.as_deref().unwrap());
+                let Verify::Exact { rows } = &t.verify else {
+                    panic!()
+                };
+                let mut want: Vec<(String, i64)> = recount.into_iter().collect();
+                want.sort();
+                let got: Vec<(String, i64)> = rows
+                    .iter()
+                    .map(|r| (r[0].clone(), r[1].parse().unwrap()))
+                    .collect();
+                assert_eq!(got, want, "seed {seed} dial {dial}");
+                checked += 1;
+            }
+        }
+        assert!(checked >= 4, "{checked}");
+        let hard = generate("logbook", 0.9, 1, &ws).unwrap();
+        assert!(hard.context.as_ref().unwrap().len() > 80_000);
+        assert!(hard.context.as_ref().unwrap().contains("Correction:"));
+        let easy = generate("logbook", 0.0, 1, &ws).unwrap();
+        assert!(!easy.context.as_ref().unwrap().contains("Correction:"));
+    }
+
+    #[test]
+    fn memo_rubrics_name_the_amended_terms_and_carry_a_reference() {
+        let ws = std::env::temp_dir();
+        let mut amended = 0;
+        for seed in 1..20u64 {
+            let t = generate("memo", 0.8, seed, &ws).unwrap();
+            let Verify::Judge { rubric, reference } = &t.verify else {
+                panic!()
+            };
+            let ctx = t.context.as_deref().unwrap();
+            assert!(ctx.contains("Amendment No. 1"), "{ctx}");
+            assert!(ctx.contains("Schedule 3"));
+            assert_eq!(rubric.matches("\n- ").count(), 5, "{rubric}");
+            assert!(reference.as_ref().unwrap().len() > 60);
+            if rubric.contains("Amendment No. 1") {
+                amended += 1;
+                assert!(reference.as_ref().unwrap().contains("as amended"));
+            }
+        }
+        assert!(amended >= 5, "{amended}");
+        let plain = generate("memo", 0.2, 1, &ws).unwrap();
+        assert!(!plain.context.unwrap().contains("Amendment"));
     }
 
     #[test]

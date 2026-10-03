@@ -203,7 +203,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 `ANTHROPIC_AUTH_TOKEN` is accepted instead of the key, and
 `ANTHROPIC_BASE_URL` overrides the endpoint. With only Anthropic configured
-the default routing is: `root` on Opus 5 at high effort, `worker` and `judge`
+the default routing is: `root` on Opus 5.5 at high effort, `worker` and `judge`
 on Sonnet 5, `proxy` on Haiku 4.5 at low effort, prompt prefix cached
 everywhere, priced from the first-party rate card.
 
@@ -230,7 +230,7 @@ export KLEENE_ROUTER_TOML=~/.config/kleene/router.toml
 
 ```toml
 [aliases.root]
-candidates = [{ provider = "anthropic", model = "claude-opus-5" }]
+candidates = [{ provider = "anthropic", model = "claude-opus-5-5" }]
 options = { effort = "high", cache_prefix = true }
 
 [aliases.worker]
@@ -246,11 +246,11 @@ candidates = [{ provider = "anthropic", model = "claude-haiku-4-5" }]
 [aliases.judge]
 candidates = [{ provider = "anthropic", model = "claude-sonnet-5" }]
 
-[pricing."claude-opus-5"]
-input_per_mtok = 5.0
-output_per_mtok = 25.0
-cache_read_per_mtok = 0.5
-cache_write_per_mtok = 6.25
+[pricing."claude-opus-5-5"]
+input_per_mtok = 4.0
+output_per_mtok = 20.0
+cache_read_per_mtok = 0.4
+cache_write_per_mtok = 5.0
 ```
 
 **Web search**
@@ -550,8 +550,8 @@ modes, oracles, report columns and plots measure is in
 
 | Command | What it does |
 |---|---|
-| `bench run <pack-dir> [--mode learning\|frozen\|plain] [--limit N] [--sample N --seed S] [--outputs <dir>] [--record <dir>] [--replay <dir>]` | Run a pack. `learning` shows and adopts the playbook; `frozen` is the control; `plain` is a tool-calling agent on the same provider, tools and budget. `--sample` runs a seeded sample of N tasks in pack order; `--outputs` exports every task's `output/` in the layout Harvey LAB's evaluator reads and prints the `run_eval` commands; `--record` saves every model reply as fixtures; `--replay` serves them offline |
-| `bench build <out-dir> --from <generator> [--count 20] [--dial 0.5] [--seed 1]` | Freeze generator output into a pack; same seeds, same tasks |
+| `bench run <pack-dir> [--mode learning\|frozen\|plain] [--limit N] [--sample N --seed S] [--outputs <dir>] [--record <dir>] [--replay <dir>] [--resume <run-id>]` | Run a pack. `learning` shows and adopts the playbook; `frozen` is the control; `plain` is a tool-calling agent on the same provider, tools and budget. `--sample` runs a seeded sample of N tasks in pack order; `--outputs` exports every task's `output/` in the layout Harvey LAB's evaluator reads and prints the `run_eval` commands; `--record` saves every model reply as fixtures; `--replay` serves them offline. A task that ends without a token spent (no credit, a bad key) stops the run with the reason in `bench_runs.note`; `--resume` continues that run at the first task without a row |
+| `bench build <out-dir> --from <generator> [--count 20] [--dial 0.5] [--seed 1] [--lazy]` | Freeze generator output into a pack; same seeds, same tasks. `--lazy` stores generator references and regenerates on load. Generators: `sat3`, `graph`, `puzzle`, `corpus`, `repo`, `statements`, `contracts`, `logbook`, `memo` |
 | `bench terminal <out-dir>` | Write the built-in Terminal-Bench-style pack |
 | `bench import-lab <checkout>/tasks <out-dir> [--sample N --seed S]` | Import a Harvey LAB checkout (or one practice area under it) into a pack with the shipped rubrics; `--sample` imports a seeded sample and copies only its documents |
 | `bench import-oolong <out-dir> [--dataset trec_coarse] [--context-len 131072] [--limit 50] [--offset 0] [--split validation\|test] [--from-json <file>]` | Import OOLONG-synth questions from Hugging Face into a pack with the `oolong` oracle; the defaults are the RLM paper's trec_coarse 128k split |

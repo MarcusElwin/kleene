@@ -18,6 +18,9 @@ pub struct StoreSink {
     /// Table-name prefix for a child session's private tables (`None` for the
     /// root). Physical names are `cgs_{ns}__{name}`; the root never lists them.
     namespace: Option<String>,
+    /// Physical names of the tables created through this sink, so a session
+    /// can drop its own scratch on the way out.
+    created: Arc<std::sync::Mutex<Vec<String>>>,
 }
 
 /// Prefix marking a session namespace in physical table names.
@@ -59,6 +62,7 @@ impl StoreSink {
             store,
             catalog: Arc::new(RwLock::new(base)),
             namespace,
+            created: Arc::new(std::sync::Mutex::new(Vec::new())),
         };
         sink.refresh().await?;
         Ok(sink)
@@ -94,6 +98,39 @@ impl StoreSink {
     /// The underlying store.
     pub fn store(&self) -> &DuckDbStore {
         &self.store
+    }
+
+    /// Drop every table this sink created (`ctx`, `CREATE TABLE` scratch)
+    /// and, under a namespace, every table left in it, so a finished
+    /// session leaves nothing behind in a shared store. Returns how many
+    /// were dropped. Tables the session did not create are untouched.
+    pub async fn drop_created(&self) -> Result<usize, StoreError> {
+        let mut names: Vec<String> =
+            std::mem::take(&mut *self.created.lock().unwrap_or_else(|p| p.into_inner()));
+        if let Some(ns) = &self.namespace {
+            let p = prefix(ns);
+            names.extend(
+                self.store
+                    .tables()
+                    .await?
+                    .into_iter()
+                    .filter(|t| t.starts_with(&p)),
+            );
+        }
+        names.sort();
+        names.dedup();
+        let mut dropped = 0;
+        for n in &names {
+            match self.store.drop_table(n).await {
+                Ok(()) => dropped += 1,
+                Err(StoreError::NoSuchTable(_)) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        if dropped > 0 {
+            self.refresh().await?;
+        }
+        Ok(dropped)
     }
 
     /// Re-read stored tables into the catalog.
@@ -163,8 +200,13 @@ impl CallSink for StoreSink {
         schema: Arc<Schema>,
         if_not_exists: bool,
     ) -> Result<bool, ExecError> {
-        match self.store.create_table(&self.physical(name), schema).await {
+        let physical = self.physical(name);
+        match self.store.create_table(&physical, schema).await {
             Ok(()) => {
+                self.created
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .push(physical);
                 self.refresh().await.map_err(store_err)?;
                 Ok(true)
             }

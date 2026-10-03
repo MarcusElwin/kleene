@@ -2,8 +2,25 @@
 //! retry policy. Both adapters route every request through [`send`].
 
 use crate::types::ProviderError;
+use std::error::Error as _;
 use std::future::Future;
 use std::time::Duration;
+
+/// A `reqwest` error with its cause chain, so a failed connection says why
+/// (DNS, TLS, a refused connection) instead of only "error sending request".
+pub fn describe(e: &reqwest::Error) -> String {
+    let mut text = e.to_string();
+    let mut source = e.source();
+    while let Some(s) = source {
+        let part = s.to_string();
+        if !text.contains(&part) {
+            text.push_str(": ");
+            text.push_str(&part);
+        }
+        source = s.source();
+    }
+    text
+}
 
 /// Backoff between retries: three retries at 250ms, 1s and 4s.
 pub(crate) const DEFAULT_BACKOFF: [Duration; 3] = [
@@ -121,7 +138,7 @@ pub(crate) async fn send(
             let resp = build()
                 .send()
                 .await
-                .map_err(|e| ProviderError::Network(e.to_string()))?;
+                .map_err(|e| ProviderError::Network(describe(&e)))?;
             check_status(resp).await
         }
     })
