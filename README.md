@@ -463,8 +463,9 @@ so a new model or a new run is a new CSV and a re-run of that command.
 Each pack below expands to the full table of metrics, and the hard packs
 also to their pass-rate-against-cost plot: one point per model and mode,
 with a dashed line through the points nothing beats on both axes. The four
-original packs have no plot because every mode solved every task, so cost
-is the only axis that moves.
+original packs have no plot here because every mode solved every task, so
+cost is the only axis that moves; their plots are still written, with the
+rest, under [`plots/results/`](plots/results/).
 
 Runs so far: Claude Opus 5.5 on 27 September 2026 over the four original
 packs, and Claude Haiku 4.5 on 1 October 2026 over the harder packs with
