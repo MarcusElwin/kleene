@@ -445,7 +445,7 @@ Every flag: `kleene <command> --help`, or [`docs/CLI.md`](docs/CLI.md#commands).
 | [`demos/`](demos/README.md) | runnable demos: long context, reviewer agents, the planner, the continual loop, benchmarks |
 | [`tasks/`](tasks/README.md) | the shipped task packs and their oracles |
 | [`CLAUDE.md`](CLAUDE.md) | working rules for contributors and coding agents |
-| [`ci/README.md`](ci/README.md) | the release workflow: tags, tarballs, checksums, the Homebrew formula |
+| [`.github/workflows/`](.github/workflows/) | CI (fmt, clippy, doc, test) and the release workflow: tags, tarballs, checksums, the Homebrew formula |
 
 ## Benchmark results
 
@@ -583,8 +583,9 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 
 `CLAUDE.md` holds the working rules (interfaces first, typed errors, the
 flag shapes that keep DuckDB from rebuilding), CI runs in
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) and `ci/README.md`
-describes the release workflow. Written in Rust, model-agnostic with no SDK
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) and
+[`.github/workflows/release.yml`](.github/workflows/release.yml) publishes
+tagged releases. Written in Rust, model-agnostic with no SDK
 and no gateway required, MIT licensed.
 
 ## Why "Kleene"
