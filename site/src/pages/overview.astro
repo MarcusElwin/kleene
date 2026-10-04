@@ -1,0 +1,186 @@
+---
+import Base from "../layouts/Base.astro";
+import Terminal from "../components/Terminal.astro";
+---
+<Base title="Technical overview · Kleene" mermaid>
+  <div class="prose">
+    <h1>Technical overview</h1>
+    <p class="dim">How a model's SQL becomes a planned, budgeted graph of calls. The long form is in <a href="/docs/architecture/">Architecture</a>, <a href="/docs/dialect/">the dialect reference</a> and <a href="/docs/writeup/">the write-up</a>.</p>
+
+    <h2>The claim</h2>
+    <p>An agent's work can be written as queries. Retrieval is a scan or a <code>grep</code> table function, judgement is a boolean call function in a <code>WHERE</code>, delegation is a lateral table call that opens a child session, search is a recursive CTE with a beam <code>LIMIT</code>, and the answer is a relation. Once the work is a query, three things fall out that a tool-calling loop cannot offer: a planner, budgets as query semantics, and learning as tables.</p>
+
+    <h2>The algebra</h2>
+    <p>Ordinary operators (σ, π, ⋈, ∪, γ, μ) plus a <em>call kind</em> on any operator that evaluates a call expression:</p>
+    <table>
+      <thead><tr><th>Kind</th><th>Shape</th><th>Cost</th></tr></thead>
+      <tbody>
+        <tr><td>λ<sub>f</sub></td><td>scalar map-call: <code>llm_bool(...)</code>, a prompt function in a projection</td><td>one call per distinct input</td></tr>
+        <tr><td>κ<sub>g</sub></td><td>expand-call: <code>CROSS JOIN LATERAL g(...)</code></td><td>output cardinality is the branching factor</td></tr>
+        <tr><td>ρ<sub>d</sub></td><td>delegation: <code>rlm(...)</code>, <code>spawn(...)</code></td><td>the child's whole plan</td></tr>
+        <tr><td>σ<sub>llm</sub>, ⋈<sub>llm</sub></td><td>a predicate or join condition containing calls</td><td>calls × selectivity, observed once the predicate has been seen</td></tr>
+      </tbody>
+    </table>
+    <p>Cost is calls × per-alias tokens and dollars. Eight rewrite rules work on it: cheap-first over filters and join conditions, memo dedupe, batching (<code>BATCH n</code> on a prompt function prices <code>ceil(rows / n)</code> calls), cascade through a cheap proxy, semi-join for <code>EXISTS</code>, beam-limited recursion, join ordering over call predicates, and budget refusal.</p>
+
+    <Terminal title="kleene explain">
+<span class="prompt">$</span> kleene explain "SELECT c FROM candidates WHERE llm_bool('Is ' || c || ' a real place?')"
+<span class="dim">π c  ~120 rows</span>&#10;
+<span class="dim">  σ llm_bool(concat('Is ', c, ' a real place?'))  [λ llm_bool]  ~120 rows, 120 calls, 9.6k tok, $0.0144</span>&#10;
+<span class="dim">    scan candidates  ~120 rows</span>&#10;
+<span class="amber">total: ~120 calls, ~9.6k tokens, ~$0.0144, depth 0</span>&#10;
+<span class="cyan">fragment: CQ (conjunctive query: NP-complete combined, AC0 data)</span>&#10;
+<span class="dim">rules: cheap-first</span></Terminal>
+    <p class="dim" style="font-size:0.85rem">Illustrative numbers in the shape the renderer prints. <code>EXPLAIN</code> needs no provider; its output is part of the interface and tested, see <a href="/docs/cli/#kleene-explain-sql">kleene explain</a>.</p>
+
+    <h2>One turn of a session</h2>
+    <p>A session is a loop. The harness sends the model a cached system prefix (the CallSQL rules, the catalog, the budget) plus the transcript; the model replies with CallSQL in one fence; the harness parses it, annotates every operator with the calls it implies, prices the plan, refuses it if the remaining budget cannot pay, executes it, renders the rows back into the transcript, and repeats until the model writes <code>FINAL</code>.</p>
+    <pre is:raw><code class="language-mermaid">sequenceDiagram
+    autonumber
+    participant M as Model
+    participant H as Harness
+    participant S as kleene-sql
+    participant A as kleene-algebra
+    participant X as kleene-exec
+    participant L as LiveSink
+    participant D as DuckDB
+
+    H->>M: system prefix + transcript
+    M-->>H: CallSQL in one sql fence
+    H->>S: parse, validate, resolve names and types
+    S-->>H: LogicalPlan
+    H->>A: annotate with call kinds, run rewrite rules
+    A-->>H: CallPlan with rows, calls, tokens, dollars
+    alt estimate exceeds remaining budget
+        H-->>M: refused, with the plan
+    else within budget
+        H->>X: execute(plan)
+        loop every scalar, table, tool or child call
+            X->>L: call
+            L->>D: memo lookup
+            alt hit
+                D-->>L: cached result
+            else miss
+                L->>L: route, call provider or tool, price, charge budget
+                L->>D: memo store, TraceEvent
+            end
+            L-->>X: rows
+        end
+        X-->>H: batches
+        H->>D: persist session
+        H-->>M: rendered rows + footer
+    end
+    Note over M,H: repeat until FINAL</code></pre>
+
+    <h2>Delegation: rlm and spawn</h2>
+    <p>Child sessions are the same loop one level deeper, with a role, a budget slice and their own table namespace. <code>rlm(q, ctx)</code> opens one child per input row; <code>spawn('reviewer', task)</code> opens a child with that agent's tools and budget. A child's <code>FINAL</code> comes back to the parent as a row. Budgets have calls, tokens, dollars, depth and wall clock; a child gets the parent's remaining slice intersected with its role's budget, and its spending rolls up.</p>
+    <pre is:raw><code class="language-mermaid">sequenceDiagram
+    participant R as Root session (depth 0)
+    participant P as Provider
+    participant C1 as Child 1 (depth 1, worker)
+    participant C2 as Child 2 (depth 1, worker)
+
+    R->>P: turn: peek at ctx, partition it
+    P-->>R: CREATE TABLE parts AS SELECT ...
+    R->>P: turn
+    P-->>R: SELECT * FROM parts CROSS JOIN LATERAL rlm(question, chunk)
+    par one child per row, concurrently
+        R->>C1: task + chunk, budget slice
+        C1->>P: turns until FINAL
+        C1-->>R: (answer, detail, session)
+    and
+        R->>C2: task + chunk, budget slice
+        C2->>P: turns until FINAL
+        C2-->>R: (answer, detail, session)
+    end
+    R->>P: turn: aggregate the children's answers
+    P-->>R: FINAL FROM (SELECT ...)</code></pre>
+
+    <h2>Recursion with a beam</h2>
+    <p>Recursive CTEs run by semi-naive evaluation: the recursive term sees only the previous round's delta. <code>UNION</code> terminates when a round adds nothing new. A trailing <code>ORDER BY ... LIMIT k</code> inside the recursive term keeps the best <code>k</code> new rows of each round, which is a beam of width <code>k</code>: search as a query.</p>
+    <Terminal title="beam.sql">
+<span class="kw">WITH RECURSIVE</span> frontier(state, score, depth) <span class="kw">AS</span> (
+  <span class="kw">SELECT</span> seed, 0.0, 0 <span class="kw">FROM</span> seeds
+  <span class="kw">UNION</span>&#10;
+  <span class="kw">SELECT</span> n.state, judge(n.state), f.depth + 1
+  <span class="kw">FROM</span> frontier f <span class="kw">CROSS JOIN LATERAL</span> expand(f.state) n
+  <span class="kw">WHERE</span> f.depth &lt; 4
+  <span class="kw">ORDER BY</span> 2 <span class="kw">DESC LIMIT</span> 5          <span class="cmt">-- a beam of width five</span>
+)
+<span class="kw">SELECT</span> state, score <span class="kw">FROM</span> frontier <span class="kw">ORDER BY</span> score <span class="kw">DESC LIMIT</span> 1;</Terminal>
+
+    <h2>Processes: CLI, daemon and TUI</h2>
+    <p><code>kleene run</code>, <code>repl</code>, <code>explain</code>, <code>learn</code> and <code>bench</code> run the harness in one process. The TUI talks to an engine daemon over a Unix socket and a JSONL protocol with cursors, so a client that reconnects resumes from where it left off and <code>kleene attach</code> can watch the same events headless.</p>
+    <pre is:raw><code class="language-mermaid">sequenceDiagram
+    participant U as kleene (TUI)
+    participant Dm as kleene daemon
+    participant Hs as Harness + store + provider
+
+    U->>Dm: connect .kleene/daemon.sock (starts one if none listens)
+    U->>Dm: Subscribe { after: cursor }
+    Dm-->>U: Hello, replayed Events
+    U->>Dm: StartRun (a task typed at the prompt)
+    Dm->>Hs: run
+    Hs-->>Dm: streamed text, trace events
+    Dm-->>U: CallDelta ... TurnFinished
+    U->>Dm: /sql → Submit, /trace and /board → Query
+    Dm-->>U: Table
+    Dm-->>U: RunFinished</code></pre>
+    <p><a href="/screenshots/overview.png"><img src="/screenshots/overview.png" alt="The terminal UI: a run mid-stream, the first open, the command popup and the setup wizard" loading="lazy" /></a></p>
+
+    <h2>Crates</h2>
+    <p>A Rust workspace. Every crate depends on <code>kleene-core</code> and nothing depends on the binary.</p>
+    <pre is:raw><code class="language-mermaid">flowchart TB
+    CLI[kleene · CLI binary]
+    TUI[kleene-tui · ratatui client, setup wizard]
+    DAEMON[kleene-daemon · Unix socket, JSONL protocol]
+    HARNESS[kleene-harness · sessions, turn loop, LiveSink, learn, bench]
+    EXEC[kleene-exec · operators, semi-naive recursion, concurrent calls]
+    ALGEBRA[kleene-algebra · call kinds, cost model, rules, EXPLAIN]
+    SQL[kleene-sql · sqlparser to LogicalPlan]
+    LLM[kleene-llm · Anthropic, OpenAI-compatible, router, replay]
+    TOOLS[kleene-tools · files, grep, shell, git, web_search]
+    STORE[kleene-store · DuckDB: tables, memo, trace, sessions]
+    TRACE[kleene-trace · TraceEvent, sinks]
+    CORE[kleene-core · Value, Schema, Catalog, Budget, CallKind]
+
+    CLI --> TUI
+    CLI --> DAEMON
+    CLI --> HARNESS
+    TUI --> DAEMON
+    DAEMON --> HARNESS
+    HARNESS --> EXEC
+    HARNESS --> LLM
+    HARNESS --> TOOLS
+    HARNESS --> STORE
+    HARNESS --> TRACE
+    EXEC --> ALGEBRA
+    ALGEBRA --> SQL
+    SQL -.-> CORE
+    EXEC -.-> CORE
+    LLM -.-> CORE
+    TOOLS -.-> CORE
+    STORE -.-> CORE
+    TRACE -.-> CORE</code></pre>
+
+    <h2>What the benchmarks measured</h2>
+    <p>Four packs ran against Claude Opus 5.5 on 27 September 2026 in learning, frozen and plain-agent modes. Every task was solved in every mode, so those packs compare cost only: the playbook cuts calls per task, the replay gate costs more than it saves at twenty tasks a pack, and the one-call tool-calling baseline is cheapest wherever the context fits in a prompt. The harder packs (coding, memo-rubric, logbook-hard) do separate on accuracy. The reading, the per-task rows and the plots are in <a href="/docs/benchmarks/">Benchmarks</a> and <a href="/docs/writeup/#4-what-the-benchmarks-measured">the write-up</a>.</p>
+    <div class="plots">
+      <a href="/plots/learning_curve.svg"><img src="/plots/learning_curve.svg" alt="Learning curve plot" loading="lazy" /></a>
+      <a href="/plots/cost_parity.svg"><img src="/plots/cost_parity.svg" alt="Cost parity plot" loading="lazy" /></a>
+      <a href="/plots/calls_vs_difficulty.svg"><img src="/plots/calls_vs_difficulty.svg" alt="Calls versus difficulty plot" loading="lazy" /></a>
+      <a href="/plots/plan_space.svg"><img src="/plots/plan_space.svg" alt="Plan space plot" loading="lazy" /></a>
+    </div>
+
+    <h2>Read on</h2>
+    <ul>
+      <li><a href="/docs/dialect/">CallSQL dialect</a>: every statement and function the model can write.</li>
+      <li><a href="/docs/architecture/">Architecture</a>: the path of one statement, the store and trace tables, the daemon protocol, the planner, the testing strategy.</li>
+      <li><a href="/docs/writeup/">Write-up</a>: the claim, the algebra, what was measured and the honest gaps.</li>
+    </ul>
+  </div>
+</Base>
+<style>
+  .plots { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0.8rem; margin-bottom: 1.5rem; }
+  .plots img { background: #fff; padding: 4px; }
+</style>

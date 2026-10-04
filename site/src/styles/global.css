@@ -1,0 +1,170 @@
+/* Kleene site: a phosphor terminal. Neon on near-black, scanlines, glow. */
+@import url("https://fonts.googleapis.com/css2?family=VT323&family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&display=swap");
+
+:root {
+  --bg: #050709;
+  --bg-2: #0a0e13;
+  --panel: #0b1016;
+  --line: #16202a;
+  --fg: #c9d4d2;
+  --dim: #6f8089;
+  --green: #39ff88;
+  --green-2: #19c76a;
+  --amber: #ffb000;
+  --magenta: #ff3cc7;
+  --cyan: #28e5ff;
+  --red: #ff4f5e;
+  --glow-green: 0 0 6px rgba(57, 255, 136, 0.65), 0 0 18px rgba(57, 255, 136, 0.25);
+  --glow-amber: 0 0 6px rgba(255, 176, 0, 0.65), 0 0 18px rgba(255, 176, 0, 0.25);
+  --glow-magenta: 0 0 6px rgba(255, 60, 199, 0.65), 0 0 18px rgba(255, 60, 199, 0.25);
+  --glow-cyan: 0 0 6px rgba(40, 229, 255, 0.65), 0 0 18px rgba(40, 229, 255, 0.25);
+  --display: "VT323", "IBM Plex Mono", ui-monospace, monospace;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --measure: 72ch;
+}
+
+* { box-sizing: border-box; }
+html { background: var(--bg); color-scheme: dark; scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: radial-gradient(ellipse at 50% 0%, #0b1a14 0%, var(--bg) 55%);
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 15px;
+  line-height: 1.65;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+@media (max-width: 640px) { body { font-size: 14px; } }
+
+/* CRT overlay: scanlines and a soft vignette, non-interactive. */
+body::before {
+  content: "";
+  position: fixed; inset: 0; z-index: 50; pointer-events: none;
+  background: repeating-linear-gradient(0deg, rgba(0,0,0,0) 0px, rgba(0,0,0,0) 2px, rgba(0,0,0,0.22) 3px, rgba(0,0,0,0) 4px);
+  mix-blend-mode: multiply;
+}
+body::after {
+  content: "";
+  position: fixed; inset: 0; z-index: 51; pointer-events: none;
+  background: radial-gradient(ellipse at center, rgba(0,0,0,0) 60%, rgba(0,0,0,0.55) 100%);
+}
+
+a { color: var(--cyan); text-decoration: none; }
+a:hover { color: #fff; text-shadow: var(--glow-cyan); }
+::selection { background: var(--green); color: #000; }
+
+h1, h2, h3, h4 { font-family: var(--display); font-weight: 400; line-height: 1.05; margin: 1.6em 0 0.5em; letter-spacing: 0.01em; }
+h1 { font-size: 3.2rem; color: var(--green); text-shadow: var(--glow-green); margin-top: 0.4em; }
+h2 { font-size: 2.2rem; color: var(--amber); text-shadow: var(--glow-amber); }
+h3 { font-size: 1.7rem; color: var(--cyan); text-shadow: var(--glow-cyan); }
+h4 { font-size: 1.3rem; color: var(--magenta); }
+h2::before { content: "## "; color: var(--dim); text-shadow: none; }
+h3::before { content: "### "; color: var(--dim); text-shadow: none; }
+p, ul, ol, blockquote, table { margin: 0 0 1.1em; }
+code, pre, kbd { font-family: var(--mono); }
+code { color: var(--amber); font-size: 0.93em; }
+p code, li code, td code { background: rgba(255, 176, 0, 0.08); padding: 0.05em 0.3em; border-radius: 2px; }
+pre {
+  background: var(--panel) !important;
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--green-2);
+  padding: 0.9rem 1rem;
+  overflow-x: auto;
+  font-size: 0.88rem;
+  line-height: 1.55;
+  box-shadow: inset 0 0 40px rgba(0,0,0,0.4);
+}
+pre code { color: inherit; background: none; padding: 0; }
+blockquote { border-left: 2px solid var(--magenta); margin-left: 0; padding-left: 1rem; color: var(--dim); }
+hr { border: 0; border-top: 1px dashed var(--line); margin: 2rem 0; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; display: block; overflow-x: auto; }
+th, td { border: 1px solid var(--line); padding: 0.4rem 0.6rem; text-align: left; vertical-align: top; }
+th { color: var(--green); font-weight: 500; background: rgba(57,255,136,0.05); }
+img { max-width: 100%; height: auto; border: 1px solid var(--line); }
+details summary { cursor: pointer; color: var(--amber); }
+
+.wrap { max-width: 1040px; margin: 0 auto; padding: 0 16px; }
+.prose { max-width: var(--measure); }
+.prose h1 a, .prose h2 a, .prose h3 a { color: inherit; }
+.dim { color: var(--dim); }
+.green { color: var(--green); text-shadow: var(--glow-green); }
+.amber { color: var(--amber); text-shadow: var(--glow-amber); }
+.magenta { color: var(--magenta); text-shadow: var(--glow-magenta); }
+.cyan { color: var(--cyan); text-shadow: var(--glow-cyan); }
+
+/* The blinking block cursor. */
+.cursor::after { content: "█"; color: var(--green); animation: blink 1s steps(1) infinite; margin-left: 1px; }
+@keyframes blink { 50% { opacity: 0; } }
+
+/* Subtle phosphor flicker on display text; disabled for reduced motion. */
+.flicker { animation: flicker 4s infinite; }
+@keyframes flicker {
+  0%, 97%, 100% { opacity: 1; }
+  98% { opacity: 0.86; }
+  99% { opacity: 0.95; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .flicker, .cursor::after { animation: none; }
+  html { scroll-behavior: auto; }
+}
+
+/* Nav: a menu bar from a 1980s terminal. */
+.topbar {
+  position: sticky; top: 0; z-index: 40;
+  background: rgba(5, 7, 9, 0.92);
+  backdrop-filter: blur(4px);
+  border-bottom: 1px solid var(--line);
+}
+.topbar .wrap { display: flex; align-items: center; gap: 1.2rem; height: 48px; flex-wrap: wrap; }
+.brand { font-family: var(--display); font-size: 1.6rem; color: var(--green); text-shadow: var(--glow-green); letter-spacing: 0.04em; }
+.brand:hover { color: #fff; }
+.nav { display: flex; gap: 1.1rem; margin-left: auto; font-size: 0.86rem; }
+.nav a { color: var(--dim); }
+.nav a[aria-current="page"], .nav a:hover { color: var(--green); text-shadow: var(--glow-green); }
+.nav a::before { content: "/"; color: var(--line); margin-right: 1px; }
+@media (max-width: 640px) { .topbar .wrap { height: auto; padding: 8px 16px; } .nav { margin-left: 0; gap: 0.9rem; flex-wrap: wrap; } }
+
+/* Terminal window chrome used by the landing and overview pages. */
+.term {
+  background: #04070a;
+  border: 1px solid #1d2b35;
+  border-radius: 6px;
+  box-shadow: 0 0 0 1px rgba(57,255,136,0.08), 0 0 40px rgba(57,255,136,0.08), 0 20px 60px rgba(0,0,0,0.6);
+  overflow: hidden;
+  margin: 1.5rem 0;
+}
+.term-bar {
+  display: flex; align-items: center; gap: 0.5rem;
+  background: #0b1219; border-bottom: 1px solid #1d2b35;
+  padding: 0.4rem 0.8rem; font-size: 0.78rem; color: var(--dim);
+}
+.term-bar .dot { width: 10px; height: 10px; border-radius: 50%; background: #1d2b35; }
+.term-bar .dot.r { background: var(--red); } .term-bar .dot.y { background: var(--amber); } .term-bar .dot.g { background: var(--green-2); }
+.term-bar .title { margin-left: 0.6rem; }
+.term-body { padding: 1rem 1.1rem; font-size: 0.86rem; line-height: 1.55; min-height: 8rem; white-space: pre-wrap; overflow-x: auto; }
+.term-body .prompt { color: var(--green); }
+.term-body .cmt { color: var(--dim); font-style: italic; }
+.term-body .sql { color: var(--cyan); }
+.term-body .kw { color: var(--magenta); }
+.term-body .num { color: var(--amber); }
+.term-body .rule { color: #2a3b47; }
+.term-body .ok { color: var(--green); }
+
+.footer { border-top: 1px solid var(--line); margin-top: 4rem; padding: 1.5rem 0 2.5rem; color: var(--dim); font-size: 0.82rem; }
+.footer .wrap { display: flex; flex-wrap: wrap; gap: 1rem 2rem; }
+
+/* Mermaid diagrams rendered from ```mermaid fences in the docs. */
+.mermaid { background: var(--panel); border: 1px solid var(--line); padding: 1rem; margin: 0 0 1.1em; overflow-x: auto; }
+.mermaid svg { max-width: 100%; }
+.mermaid-failed { white-space: pre; color: var(--red); font-size: 0.8rem; }
+
+/* TypedTerminal: lines are slotted from the page, so these rules live here, not scoped. */
+.typed [data-line] { display: block; visibility: hidden; }
+  .typed.done [data-line], .typed [data-line].shown { visibility: visible; }
+  .typed [data-line].typing { visibility: visible; }
+  .typed [data-line].typing::after { content: "█"; color: var(--green); animation: blink 0.8s steps(1) infinite; }
+  .replay { margin-left: auto; background: none; border: 1px solid var(--line); color: var(--dim); font: inherit; font-size: 0.72rem; padding: 0 0.4rem; cursor: pointer; border-radius: 3px; }
+  .replay:hover { color: var(--green); border-color: var(--green-2); }
+.typed .term-body { white-space: normal; }
+.typed [data-line] { white-space: pre-wrap; }

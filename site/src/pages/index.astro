@@ -1,0 +1,152 @@
+---
+import Base from "../layouts/Base.astro";
+import Terminal from "../components/Terminal.astro";
+import TypedTerminal from "../components/TypedTerminal.astro";
+---
+<Base title="Kleene · relational algebra for recursive model calls">
+  <section class="hero">
+    <pre class="logo flicker" aria-label="KLEENE">
+ ██╗  ██╗██╗     ███████╗███████╗███╗   ██╗███████╗
+ ██║ ██╔╝██║     ██╔════╝██╔════╝████╗  ██║██╔════╝
+ █████╔╝ ██║     █████╗  █████╗  ██╔██╗ ██║█████╗
+ ██╔═██╗ ██║     ██╔══╝  ██╔══╝  ██║╚██╗██║██╔══╝
+ ██║  ██╗███████╗███████╗███████╗██║ ╚████║███████╗
+ ╚═╝  ╚═╝╚══════╝╚══════╝╚══════╝╚═╝  ╚═══╝╚══════╝</pre>
+    <p class="tag"><span class="amber">relational algebra</span> for <span class="magenta">recursive model calls</span><span class="cursor"></span></p>
+    <p class="lede">
+      Write declarative SQL. Kleene compiles joins, recursion, predicates and aggregation into an
+      execution graph of language-model calls, recursive sub-sessions and tool calls. It plans and
+      costs that graph before spending a token, runs it, and lets you query the trace with the same SQL.
+      Watch it happen in a terminal UI.
+    </p>
+    <div class="ctas">
+      <a class="btn" href="/docs/cli/#install">[ install ]</a>
+      <a class="btn alt" href="/overview/">[ how it works ]</a>
+      <a class="btn alt" href="https://github.com/MarcusElwin/kleene">[ source ]</a>
+    </div>
+  </section>
+
+  <TypedTerminal title="kleene — ~/notes — 80×24">
+    <span data-line data-type><span class="prompt">$ </span><span data-text>kleene</span></span>
+    <span data-line data-wait="400" class="dim">kleene 0.1.0 · one stream, a prompt, slash commands · /setup to add a key</span>
+    <span data-line data-type><span class="prompt">&gt; </span><span data-text>Which project consumed the most hours in total? The notes are in demos/oolong/corpus.txt</span></span>
+    <span data-line data-wait="500" class="rule">── turn 1 ─────────────────────────────────────────── 0 calls · $0.0000</span>
+    <span data-line class="cmt">No context table was given, so the notes come in through the workspace tools.</span>
+    <span data-line class="sql"><span class="kw">CREATE TABLE</span> ctx <span class="kw">AS</span></span>
+    <span data-line class="sql"><span class="kw">SELECT</span> c.ordinal, c.text <span class="kw">FROM</span> read('demos/oolong/corpus.txt') r <span class="kw">CROSS JOIN LATERAL</span> chunks(r.text, 200) c;</span>
+    <span data-line class="sql"><span class="kw">SELECT</span> COUNT(*), MIN(ordinal), MAX(ordinal) <span class="kw">FROM</span> ctx;</span>
+    <span data-line data-wait="350">  <span class="num">60</span> | <span class="num">0</span> | <span class="num">59</span></span>
+    <span data-line class="dim">  1 row</span>
+    <span data-line data-wait="700" class="rule">── turn 2 ────────────────────────────────────────── 67 calls · $0.1100</span>
+    <span data-line class="cmt">Only some notes mention hours. A cheap proxy filters those, then a worker extracts project and hours as JSON.</span>
+    <span data-line class="sql"><span class="kw">CREATE TABLE</span> hours <span class="kw">AS</span></span>
+    <span data-line class="sql"><span class="kw">SELECT</span> ordinal, llm_json('Extract project and hours from: ' || text, '&#123;"project":"string","hours":"number"&#125;') <span class="kw">AS</span> h</span>
+    <span data-line class="sql"><span class="kw">FROM</span> ctx <span class="kw">WHERE</span> mentions_hours(text);</span>
+    <span data-line data-wait="900" class="dim">  28 rows</span>
+    <span data-line data-wait="300">  <span class="magenta">↳ worker cc3970</span>  d1  Resolve which project 'the migration' refers to in notes 14, 22 and 41</span>
+    <span data-line class="dim">  │ ── turn 1 ──────────────────────────────────── 0 calls · $0.0000</span>
+    <span data-line class="sql">  │ <span class="kw">SELECT</span> ordinal, text <span class="kw">FROM</span> ctx <span class="kw">WHERE</span> ordinal IN (14, 22, 41);</span>
+    <span data-line class="sql">  │ <span class="kw">FINAL FROM</span> (<span class="kw">SELECT</span> 'Osprey' <span class="kw">AS</span> project);</span>
+    <span data-line data-wait="500" class="dim">  │ ■ final · 1 turns · 2 calls · 3100 tok · $0.0040</span>
+    <span data-line data-wait="700" class="rule">── turn 3 ────────────────────────────────────────────────────── writing</span>
+    <span data-line class="cmt">The hours table has 28 rows across six projects. Summing per project and picking the top one:</span>
+    <span data-line class="sql"><span class="kw">FINAL FROM</span> (<span class="kw">SELECT</span> h.project, SUM(h.hours) <span class="kw">AS</span> total_hours <span class="kw">FROM</span> hours <span class="kw">GROUP BY</span> 1 <span class="kw">ORDER BY</span> 2 <span class="kw">DESC LIMIT</span> 1);</span>
+    <span data-line data-wait="600" class="dim">  1 row</span>
+    <span data-line data-wait="400" class="prompt">&gt; <span class="cursor"></span></span>
+  </TypedTerminal>
+  <p class="dim caption">A session: the model writes CallSQL turn by turn, every statement shows its rows and its cost, child sessions nest under the turn that opened them. Every call is memoised, so the second run is free.</p>
+
+  <section class="three">
+    <div class="card">
+      <h3>A planner for calls</h3>
+      <p>Predicates that call a model have a cost the optimizer can see. Join order, conjunct order, semi-joins for <code>EXISTS</code>, cascades through cheap proxies and beam-limited recursion are rewrite rules with a cost model. <code>EXPLAIN</code> shows the estimate before the spend.</p>
+    </div>
+    <div class="card">
+      <h3>Budgets as semantics</h3>
+      <p>Calls, tokens, dollars, depth and wall clock are dimensions of a budget that child sessions inherit and slice. A statement the remaining budget cannot pay for is refused, with its plan.</p>
+    </div>
+    <div class="card">
+      <h3>Learning as tables</h3>
+      <p>What the harness learns (playbook SQL, ratings, generator dials, sampled selectivities) is rows in DuckDB: inspectable, replay-gated and revertible. Query the trace with the same SQL you ran.</p>
+    </div>
+  </section>
+
+  <section class="split">
+    <div>
+      <h2>One query, priced before it runs</h2>
+      <p><code>VERIFY</code> is one model call per distinct candidate. The <code>NOT EXISTS</code> is an anti-semi-join that stops on the first refuting counterexample. The planner reorders the predicates by cost and tells you how many calls that is before you spend them.</p>
+      <Terminal title="candidates.sql">
+<span class="kw">SELECT</span> candidate
+<span class="kw">FROM</span> possibilities
+<span class="kw">WHERE</span> VERIFY(candidate)
+  <span class="kw">AND NOT EXISTS</span> (
+    <span class="kw">SELECT</span> 1 <span class="kw">FROM</span> counterexamples ce
+    <span class="kw">WHERE</span> REFUTE(candidate, ce.text)
+  );</Terminal>
+    </div>
+    <div>
+      <h2>Delegation is a lateral join</h2>
+      <p><code>rlm(question, chunk)</code> opens one child session per input row, with a slice of the budget and its own table namespace. <code>spawn('reviewer', task)</code> opens a child with that agent's tools. A child's <code>FINAL</code> comes back to the parent as a row.</p>
+      <Terminal title="partition-and-map.sql">
+<span class="kw">CREATE TABLE</span> parts <span class="kw">AS</span>&#10;
+<span class="kw">SELECT</span> ordinal / 10 <span class="kw">AS</span> part, string_agg(text, '\n') <span class="kw">AS</span> chunk
+<span class="kw">FROM</span> ctx <span class="kw">GROUP BY</span> 1;
+
+<span class="kw">SELECT</span> r.answer, r.detail
+<span class="kw">FROM</span> parts
+<span class="kw">CROSS JOIN LATERAL</span> rlm(<span class="amber">'Which project logged the most hours?'</span>, chunk) r;</Terminal>
+    </div>
+  </section>
+
+  <section>
+    <h2>Install</h2>
+    <Terminal title="sh">
+<span class="cmt"># curl: detects OS and architecture, verifies the SHA-256, installs to ~/.local/bin</span>&#10;
+<span class="prompt">$</span> curl -fsSL https://raw.githubusercontent.com/MarcusElwin/kleene/main/install.sh | sh
+
+<span class="cmt"># Homebrew</span>&#10;
+<span class="prompt">$</span> brew install MarcusElwin/kleene/kleene
+
+<span class="cmt"># From source (compiles DuckDB the first time, about ten minutes)</span>&#10;
+<span class="prompt">$</span> cargo install --git https://github.com/MarcusElwin/kleene kleene
+
+<span class="cmt"># Check the engine without a model</span>&#10;
+<span class="prompt">$</span> kleene repl -c "SELECT 1 + 1 AS two"
+  <span class="num">2</span>&#10;
+  <span class="dim">1 row</span></Terminal>
+    <p>Prebuilt binaries cover macOS (Apple silicon, Intel) and Linux (x86_64, aarch64). Then <code>kleene setup</code> for a provider (Anthropic, OpenAI, or any compatible endpoint), or just export <code>ANTHROPIC_API_KEY</code>. The full reference is in <a href="/docs/cli/">the CLI docs</a>.</p>
+  </section>
+
+  <section class="status">
+    <h2>Status</h2>
+    <p>Pre-release. Every milestone of <a href="/docs/plan/">the plan</a> is on <code>main</code>: the relational core with recursive CTEs by semi-naive evaluation, the call algebra with memo, batching and budgets, the RLM harness with <code>rlm</code> and <code>spawn</code>, the daemon and the Catppuccin TUI, the planner, the continual learning loop and the benchmark harness. Rust, model-agnostic, no SDK and no gateway required, MIT licensed.</p>
+    <p class="dim">
+      <span class="green">[x]</span> M0 scaffold &nbsp; <span class="green">[x]</span> M1 relational core &nbsp; <span class="green">[x]</span> M2 call algebra &nbsp; <span class="green">[x]</span> M3 RLM harness<br />
+      <span class="green">[x]</span> M4 daemon and TUI &nbsp; <span class="green">[x]</span> M5 planner &nbsp; <span class="green">[x]</span> M6 continual loop &nbsp; <span class="green">[x]</span> M7 benchmarks &nbsp; <span class="amber">[ ]</span> v0.1.0 release
+    </p>
+  </section>
+</Base>
+
+<style>
+  .hero { padding: 3rem 0 1rem; text-align: center; }
+  .logo {
+    display: inline-block; text-align: left; background: none !important; border: 0; box-shadow: none;
+    color: var(--green); text-shadow: var(--glow-green); font-size: clamp(0.42rem, 1.6vw, 0.95rem); line-height: 1.15; padding: 0; margin: 0 0 1rem;
+  }
+  .tag { font-family: var(--display); font-size: clamp(1.6rem, 4vw, 2.4rem); margin: 0 0 1rem; }
+  .lede { max-width: 64ch; margin: 0 auto 1.5rem; color: var(--fg); }
+  .ctas { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+  .btn { font-family: var(--display); font-size: 1.4rem; color: var(--green); text-shadow: var(--glow-green); padding: 0.1rem 0.4rem; border: 1px solid transparent; }
+  .btn:hover { background: var(--green); color: #000; text-shadow: none; }
+  .btn.alt { color: var(--amber); text-shadow: var(--glow-amber); }
+  .btn.alt:hover { background: var(--amber); color: #000; }
+  .caption { font-size: 0.85rem; max-width: 80ch; margin-top: -0.5rem; }
+  .three { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; margin: 3rem 0; }
+  .card { border: 1px solid var(--line); background: var(--panel); padding: 0.2rem 1.1rem 0.6rem; }
+  .card h3 { margin-top: 0.8rem; }
+  .card h3::before { content: "▸ "; color: var(--green); text-shadow: none; }
+  .card p { font-size: 0.92rem; }
+  .split { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 2rem; }
+  .split h2 { font-size: 1.9rem; }
+  .status p:last-child { line-height: 2; }
+</style>

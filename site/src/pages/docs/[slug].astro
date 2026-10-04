@@ -1,0 +1,54 @@
+---
+import { getCollection, render } from "astro:content";
+import Base from "../../layouts/Base.astro";
+import { DOCS } from "../../docs-index";
+
+export async function getStaticPaths() {
+  const entries = await getCollection("docs");
+  return entries.map((entry) => ({ params: { slug: entry.id.toLowerCase() }, props: { entry } }));
+}
+const { entry } = Astro.props;
+const { Content, headings } = await render(entry);
+const slug = entry.id.toLowerCase();
+const meta = DOCS.find((d) => d.slug === slug);
+const title = meta?.title ?? entry.id;
+const toc = headings.filter((h) => h.depth === 2);
+const idx = DOCS.findIndex((d) => d.slug === slug);
+const prev = idx > 0 ? DOCS[idx - 1] : null;
+const next = idx >= 0 && idx < DOCS.length - 1 ? DOCS[idx + 1] : null;
+---
+<Base title={`${title} · Kleene docs`} description={meta?.blurb} mermaid>
+  <div class="doc">
+    <aside class="toc">
+      <div class="toc-title"><a href="/docs/">docs/</a> <span class="dim">{entry.id}.md</span></div>
+      <nav aria-label="On this page">
+        {toc.map((h) => <a href={`#${h.slug}`}>{h.text}</a>)}
+      </nav>
+      <div class="toc-title all">all docs</div>
+      <nav aria-label="All docs">
+        {DOCS.map((d) => <a href={`/docs/${d.slug}/`} aria-current={d.slug === slug ? "page" : undefined}>{d.slug}</a>)}
+      </nav>
+      <p class="dim src"><a href={`https://github.com/MarcusElwin/kleene/blob/main/docs/${entry.id}.md`}>edit on GitHub</a></p>
+    </aside>
+    <article class="prose">
+      <Content />
+      <nav class="pager">
+        {prev ? <a href={`/docs/${prev.slug}/`}>← {prev.title}</a> : <span />}
+        {next ? <a href={`/docs/${next.slug}/`}>{next.title} →</a> : <span />}
+      </nav>
+    </article>
+  </div>
+</Base>
+<style>
+  .doc { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 2.5rem; align-items: start; padding-top: 1rem; }
+  .toc { position: sticky; top: 64px; font-size: 0.8rem; max-height: calc(100vh - 80px); overflow-y: auto; }
+  .toc nav { display: flex; flex-direction: column; gap: 0.25rem; margin-bottom: 1rem; }
+  .toc nav a { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .toc nav a::before { content: "· "; }
+  .toc nav a:hover, .toc nav a[aria-current="page"] { color: var(--green); text-shadow: none; }
+  .toc-title { font-family: var(--display); font-size: 1.2rem; color: var(--amber); margin-bottom: 0.4rem; }
+  .toc-title.all { margin-top: 0.5rem; }
+  .src { margin-top: 0.5rem; }
+  .pager { display: flex; justify-content: space-between; border-top: 1px dashed var(--line); margin-top: 3rem; padding-top: 1rem; gap: 1rem; }
+  @media (max-width: 800px) { .doc { grid-template-columns: 1fr; gap: 1rem; } .toc { position: static; max-height: none; } }
+</style>

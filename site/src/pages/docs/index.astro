@@ -1,0 +1,28 @@
+---
+import Base from "../../layouts/Base.astro";
+import Terminal from "../../components/Terminal.astro";
+import { DOCS } from "../../docs-index";
+const rows = DOCS.map((d) => ({ ...d, name: `${d.slug.toUpperCase()}.md`, pad: " ".repeat(Math.max(1, 18 - d.slug.length)) }));
+---
+<Base title="Documentation · Kleene">
+  <div class="prose">
+    <h1>Documentation</h1>
+    <p class="dim">Rendered from the repository's <code>docs/</code> directory on every build, so what you read here is what is on <code>main</code>.</p>
+    <Terminal title="ls -l docs/">{rows.map((d) => (
+  <span class="row"><span class="dim">-rw-r--r--  </span><a href={`/docs/${d.slug}/`}>{d.name}</a><span class="dim">{d.pad}{d.blurb}</span></span>
+))}</Terminal>
+    <h2>Start here</h2>
+    <ol>
+      <li><a href="/docs/cli/#install">Install</a> and <a href="/docs/cli/#configuring-a-model-provider">point it at a model</a>.</li>
+      <li>Read <a href="/docs/dialect/">the dialect</a> to see what the model can write: the relational core, model calls, tools, delegation, planner rules.</li>
+      <li>Read <a href="/docs/architecture/">the architecture</a> for the crates and the path a statement takes.</li>
+      <li>Then <a href="/docs/benchmarks/">the benchmarks</a> and <a href="/docs/writeup/">the write-up</a> for what has been measured.</li>
+    </ol>
+    <p>Runnable demos and the shipped task packs live in the repository under <a href="https://github.com/MarcusElwin/kleene/tree/main/demos">demos/</a> and <a href="https://github.com/MarcusElwin/kleene/tree/main/tasks">tasks/</a>. Working rules for contributors and coding agents are in <a href="https://github.com/MarcusElwin/kleene/blob/main/CLAUDE.md">CLAUDE.md</a>.</p>
+  </div>
+</Base>
+<style>
+  .row { display: block; }
+  .row a { color: var(--green); }
+  .row a:hover { color: #fff; }
+</style>

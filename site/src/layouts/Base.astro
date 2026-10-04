@@ -1,0 +1,76 @@
+---
+import "../styles/global.css";
+interface Props { title: string; description?: string; mermaid?: boolean }
+const { title, description = "Kleene: relational algebra for recursive model calls. Write SQL, compile it into a planned, budgeted graph of language-model calls.", mermaid = false } = Astro.props;
+const path = Astro.url.pathname;
+const current = (p: string) => (p === "/" ? path === "/" : path.startsWith(p)) ? "page" : undefined;
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta name="theme-color" content="#050709" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="wrap">
+        <a class="brand flicker" href="/">kleene<span class="dim">@</span>sql<span class="cursor"></span></a>
+        <nav class="nav" aria-label="Site">
+          <a href="/" aria-current={current("/")}>home</a>
+          <a href="/overview/" aria-current={current("/overview")}>overview</a>
+          <a href="/about/" aria-current={current("/about")}>about</a>
+          <a href="/docs/" aria-current={current("/docs")}>docs</a>
+          <a href="https://github.com/MarcusElwin/kleene">github</a>
+        </nav>
+      </div>
+    </header>
+    <main class="wrap">
+      <slot />
+    </main>
+    <footer class="footer">
+      <div class="wrap">
+        <span>kleene · MIT licensed · written in Rust, DuckDB inside</span>
+        <span><a href="https://github.com/MarcusElwin/kleene">source</a> · <a href="/docs/">documentation</a> · <a href="/about/">why the name</a></span>
+        <span class="dim">named for Stephen Cole Kleene, 1909–1994</span>
+      </div>
+    </footer>
+    {mermaid && (
+      <script type="module" is:inline>
+        // Turn ```mermaid fences (rendered by Astro as <pre><code>) into diagrams.
+        // Loaded from the CDN rather than bundled: mermaid's lazy diagram chunks do
+        // not survive the bundle, and this keeps the site's own JS tiny.
+        import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+        mermaid.initialize({
+          startOnLoad: false,
+          theme: "base",
+          themeVariables: {
+            darkMode: true, background: "#0b1016", primaryColor: "#0f1a22", primaryTextColor: "#c9d4d2",
+            primaryBorderColor: "#39ff88", lineColor: "#28e5ff", secondaryColor: "#14202a", tertiaryColor: "#0b1016",
+            fontFamily: "IBM Plex Mono, monospace", fontSize: "13px", noteBkgColor: "#1a1408", noteTextColor: "#ffb000",
+            actorBorder: "#39ff88", actorBkg: "#0f1a22", actorTextColor: "#c9d4d2", signalColor: "#28e5ff", signalTextColor: "#c9d4d2",
+            labelBoxBkgColor: "#14202a", labelTextColor: "#ffb000", loopTextColor: "#ffb000", activationBorderColor: "#ff3cc7", activationBkgColor: "#2a1024",
+          },
+        });
+        const blocks = Array.from(document.querySelectorAll("pre[data-language='mermaid'], pre > code.language-mermaid"));
+        for (const el of blocks) {
+          const pre = el.tagName === "PRE" ? el : el.parentElement;
+          const src = pre.textContent ?? "";
+          const div = document.createElement("div");
+          div.className = "mermaid";
+          div.textContent = src;
+          pre.replaceWith(div);
+        }
+        for (const node of document.querySelectorAll(".mermaid")) {
+          try { await mermaid.run({ nodes: [node] }); }
+          catch (e) { console.error("mermaid:", e); node.classList.add("mermaid-failed"); }
+        }
+      </script>
+    )}
+  </body>
+</html>
