@@ -35,7 +35,13 @@ pub const WRAP_KEY: &str = "output";
 /// object, and [`unwrap_output`] takes it back out of the reply, so the
 /// caller sees the JSON shape it asked for.
 pub fn strict_schema(schema: &Value) -> (Value, bool) {
-    let normalized = super::anthropic::normalize_schema(schema);
+    let mut normalized = super::anthropic::normalize_schema(schema);
+    // The Anthropic rewrite lowers `minItems` to 1 (that API takes no
+    // more); OpenAI's strict mode enforces the exact count, so an array
+    // root keeps the bound it asked for.
+    if let (Some(min), Value::Object(map)) = (schema.get("minItems"), &mut normalized) {
+        map.insert("minItems".into(), min.clone());
+    }
     let is_object = normalized.get("type").and_then(Value::as_str) == Some("object");
     if is_object {
         (normalized, false)
@@ -748,10 +754,13 @@ mod tests {
 
     #[test]
     fn non_object_schemas_are_wrapped_and_unwrapped() {
-        let (array, wrapped) =
-            strict_schema(&json!({"type": "array", "items": {"type": "string"}}));
+        let (array, wrapped) = strict_schema(
+            &json!({"type": "array", "items": {"type": "string"}, "minItems": 20, "maxItems": 20}),
+        );
         assert!(wrapped);
         assert_eq!(array["type"], "object");
+        assert_eq!(array["properties"]["output"]["minItems"], 20);
+        assert_eq!(array["properties"]["output"]["maxItems"], 20);
         assert_eq!(array["required"], json!(["output"]));
         assert_eq!(array["additionalProperties"], false);
         assert_eq!(array["properties"]["output"]["type"], "array");
