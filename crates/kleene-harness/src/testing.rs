@@ -86,3 +86,100 @@ impl Provider for ScriptedProvider {
         })
     }
 }
+
+/// Like [`ScriptedProvider`] but with native tool calling: each rule's
+/// response is a list of content blocks (text or `tool_use`), matched
+/// against the text of the last user message, tool results included.
+pub struct ScriptedToolProvider {
+    rules: Vec<(String, Vec<ContentBlock>)>,
+    fallback: Vec<ContentBlock>,
+    calls: AtomicU64,
+}
+
+impl ScriptedToolProvider {
+    /// Build from rules; `fallback` answers when no rule matches.
+    pub fn new(rules: Vec<(&str, Vec<ContentBlock>)>, fallback: Vec<ContentBlock>) -> Self {
+        Self {
+            rules: rules.into_iter().map(|(a, b)| (a.to_string(), b)).collect(),
+            fallback,
+            calls: AtomicU64::new(0),
+        }
+    }
+
+    /// Calls served so far.
+    pub fn calls(&self) -> u64 {
+        self.calls.load(Ordering::SeqCst)
+    }
+
+    /// A `tool_use` block.
+    pub fn tool_use(id: &str, name: &str, input: serde_json::Value) -> ContentBlock {
+        ContentBlock::ToolUse {
+            id: id.into(),
+            name: name.into(),
+            input,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Provider for ScriptedToolProvider {
+    fn name(&self) -> &str {
+        "scripted-tools"
+    }
+
+    fn capabilities(&self) -> Capabilities {
+        Capabilities {
+            streaming: false,
+            tools: true,
+            json_schema: true,
+            prompt_cache: false,
+            reasoning_control: false,
+            cost_reported: true,
+        }
+    }
+
+    async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse, ProviderError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let prompt = req
+            .messages
+            .last()
+            .map(|m| {
+                m.content
+                    .iter()
+                    .map(|c| match c {
+                        ContentBlock::Text { text } => text.clone(),
+                        ContentBlock::ToolResult { content, .. } => content.clone(),
+                        ContentBlock::ToolUse { name, .. } => name.clone(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .unwrap_or_default();
+        let content = self
+            .rules
+            .iter()
+            .find(|(needle, _)| prompt.contains(needle.as_str()))
+            .map(|(_, r)| r.clone())
+            .unwrap_or_else(|| self.fallback.clone());
+        let stop_reason = if content
+            .iter()
+            .any(|c| matches!(c, ContentBlock::ToolUse { .. }))
+        {
+            StopReason::ToolUse
+        } else {
+            StopReason::EndTurn
+        };
+        Ok(CompletionResponse {
+            model: "scripted-tools".into(),
+            content,
+            stop_reason,
+            usage: Usage {
+                input_tokens: prompt.len() as u64 / 4,
+                output_tokens: 8,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
+                cost_usd: Some(0.001),
+            },
+        })
+    }
+}

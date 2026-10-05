@@ -9,6 +9,7 @@ use crate::{AgentRole, Rendered};
 use kleene_core::{
     Budget, BudgetUsage, CallKind, Catalog, FunctionDef, FunctionReturn, TableDef, Volatility,
 };
+use kleene_tools::skills::Skill;
 use std::fmt::Write as _;
 
 /// Inputs of the system prefix.
@@ -29,6 +30,11 @@ pub struct PromptContext<'a> {
     pub max_turns: u32,
     /// Learned playbook entries for this task's kind (may be empty).
     pub playbook: &'a [crate::PlaybookExample],
+    /// Skills the session may read with `skill(name)`; only name and
+    /// description are rendered.
+    pub skills: &'a [Skill],
+    /// Project instructions (`KLEENE.md`, `AGENTS.md` or `CLAUDE.md`), if any.
+    pub instructions: Option<&'a str>,
 }
 
 /// Size of a preloaded context, for the task message.
@@ -116,11 +122,25 @@ This session runs at depth {} of {}; you have at most {} turns.\n",
             );
         }
     }
+    if !cx.skills.is_empty() {
+        out.push_str("\n## Skills (read one with SELECT text FROM skill('name') when its description fits the task)\n");
+        let mut skills: Vec<&Skill> = cx.skills.iter().collect();
+        skills.sort_by(|a, b| a.name.cmp(&b.name));
+        for s in skills {
+            let _ = writeln!(out, "- {}: {}", s.name, first_line(&s.description));
+        }
+    }
+    if let Some(text) = cx.instructions.map(str::trim).filter(|t| !t.is_empty()) {
+        let _ = write!(out, "\n## Project instructions\n{text}\n");
+    }
     if !cx.role.prompt.is_empty() {
         let _ = write!(out, "\n## Your role\n{}\n", cx.role.prompt.trim());
     }
     out
 }
+
+/// Appended to a turn's feedback when its SQL repeats the previous turn's.
+pub const REPEATED: &str = "\nThis reply repeated the previous turn's SQL exactly and got the same answer. Running it again will not change anything: read the result above, then change the code, the query or the approach.";
 
 const RULES: &str = "## CallSQL rules
 - PostgreSQL-flavoured subset: SELECT, JOIN ... ON, WHERE, GROUP BY/HAVING, ORDER BY, LIMIT, subqueries, EXISTS, IN, WITH and WITH RECURSIVE; CREATE TABLE t AS SELECT ...; INSERT INTO t SELECT ...; DROP TABLE t.
@@ -133,7 +153,9 @@ const RULES: &str = "## CallSQL rules
 - In WITH RECURSIVE, a trailing ORDER BY score LIMIT k keeps the best k new rows of each round (beam search); SET max_recursion_rounds bounds depth.
 - SET budget.calls = n, SET effort = 'low', SET model.default = 'worker' change this session's settings.
 - Results are truncated to the first rows: aggregate, filter and LIMIT deliberately; never page through a large relation row by row. Peek (COUNT, MIN, MAX, a LIMIT 3 sample), partition (chunks, files), locate (grep, lines), map (LATERAL rlm), then reduce.
-- Files and code: write_file(path, text) writes a file; patch(path, old, new) replaces exactly one occurrence after you have read the file (read or lines) in this session; shell('cmd') runs a command in the workspace and returns stdout, stderr and exit_code. Put code, and any text with quotes or newlines, in dollar quotes: CALL write_file('fizz.py', $$print(\"hi\")$$) needs no escaping inside $$ ... $$. Write, run, read the failure, patch, run again; then FINAL with what you did.
+- Files and code: search(query) ranks files by the words of a query, grep(pattern) matches a regex, lines(path, from, to) reads a range; write_file(path, text) writes a file; patch(path, old, new) replaces one occurrence (exact, else ignoring whitespace and quotes) after you have read the file (read or lines) in this session and returns the diff; shell('cmd') runs a command in the workspace and returns stdout, stderr and exit_code. Put code, and any text with quotes or newlines, in dollar quotes: CALL write_file('fizz.py', $$print(\"hi\")$$) needs no escaping inside $$ ... $$. Write, run, read the failure, patch, run again. A failing test is the next thing to fix, not a reason to stop; FINAL only once the run is green.
+- For a task with several steps keep a plan the UI shows: CREATE TABLE plan AS SELECT * FROM (VALUES ('read the tests', 'doing'), ('implement', 'todo')) AS p(step, status); then INSERT INTO plan VALUES ('read the tests', 'done'), ('implement', 'doing') as steps change. The latest row per step counts; statuses are todo, doing, done.
+- Older turns are folded out of this transcript into the table turns(n, sql, result); query it rather than re-running a statement whose result scrolled away.
 - Errors come back as text with a hint; fix the statement and retry. A failed statement stops the rest of that reply.
 - End with FINAL(expr) or FINAL FROM (SELECT ...): its rows are your answer and the session ends. Make the answer a small, well-named relation.
 ";
@@ -309,8 +331,9 @@ pub fn render_budget(b: &Budget) -> String {
     }
 }
 
-/// The first user turn: the task, the context summary, the ask.
-pub fn task_message(task: &str, context: Option<&ContextSummary>) -> String {
+/// The first user turn: the task, the context summary, the finish check
+/// if one is configured, the ask.
+pub fn task_message(task: &str, context: Option<&ContextSummary>, check: Option<&str>) -> String {
     let mut out = String::new();
     out.push_str("# Task\n");
     out.push_str(task.trim());
@@ -323,6 +346,12 @@ pub fn task_message(task: &str, context: Option<&ContextSummary>) -> String {
             if c.rows == 1 { "" } else { "s" },
             c.chars / 4,
             c.digest
+        );
+    }
+    if let Some(cmd) = check {
+        let _ = write!(
+            out,
+            "\nFINAL is accepted only when `{cmd}` exits 0 in the workspace; it runs when you write FINAL, and a refusal shows you its output. Run it yourself before finishing.\n"
         );
     }
     out.push_str("\nReply with CallSQL in a ```sql fence.");
@@ -498,10 +527,20 @@ mod tests {
             max_depth: 2,
             max_turns: 12,
             playbook: &[],
+            skills: &kleene_tools::skills::builtin(),
+            instructions: Some("Run cargo fmt before finishing."),
         };
         let a = system_prompt(&cx);
         let b = system_prompt(&cx);
         assert_eq!(a, b);
+        assert!(a.contains("## Skills"), "{a}");
+        assert!(a.contains("- code-task: Implement or fix code"), "{a}");
+        assert!(
+            a.contains("## Project instructions\nRun cargo fmt before finishing."),
+            "{a}"
+        );
+        assert!(a.contains("turns(n, sql, result)"), "{a}");
+        assert!(a.contains("CREATE TABLE plan AS"), "{a}");
         assert!(a.contains("depth 1 of 2"), "{a}");
         assert!(a.contains("- ctx(text TEXT)  -- the context"), "{a}");
         assert!(a.contains("Your own trace, live: trace_calls"), "{a}");
@@ -598,6 +637,7 @@ mod tests {
                 chars: 4000,
                 digest: 0xabc,
             }),
+            None,
         );
         assert!(
             t.contains("ctx(ordinal, text): 12 rows, about 1000 tokens, digest 0000000000000abc"),
@@ -607,7 +647,12 @@ mod tests {
             ContextSummary::of("a", 1).digest,
             ContextSummary::of("b", 1).digest
         );
-        assert!(task_message("q", None).ends_with("Reply with CallSQL in a ```sql fence."));
+        assert!(task_message("q", None, None).ends_with("Reply with CallSQL in a ```sql fence."));
+        let checked = task_message("q", None, Some("python3 -m unittest -q"));
+        assert!(
+            checked.contains("FINAL is accepted only when `python3 -m unittest -q` exits 0"),
+            "{checked}"
+        );
         assert!(nudge("No SQL found.").starts_with("No SQL found. Reply with CallSQL"));
     }
 }

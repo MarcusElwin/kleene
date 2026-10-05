@@ -108,6 +108,16 @@ pub const COMMANDS: &[Command] = &[
         help: "add or change API keys: model providers and web search",
     },
     Command {
+        name: "/mcp",
+        args: "[add <name> <command> [args...] | remove <name>]",
+        help: "MCP servers: list them with their tools, or add or remove one in mcp.json",
+    },
+    Command {
+        name: "/skills",
+        args: "[name]",
+        help: "the loaded skills, or one skill in full",
+    },
+    Command {
         name: "/clear",
         args: "",
         help: "clear the stream",
@@ -273,11 +283,20 @@ impl App {
                     Some(other) => other,
                     None => "trace",
                 };
-                self.entries.push(Entry::Table {
-                    title: title.to_string(),
-                    columns: columns.clone(),
-                    rows: rows.clone(),
-                });
+                if title == "skill" {
+                    let body = rows
+                        .first()
+                        .and_then(|r| r.first())
+                        .cloned()
+                        .unwrap_or_default();
+                    self.entries.push(Entry::Text(body));
+                } else {
+                    self.entries.push(Entry::Table {
+                        title: title.to_string(),
+                        columns: columns.clone(),
+                        rows: rows.clone(),
+                    });
+                }
             }
             ServerMessage::Submitted { results, .. } => {
                 self.entries.push(Entry::Results(results.clone()));
@@ -342,7 +361,72 @@ impl App {
             max_turns: None,
             max_depth: None,
             budget_calls: None,
+            check: None,
         })
+    }
+
+    /// Where `/mcp add` and `/mcp remove` write: `mcp.json` beside the
+    /// config file.
+    pub fn mcp_path(&self) -> PathBuf {
+        self.config_path
+            .parent()
+            .map(|d| d.join("mcp.json"))
+            .unwrap_or_else(|| PathBuf::from("mcp.json"))
+    }
+
+    /// `/mcp`, `/mcp add <name> <command> [args...]`, `/mcp remove <name>`.
+    fn mcp_command(&mut self, arg: &str) -> Action {
+        let words: Vec<&str> = arg.split_whitespace().collect();
+        match words.as_slice() {
+            [] => Action::Send(ClientRequest::ListMcp),
+            ["add", name, command, args @ ..] => {
+                let server = kleene_tools::mcp::McpServerConfig {
+                    name: (*name).to_string(),
+                    command: (*command).to_string(),
+                    args: args.iter().map(|a| (*a).to_string()).collect(),
+                    env: Default::default(),
+                };
+                match kleene_tools::mcp::add_server(&self.mcp_path(), &server) {
+                    Ok(()) => {
+                        self.entries.push(Entry::Notice(format!(
+                            "added {name} to {}; reloading",
+                            self.mcp_path().display()
+                        )));
+                        Action::Send(ClientRequest::Reload)
+                    }
+                    Err(e) => {
+                        self.entries
+                            .push(Entry::Notice(format!("mcp add failed: {e}")));
+                        Action::None
+                    }
+                }
+            }
+            ["remove", name] => match kleene_tools::mcp::remove_server(&self.mcp_path(), name) {
+                Ok(true) => {
+                    self.entries
+                        .push(Entry::Notice(format!("removed {name}; reloading")));
+                    Action::Send(ClientRequest::Reload)
+                }
+                Ok(false) => {
+                    self.entries.push(Entry::Notice(format!(
+                        "no server named {name} in {}",
+                        self.mcp_path().display()
+                    )));
+                    Action::None
+                }
+                Err(e) => {
+                    self.entries
+                        .push(Entry::Notice(format!("mcp remove failed: {e}")));
+                    Action::None
+                }
+            },
+            _ => {
+                self.entries.push(Entry::Notice(
+                    "usage: /mcp, /mcp add <name> <command> [args...], /mcp remove <name>".into(),
+                ));
+                Action::None
+            }
+        }
     }
 
     fn command(&mut self, name: &str, arg: &str, typed: &str) -> Action {
@@ -377,6 +461,16 @@ impl App {
             "runs" => {
                 self.entries.push(Entry::Input(typed.to_string()));
                 Action::Send(ClientRequest::ListRuns)
+            }
+            "skills" => {
+                self.entries.push(Entry::Input(typed.to_string()));
+                Action::Send(ClientRequest::ListSkills {
+                    name: (!arg.is_empty()).then(|| arg.to_string()),
+                })
+            }
+            "mcp" => {
+                self.entries.push(Entry::Input(typed.to_string()));
+                self.mcp_command(arg)
             }
             "follow" => {
                 let found = self

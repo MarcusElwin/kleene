@@ -1549,6 +1549,7 @@ dependencies = [
  "kleene-core",
  "kleene-daemon",
  "kleene-llm",
+ "kleene-tools",
  "kleene-trace",
  "ratatui",
  "serde_json",

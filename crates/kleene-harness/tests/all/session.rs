@@ -502,3 +502,121 @@ async fn observer_hears_the_reply_stream_and_call_lifecycle() {
     );
     assert_eq!(f.provider.calls(), 2);
 }
+
+#[tokio::test]
+async fn a_final_is_refused_while_the_finish_check_fails() {
+    let f = fixture(
+        vec![
+            (
+                "FINAL refused",
+                &sql("CALL write_file('done.txt', 'x');\nFINAL(2)"),
+            ),
+            ("# Task", &sql("FINAL(1)")),
+        ],
+        |cfg| cfg.finish_check = Some("test -f done.txt".into()),
+    )
+    .await;
+    let report = f.harness.run("make done.txt exist", None).await.unwrap();
+    assert_eq!(final_rows(&report)[0][0].as_int(), Some(2));
+    let t = &report.root.transcript;
+    assert_eq!(t.len(), 2);
+    let first = &t[0].results[0];
+    assert!(first.is_error && !first.is_final, "{first:?}");
+    assert!(
+        first
+            .text
+            .contains("FINAL refused: the check `test -f done.txt` exited 1"),
+        "{}",
+        first.text
+    );
+    assert!(t[0].feedback.contains("read the failure, fix the code"));
+    // The task message told the model about the check up front.
+    let status = f
+        .store
+        .query("SELECT record FROM kleene_sessions WHERE parent IS NULL")
+        .await
+        .unwrap();
+    assert!(
+        status.rows[0][0]
+            .render()
+            .contains("FINAL is accepted only when `test -f done.txt` exits 0"),
+        "{}",
+        status.rows[0][0].render()
+    );
+}
+
+#[tokio::test]
+async fn a_repeated_statement_gets_a_note_and_turns_land_in_the_turns_table() {
+    let f = fixture(
+        vec![
+            (
+                "repeated the previous turn",
+                &sql("SELECT n, sql FROM turns ORDER BY n;\nFINAL(9)"),
+            ),
+            ("# Task", &sql("SELECT 41 + 1 AS x")),
+            ("42", &sql("SELECT 41 + 1 AS x")),
+        ],
+        |cfg| cfg.max_turns = 5,
+    )
+    .await;
+    let report = f.harness.run("add", None).await.unwrap();
+    assert_eq!(final_rows(&report)[0][0].as_int(), Some(9));
+    let t = &report.root.transcript;
+    assert_eq!(t.len(), 3, "{t:#?}");
+    assert!(!t[0].feedback.contains("repeated the previous turn"));
+    assert!(
+        t[1].feedback.contains("repeated the previous turn"),
+        "{}",
+        t[1].feedback
+    );
+    // Turn 3 read the turns table: turns 1 and 2 with their SQL.
+    let shown = &t[2].results[0].text;
+    assert!(shown.contains("SELECT 41 + 1 AS x"), "{shown}");
+    assert!(shown.contains("2 rows"), "{shown}");
+}
+
+#[tokio::test]
+async fn a_plan_table_is_reported_with_the_latest_status_per_step() {
+    let f = fixture(
+        vec![
+            ("# Task", &sql("CREATE TABLE plan AS SELECT * FROM (VALUES ('read', 'doing'), ('write', 'todo')) AS p(step, status)")),
+            ("created table plan", &sql("INSERT INTO plan VALUES ('read', 'done'), ('write', 'doing');\nFINAL(1)")),
+        ],
+        |_| {},
+    )
+    .await;
+    let report = f.harness.run("plan it", None).await.unwrap();
+    assert_eq!(final_rows(&report)[0][0].as_int(), Some(1));
+    let t = &report.root.transcript;
+    assert_eq!(
+        t[0].plan,
+        vec![
+            ("read".to_string(), "doing".to_string()),
+            ("write".to_string(), "todo".to_string())
+        ]
+    );
+    assert_eq!(
+        t[1].plan,
+        vec![
+            ("read".to_string(), "done".to_string()),
+            ("write".to_string(), "doing".to_string())
+        ]
+    );
+}
+
+#[tokio::test]
+async fn skills_are_listed_in_the_prompt_and_served_by_skill() {
+    let f = fixture(
+        vec![(
+            "# Task",
+            &sql("FINAL FROM (SELECT name, source FROM skill('code-task'))"),
+        )],
+        |_| {},
+    )
+    .await;
+    let report = f.harness.run("which skill", None).await.unwrap();
+    let rows = final_rows(&report);
+    assert_eq!(rows[0][0].as_text(), Some("code-task"));
+    assert_eq!(rows[0][1].as_text(), Some("builtin"));
+    assert!(f.harness.skills().iter().any(|s| s.name == "run-benchmark"));
+}

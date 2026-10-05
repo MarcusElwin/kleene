@@ -5,8 +5,9 @@
 
 use kleene_harness::learn::bench::{BenchOptions, Mode};
 use kleene_harness::learn::packs::{terminal_pack, Pack};
+use kleene_harness::learn::plain::{self, PlainConfig};
 use kleene_harness::learn::{Learn, LearnConfig};
-use kleene_harness::testing::ScriptedProvider;
+use kleene_harness::testing::{ScriptedProvider, ScriptedToolProvider};
 use kleene_harness::HarnessConfig;
 use kleene_store::{DuckDbStore, Store};
 use std::sync::Arc;
@@ -452,4 +453,65 @@ async fn episode_steps_inherit_the_workspace_and_resume_rebuilds_it() {
         "{:?}",
         resumed.rows[1]
     );
+}
+
+#[tokio::test]
+async fn plain_agent_uses_native_tool_calls_and_the_finish_check_gates_final() {
+    let dir = tempfile::tempdir().unwrap();
+    let tu = ScriptedToolProvider::tool_use;
+    let p = Arc::new(ScriptedToolProvider::new(
+        vec![
+            // Turn 1: try to finish at once; the check refuses it.
+            (
+                "# Task",
+                vec![tu(
+                    "t1",
+                    "final",
+                    serde_json::json!({"columns": ["done"], "rows": [["true"]]}),
+                )],
+            ),
+            // Turn 2: the refusal names the check; create the file and finish.
+            (
+                "final refused",
+                vec![
+                    tu(
+                        "t2",
+                        "write_file",
+                        serde_json::json!({"args": ["done.txt", "ok"]}),
+                    ),
+                    tu(
+                        "t3",
+                        "final",
+                        serde_json::json!({"columns": ["done"], "rows": [["true"]]}),
+                    ),
+                ],
+            ),
+        ],
+        vec![kleene_llm::ContentBlock::Text {
+            text: "I give up".into(),
+        }],
+    ));
+    let cfg = PlainConfig {
+        provider: p.clone(),
+        alias: "root".into(),
+        workspace: dir.path().to_path_buf(),
+        max_turns: 4,
+        budget: kleene_core::Budget::unbounded(),
+        max_tokens: 512,
+        check: Some("test -f done.txt".into()),
+    };
+    let r = plain::run(&cfg, "make done.txt", None).await;
+    assert_eq!(r.outcome, "final", "{r:?}");
+    assert_eq!(r.turns, 2);
+    assert_eq!(p.calls(), 2);
+    let answer = r.answer.unwrap();
+    assert_eq!(answer.schema.fields[0].name, "done");
+    assert_eq!(answer.rows[0][0].as_text(), Some("true"));
+    assert!(dir.path().join("done.txt").exists());
+    // The tool definitions sent carry every tool plus `final`.
+    let defs = plain::tool_defs(&kleene_tools::standard_tools());
+    assert!(defs.iter().any(|d| d.name == "final"));
+    assert!(defs.iter().any(|d| d.name == "patch"
+        && d.description
+            .contains("patch(TEXT, TEXT, TEXT) -> (path, replaced, diff)")));
 }

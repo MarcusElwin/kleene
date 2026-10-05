@@ -28,6 +28,16 @@
 //! | `remove` | `(path TEXT)` | `path` | VOLATILE |
 //! | `web_fetch` | `(url TEXT)` | `url, status, text, tokens` | VOLATILE |
 //! | `web_search` | `(q TEXT [, n BIGINT])` | `rank, title, url, snippet` | VOLATILE |
+//! | `search` | `(query TEXT [, glob TEXT, n BIGINT])` | `path, score, lineno, snippet` | STABLE |
+//! | `skill` | `(name TEXT)` | `name, source, text` | STABLE |
+//!
+//! `lines` also takes an optional `from, to` range; `patch` returns the
+//! unified diff of what it changed and falls back to a whitespace- and
+//! quote-insensitive line match when the exact text is not found.
+//!
+//! Beyond the standard surface, [`mcp`] connects Model Context Protocol
+//! servers and exposes each of their tools under `<server>_<tool>`, and
+//! [`skills`] loads the `SKILL.md` files the `skill` function serves.
 //!
 //! `web_search` calls the service named by [`ToolContext::web_search`]
 //! (Brave Search, Tavily, Exa or Linkup, configured by `kleene setup`); without one every
@@ -40,7 +50,9 @@
 
 #![forbid(unsafe_code)]
 
+pub mod mcp;
 pub mod paths;
+pub mod skills;
 pub mod tools;
 
 mod args;
@@ -136,6 +148,8 @@ pub struct ToolContext {
     /// Modification time of each file at its last `read`/`lines`; shared by
     /// every tool of a session so `patch` can refuse stale edits.
     pub reads: ReadRegistry,
+    /// The skills the `skill` function serves (see [`skills::discover`]).
+    pub skills: Arc<Vec<skills::Skill>>,
 }
 
 impl ToolContext {
@@ -151,7 +165,14 @@ impl ToolContext {
             network_allowlist: Vec::new(),
             web_search: None,
             reads: Arc::new(Mutex::new(HashMap::new())),
+            skills: Arc::new(Vec::new()),
         }
+    }
+
+    /// The same context with these skills loaded.
+    pub fn with_skills(mut self, skills: Vec<skills::Skill>) -> Self {
+        self.skills = Arc::new(skills);
+        self
     }
 
     /// The same context with `web_search` set.
@@ -275,6 +296,8 @@ pub fn standard_tools() -> ToolRegistry {
         Arc::new(tools::remove::Remove),
         Arc::new(tools::web_fetch::WebFetch),
         Arc::new(tools::web_search::WebSearch),
+        Arc::new(tools::search::Search),
+        Arc::new(tools::skill::SkillTool),
     ];
     for t in all {
         reg.register(t);
@@ -329,7 +352,7 @@ mod tests {
         let reg = standard_tools();
         let defs = catalog_entries(&reg);
         assert_eq!(defs.len(), reg.len());
-        assert_eq!(reg.len(), 17);
+        assert_eq!(reg.len(), 19);
         for def in &defs {
             let tool = reg.get(&def.name).expect("entry names a tool");
             assert_eq!(def.volatility, tool.volatility(), "{}", def.name);
@@ -346,7 +369,9 @@ mod tests {
         assert_eq!(by_name("chunks").volatility, Volatility::Immutable);
         assert_eq!(by_name("grep").args, vec![DataType::Text]);
         assert!(by_name("grep").variadic);
-        assert!(!by_name("lines").variadic);
+        assert!(by_name("lines").variadic);
+        assert_eq!(by_name("search").volatility, Volatility::Stable);
+        assert_eq!(by_name("skill").volatility, Volatility::Stable);
         assert_eq!(by_name("shell").volatility, Volatility::Volatile);
         assert_eq!(by_name("git_log").volatility, Volatility::Stable);
         assert!(by_name("git_log").args.is_empty());

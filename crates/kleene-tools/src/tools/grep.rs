@@ -16,6 +16,11 @@ const SNIFF_BYTES: usize = 8 * 1024;
 /// Text of the trailing row when the match cap is hit.
 pub const TRUNCATED: &str = "... truncated";
 
+/// Whether a file's bytes look binary: a NUL in the first 8 KiB.
+pub(crate) fn looks_binary(bytes: &[u8]) -> bool {
+    bytes[..bytes.len().min(SNIFF_BYTES)].contains(&0)
+}
+
 /// `grep(pattern TEXT [, glob TEXT]) -> (path TEXT, lineno BIGINT, text TEXT)`.
 ///
 /// `pattern` is a Rust regex, `glob` defaults to `**/*`. Binary files (a
@@ -72,7 +77,7 @@ impl Tool for Grep {
                 Ok(b) => b,
                 Err(_) => continue,
             };
-            if bytes[..bytes.len().min(SNIFF_BYTES)].contains(&0) {
+            if looks_binary(&bytes) {
                 continue;
             }
             let contents = String::from_utf8_lossy(&bytes);

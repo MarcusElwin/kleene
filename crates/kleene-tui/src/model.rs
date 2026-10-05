@@ -71,6 +71,8 @@ pub struct TurnRecord {
     pub sql: Option<String>,
     /// What each statement rendered to.
     pub results: Vec<kleene_daemon::StatementOutput>,
+    /// The session's plan after this turn, `(step, status)`.
+    pub plan: Vec<(String, String)>,
 }
 
 /// A session as the stream shows it.
@@ -225,6 +227,7 @@ impl Model {
                 reply,
                 sql,
                 results,
+                plan,
             } => {
                 if let Some(s) = self.sessions.get_mut(&session) {
                     s.turns_done.push(TurnRecord {
@@ -232,6 +235,7 @@ impl Model {
                         reply,
                         sql,
                         results,
+                        plan,
                     });
                 }
             }
