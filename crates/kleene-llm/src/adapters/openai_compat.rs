@@ -21,6 +21,58 @@ use std::time::Duration;
 /// Default API base (OpenAI itself).
 pub const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 
+/// The key a non-object output schema is wrapped under; see [`strict_schema`].
+pub const WRAP_KEY: &str = "output";
+
+/// The schema as OpenAI's strict structured outputs accept it, and whether
+/// the model's answer arrives wrapped.
+///
+/// Strict mode wants the root to be an object with every property required
+/// and `additionalProperties: false`; the same rewrite the Anthropic adapter
+/// applies ([`super::anthropic::normalize_schema`]) supplies those. A root
+/// that is not an object (`{"type": "array", ...}`, a bare string or number
+/// schema) is wrapped as the single required property [`WRAP_KEY`] of an
+/// object, and [`unwrap_output`] takes it back out of the reply, so the
+/// caller sees the JSON shape it asked for.
+pub fn strict_schema(schema: &Value) -> (Value, bool) {
+    let normalized = super::anthropic::normalize_schema(schema);
+    let is_object = normalized.get("type").and_then(Value::as_str) == Some("object");
+    if is_object {
+        (normalized, false)
+    } else {
+        (
+            json!({
+                "type": "object",
+                "properties": { WRAP_KEY: normalized },
+                "required": [WRAP_KEY],
+                "additionalProperties": false
+            }),
+            true,
+        )
+    }
+}
+
+/// Undo [`strict_schema`]'s wrapping on a reply: the text content, parsed
+/// as JSON, is replaced by its [`WRAP_KEY`] member. Text that is not an
+/// object with that member is left alone.
+pub fn unwrap_output(resp: &mut CompletionResponse) {
+    let text = resp.text();
+    let Ok(Value::Object(mut map)) = serde_json::from_str::<Value>(&text) else {
+        return;
+    };
+    let Some(inner) = map.remove(WRAP_KEY) else {
+        return;
+    };
+    resp.content
+        .retain(|b| !matches!(b, ContentBlock::Text { .. }));
+    resp.content.insert(
+        0,
+        ContentBlock::Text {
+            text: inner.to_string(),
+        },
+    );
+}
+
 /// Chat-completions backend.
 pub struct OpenAiCompatProvider {
     client: reqwest::Client,
@@ -151,6 +203,7 @@ impl OpenAiCompatProvider {
             body.insert("tools".into(), Value::Array(tools));
         }
         if let Some(schema) = &req.output_schema {
+            let (schema, _) = strict_schema(schema);
             body.insert(
                 "response_format".into(),
                 json!({
@@ -569,19 +622,40 @@ impl Provider for OpenAiCompatProvider {
     }
 
     async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse, ProviderError> {
+        let wrapped = req
+            .output_schema
+            .as_ref()
+            .is_some_and(|s| strict_schema(s).1);
         let body = Self::build_body_with_limit(&req, self.limit_field);
         let resp = http::send(&self.backoff, || self.request(&body)).await?;
         let text = resp
             .text()
             .await
             .map_err(|e| ProviderError::Network(http::describe(&e)))?;
-        Self::parse_response(&text)
+        let mut parsed = Self::parse_response(&text)?;
+        if wrapped {
+            unwrap_output(&mut parsed);
+        }
+        Ok(parsed)
     }
 
     async fn stream(
         &self,
         req: CompletionRequest,
     ) -> Result<BoxStream<'static, Result<StreamEvent, ProviderError>>, ProviderError> {
+        if req
+            .output_schema
+            .as_ref()
+            .is_some_and(|s| strict_schema(s).1)
+        {
+            // A wrapped schema's reply has to be unwrapped whole, so the
+            // call is made unstreamed and replayed as one delta.
+            let resp = self.complete(req).await?;
+            return Ok(Box::pin(futures::stream::iter(vec![
+                Ok(StreamEvent::TextDelta { text: resp.text() }),
+                Ok(StreamEvent::Done(resp)),
+            ])));
+        }
         let mut body = Self::build_body_with_limit(&req, self.limit_field);
         body["stream"] = json!(true);
         body["stream_options"] = json!({"include_usage": true});
@@ -673,6 +747,49 @@ mod tests {
     }
 
     #[test]
+    fn non_object_schemas_are_wrapped_and_unwrapped() {
+        let (array, wrapped) =
+            strict_schema(&json!({"type": "array", "items": {"type": "string"}}));
+        assert!(wrapped);
+        assert_eq!(array["type"], "object");
+        assert_eq!(array["required"], json!(["output"]));
+        assert_eq!(array["additionalProperties"], false);
+        assert_eq!(array["properties"]["output"]["type"], "array");
+
+        let (object, wrapped) =
+            strict_schema(&json!({"type": "object", "properties": {"ok": {"type": "boolean"}}}));
+        assert!(!wrapped);
+        assert_eq!(object["required"], json!(["ok"]));
+        assert_eq!(object["additionalProperties"], false);
+
+        let mut r = req();
+        r.output_schema = Some(json!({"type": "array", "items": {"type": "integer"}}));
+        let body = OpenAiCompatProvider::build_body(&r);
+        assert_eq!(
+            body["response_format"]["json_schema"]["schema"]["type"],
+            "object"
+        );
+
+        let mut resp = CompletionResponse {
+            model: "m".into(),
+            content: vec![ContentBlock::Text {
+                text: r#"{"output":[1,2,3]}"#.into(),
+            }],
+            stop_reason: StopReason::EndTurn,
+            usage: Usage::default(),
+        };
+        unwrap_output(&mut resp);
+        assert_eq!(resp.text(), "[1,2,3]");
+
+        let mut plain = resp.clone();
+        plain.content = vec![ContentBlock::Text {
+            text: r#"{"ok":true}"#.into(),
+        }];
+        unwrap_output(&mut plain);
+        assert_eq!(plain.text(), r#"{"ok":true}"#);
+    }
+
+    #[test]
     fn body_maps_every_field() {
         let body = OpenAiCompatProvider::build_body(&req());
         assert_eq!(body["model"], "gpt-5.4-mini");
@@ -699,7 +816,8 @@ mod tests {
             body["response_format"],
             json!({"type": "json_schema", "json_schema": {
                 "name": "output", "strict": true,
-                "schema": {"type": "object", "properties": {"ok": {"type": "boolean"}}}}})
+                "schema": {"type": "object", "properties": {"ok": {"type": "boolean"}},
+                           "required": ["ok"], "additionalProperties": false}}})
         );
         assert_eq!(body["reasoning_effort"], "low");
         assert_eq!(body["temperature"], json!(0.0));

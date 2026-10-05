@@ -234,19 +234,15 @@ impl RouterConfig {
     /// reads zero unless a router TOML prices them.
     pub fn openai_pricing() -> Pricing {
         let mut pricing = Pricing::new();
-        for (model, input, output, cache_read, cache_write) in
-            [("gpt-6-luna", 0.10, 0.50, 0.01, 0.125)]
-        {
-            pricing.insert(
-                model,
-                ModelPricing {
-                    input_per_mtok: input,
-                    output_per_mtok: output,
-                    cache_read_per_mtok: cache_read,
-                    cache_write_per_mtok: cache_write,
-                },
-            );
-        }
+        pricing.insert(
+            "gpt-6-luna",
+            ModelPricing {
+                input_per_mtok: 0.10,
+                output_per_mtok: 0.50,
+                cache_read_per_mtok: 0.01,
+                cache_write_per_mtok: 0.125,
+            },
+        );
         pricing
     }
 
