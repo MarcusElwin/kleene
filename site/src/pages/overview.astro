@@ -158,7 +158,7 @@ import Terminal from "../components/Terminal.astro";
     TRACE -.-> CORE</code></pre>
 
     <h2>What the benchmarks measured</h2>
-    <p>Four packs ran against Claude Opus 5.5 on 27 September 2026 in learning, frozen and plain-agent modes. Every task was solved in every mode, so those packs compare cost only: the playbook cuts calls per task, the replay gate costs more than it saves at twenty tasks a pack, and the one-call tool-calling baseline is cheapest wherever the context fits in a prompt. The harder packs (coding, memo-rubric, logbook-hard) do separate on accuracy. The reading, the per-task rows and the plots are in <a href="/docs/benchmarks/">Benchmarks</a> and <a href="/docs/writeup/#4-what-the-benchmarks-measured">the write-up</a>.</p>
+    <p>Four packs ran against Claude Opus 5.5 on 27 September 2026 in learning, frozen and plain-agent modes. Every task was solved in every mode, so those packs compare cost only: the playbook cuts calls per task, the replay gate costs more than it saves at twenty tasks a pack, and the one-call tool-calling baseline is cheapest wherever the context fits in a prompt. The harder packs (coding, memo-rubric, logbook-hard) do separate on accuracy. The numbers, charts and the reading are on <a href="/benchmarks/">the benchmarks page</a>; the harness is described in <a href="/docs/benchmarks/">the benchmark doc</a> and <a href="/docs/writeup/#4-what-the-benchmarks-measured">the write-up</a>.</p>
     <div class="plots">
       <a href="/plots/learning_curve.svg"><img src="/plots/learning_curve.svg" alt="Learning curve plot" loading="lazy" /></a>
       <a href="/plots/cost_parity.svg"><img src="/plots/cost_parity.svg" alt="Cost parity plot" loading="lazy" /></a>

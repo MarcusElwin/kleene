@@ -1,0 +1,209 @@
+---
+import Base from "../layouts/Base.astro";
+import Terminal from "../components/Terminal.astro";
+import { loadRows, aggregate, RUNS, MODES, PACK_ORDER, fmt, type Cell } from "../lib/bench";
+
+const rows = loadRows();
+const cells = aggregate(rows);
+const packs = PACK_ORDER.filter((p) => cells.some((c) => c.pack === p));
+const totalTasks = rows.length;
+const totalDollars = rows.reduce((a, r) => a + r.dollars, 0);
+const totalCalls = rows.reduce((a, r) => a + r.calls, 0);
+
+// Colour by mode (the series), shape by model. Catppuccin steps; identity is
+// also carried by the direct label and the legend, never by colour alone.
+const MODE_COLOR: Record<string, string> = { learning: "#cba6f7", frozen: "#fab387", plain: "#74c7ec" };
+const MODEL_SHAPE: Record<string, string> = { "claude-opus-5-5": "circle", "claude-haiku-4-5-20251001": "diamond" };
+const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+
+function mark(shape: string, x: number, y: number, color: string, r = 5): string {
+  const ring = `stroke="#181825" stroke-width="2"`;
+  if (shape === "diamond") return `<path d="M${x} ${y - r - 1} L${x + r + 1} ${y} L${x} ${y + r + 1} L${x - r - 1} ${y} Z" fill="${color}" ${ring}/>`;
+  return `<circle cx="${x}" cy="${y}" r="${r}" fill="${color}" ${ring}/>`;
+}
+
+/** Pass rate against dollars per task for one pack: one mark per mode and model. */
+function pareto(pack: string): string {
+  const pts = cells.filter((c) => c.pack === pack);
+  const W = 320, H = 220, L = 44, R = 16, T = 28, B = 36;
+  const xmax = Math.max(0.02, ...pts.map((p) => p.dollarsPerTask)) * 1.25;
+  const xs = (v: number) => L + (v / xmax) * (W - L - R);
+  const ys = (v: number) => T + (1 - v) * (H - T - B);
+  const xt = [0, xmax / 2, xmax];
+  const out: string[] = [];
+  out.push(`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(pack)}: pass rate against dollars per task" font-family="IBM Plex Mono, monospace" font-size="10">`);
+  for (const v of [0, 0.5, 1]) out.push(`<line x1="${L}" x2="${W - R}" y1="${ys(v)}" y2="${ys(v)}" stroke="#313244"/><text x="${L - 6}" y="${ys(v) + 3}" text-anchor="end" fill="#a6adc8">${v * 100}%</text>`);
+  for (const v of xt) out.push(`<text x="${xs(v)}" y="${H - B + 14}" text-anchor="middle" fill="#a6adc8">$${v.toFixed(2)}</text>`);
+  out.push(`<line x1="${L}" x2="${W - R}" y1="${ys(0)}" y2="${ys(0)}" stroke="#45475a"/>`);
+  out.push(`<text x="${(L + W - R) / 2}" y="${H - 4}" text-anchor="middle" fill="#6c7086">dollars per task</text>`);
+  // Direct labels: nudge apart marks that share a spot.
+  const placed: { x: number; y: number }[] = [];
+  for (const p of pts) {
+    const x = xs(p.dollarsPerTask), y = ys(p.pass);
+    let dy = -9;
+    for (const q of placed) if (Math.abs(q.x - x) < 40 && Math.abs(q.y - y) < 14) dy = 16;
+    placed.push({ x, y });
+    const tip = `${p.label}, ${p.mode}: ${p.solved}/${p.tasks} solved, ${fmt.money(p.dollarsPerTask)} per task, ${fmt.num(p.callsPerTask)} calls per task`;
+    out.push(`<g><title>${esc(tip)}</title>${mark(MODEL_SHAPE[p.model] ?? "circle", x, y, MODE_COLOR[p.mode])}<text x="${x}" y="${y + dy}" text-anchor="middle" fill="#cdd6f4">${p.mode}</text></g>`);
+  }
+  out.push(`</svg>`);
+  return out.join("");
+}
+
+/** Calls per task by mode, one row per pack, for one model. */
+function callsBars(model: string): string {
+  const ps = packs.filter((p) => cells.some((c) => c.pack === p && c.model === model));
+  const W = 640, L = 150, R = 60, rowH = 16, gap = 12, T = 8;
+  const H = T + ps.length * (MODES.length * rowH + gap) + 24;
+  const vmax = Math.max(...cells.filter((c) => c.model === model).map((c) => c.callsPerTask)) * 1.1;
+  const xs = (v: number) => L + (v / vmax) * (W - L - R);
+  const out: string[] = [`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="calls per task by mode and pack" font-family="IBM Plex Mono, monospace" font-size="11">`];
+  for (const v of [0, Math.round(vmax / 2), Math.round(vmax)]) out.push(`<line x1="${xs(v)}" x2="${xs(v)}" y1="${T}" y2="${H - 20}" stroke="#313244"/><text x="${xs(v)}" y="${H - 6}" text-anchor="middle" fill="#a6adc8">${v}</text>`);
+  ps.forEach((p, i) => {
+    const y0 = T + i * (MODES.length * rowH + gap);
+    out.push(`<text x="${L - 10}" y="${y0 + (MODES.length * rowH) / 2 + 4}" text-anchor="end" fill="#cdd6f4">${esc(p)}</text>`);
+    MODES.forEach((m, j) => {
+      const c = cells.find((c) => c.pack === p && c.model === model && c.mode === m);
+      const y = y0 + j * rowH;
+      if (!c) { out.push(`<text x="${L + 4}" y="${y + 12}" fill="#6c7086">${m}: not run</text>`); return; }
+      const w = Math.max(2, xs(c.callsPerTask) - L);
+      out.push(`<g><title>${esc(`${p}, ${m}: ${fmt.num(c.callsPerTask)} calls per task, ${c.solved}/${c.tasks} solved`)}</title><rect x="${L}" y="${y + 2}" width="${w}" height="${rowH - 4}" rx="2" fill="${MODE_COLOR[m]}"/><text x="${L + w + 6}" y="${y + 12}" fill="#cdd6f4">${fmt.num(c.callsPerTask)} <tspan fill="#6c7086">${m}</tspan></text></g>`);
+    });
+  });
+  out.push(`</svg>`);
+  return out.join("");
+}
+
+const opusCells = cells.filter((c) => c.model === "claude-opus-5-5");
+const haikuCells = cells.filter((c) => c.model !== "claude-opus-5-5");
+const PLOTS = [
+  ["learning_curve.svg", "Learning curve", "task number against rolling-5 accuracy, one line per run; a learning line that rises while frozen stays flat is the playbook working"],
+  ["cost_parity.svg", "Cost parity", "cumulative dollars against cumulative accuracy; at equal spend, which mode is higher"],
+  ["calls_vs_difficulty.svg", "Calls against difficulty", "task rating against calls made, solved and failed as two series"],
+  ["estimate_accuracy.svg", "Estimate accuracy", "the planner's estimated calls against the calls a statement made; on the diagonal is exact"],
+  ["plan_space.svg", "Plan space", "relations joined against join orders considered, one point per statement"],
+] as const;
+---
+<Base title="Benchmarks · Kleene" description="What kleene bench measured on real models: pass rate, calls and dollars per task across packs and modes.">
+  <div class="prose wide">
+    <h1>Benchmarks</h1>
+    <p class="dim">Every number on this page is computed at build time from the per-task rows under <code>plots/</code> (the output of <code>kleene bench csv</code>), so a new run that lands in the repository lands here. How the harness works is in <a href="/docs/benchmarks/">the benchmark doc</a>; the reading is in <a href="/docs/writeup/#4-what-the-benchmarks-measured">the write-up</a>.</p>
+
+    <div class="tiles">
+      <div class="tile"><b>{packs.length}</b><span>packs with results</span></div>
+      <div class="tile"><b>{totalTasks}</b><span>task runs counted</span></div>
+      <div class="tile"><b>{fmt.int(totalCalls)}</b><span>model calls</span></div>
+      <div class="tile"><b>{fmt.money(totalDollars)}</b><span>counted spend (gate replays excluded)</span></div>
+    </div>
+
+    <h2>The question</h2>
+    <p>Does writing the work as SQL make a model solve more for less? Three modes on the same model, tools and budgets answer two comparisons: <b class="amber">frozen</b> is Kleene with the playbook off, <b class="magenta">learning</b> is Kleene with the playbook on and adoption gated by replay, and <b class="cyan">plain</b> is a tool-calling agent with no SQL. Learning against frozen isolates the playbook; frozen against plain isolates the abstraction.</p>
+
+    <h2>Pass rate against cost</h2>
+    <p>One panel per pack. Colour is the mode; a circle is {RUNS[0].label}, a diamond is {RUNS[1].label}. Hover a mark for its numbers; the table below has them all.</p>
+    <div class="legend"><span><i style={`background:${MODE_COLOR.learning}`}></i>learning</span><span><i style={`background:${MODE_COLOR.frozen}`}></i>frozen</span><span><i style={`background:${MODE_COLOR.plain}`}></i>plain</span><span class="dim">● Opus 5.5 &nbsp; ◆ Haiku 4.5</span></div>
+    <div class="panels">
+      {packs.map((p) => (
+        <figure class="panel">
+          <figcaption><b>{p}</b> <span class="dim">{cells.find((c) => c.pack === p)?.tasks} tasks</span></figcaption>
+          <Fragment set:html={pareto(p)} />
+        </figure>
+      ))}
+    </div>
+
+    <h2>Calls per task</h2>
+    <p>The playbook's effect shows in calls. On the four first packs with {RUNS[0].label}, learning takes fewer calls per task than frozen on every pack; on legal the second half of the learning run took 7.5 calls a task where the first took 13.7. The plain agent answers each of these in one call, because every context fits in one prompt.</p>
+    <figure class="bars"><figcaption>{RUNS[0].label}, {RUNS[0].date}</figcaption><Fragment set:html={callsBars("claude-opus-5-5")} /></figure>
+    <figure class="bars"><figcaption>{RUNS[1].label}, {RUNS[1].date}</figcaption><Fragment set:html={callsBars("claude-haiku-4-5-20251001")} /></figure>
+
+    <h2>What the numbers say</h2>
+    <ul>
+      <li><b>The first four packs are saturated.</b> Opus 5.5 solves every task of terminal, oolong-like, finance-synthetic and legal-synthetic in every mode, so they compare cost only. The plain agent wins there: every context fits in one prompt, and the SQL abstraction pays for a catalog, a planner and rendered results on every turn.</li>
+      <li><b>The playbook cuts calls.</b> Learning against frozen: terminal 2.2 to 1.3, oolong 4.9 to 3.9, finance 3.5 to 2.4, legal 12.7 to 10.6 calls a task. Only oolong and legal adopted entries; on terminal and finance the gate rejected every candidate, so their difference is run-to-run variance.</li>
+      <li><b>The gate is the cost.</b> Each candidate is replayed on three earlier tasks in both arms. Those replays are recorded in <code>playbook_evals</code>, not here: about $34 of the Opus run's $44 went to the gate. At twenty tasks a pack it spends more than the playbook saves.</li>
+      <li><b>The harder packs separate on accuracy.</b> On Haiku 4.5, coding solves 2 of 12 steps in either Kleene mode, always the first step of an episode. On memo-rubric learning beat frozen on both axes, 11/20 against 8/20 at 3.8 against 20 calls a task, though part of the frozen cost was a schema failure mode the adapter has since fixed, and learning shares the frozen run's memo.</li>
+      <li><b>Not run yet:</b> logbook-hard in any mode (a frozen task took about 500 calls at Haiku's pace), coding in plain mode, and the harder packs on Opus 5.5. The caveats in full are in <a href="/docs/writeup/#41-haiku-45-on-the-harder-packs">write-up 4.1</a>.</li>
+    </ul>
+
+    <h2>Every cell</h2>
+    <table class="results">
+      <thead><tr><th>pack</th><th>mode</th><th>model</th><th>solved</th><th>$ / task</th><th>total $</th><th>calls / task</th><th>tokens / task</th><th>s / task</th></tr></thead>
+      <tbody>
+        {packs.flatMap((p) => cells.filter((c) => c.pack === p)).map((c) => (
+          <tr>
+            <td><code>{c.pack}</code></td>
+            <td><span class="swatch" style={`background:${MODE_COLOR[c.mode]}`}></span>{c.mode}</td>
+            <td>{c.label}</td>
+            <td class="n">{c.solved}/{c.tasks} <span class="dim">({fmt.pct(c.pass)})</span></td>
+            <td class="n">{fmt.money(c.dollarsPerTask)}</td>
+            <td class="n">{fmt.money(c.dollars)}</td>
+            <td class="n">{fmt.num(c.callsPerTask)}</td>
+            <td class="n">{fmt.int(c.tokensPerTask)}</td>
+            <td class="n">{fmt.num(c.secondsPerTask)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+
+    <h2>The packs</h2>
+    <table>
+      <thead><tr><th>pack</th><th>tasks</th><th>what the model gets, what it must produce</th><th>oracle</th><th>stands in for</th></tr></thead>
+      <tbody>
+        <tr><td><code>terminal</code></td><td>6</td><td>a workspace and an instruction (create a file, count lines, rename, sum a CSV column); files left behind and a one-row <code>FINAL</code></td><td>shell</td><td>Terminal-Bench</td></tr>
+        <tr><td><code>oolong-like</code></td><td>20</td><td>dated meeting notes naming projects and hours; one row per project with its total</td><td>exact</td><td>OOLONG-style aggregation</td></tr>
+        <tr><td><code>finance-synthetic</code></td><td>20</td><td>a synthetic income statement over several years with distractor notes; one number (a sum, a growth rate, a ratio)</td><td>number</td><td>FinanceBench</td></tr>
+        <tr><td><code>legal-synthetic</code></td><td>20</td><td>a synthetic contract with planted clause categories among near-misses; the set of categories present</td><td>exact</td><td>CUAD, Harvey LAB</td></tr>
+        <tr><td><code>logbook-hard</code></td><td>30</td><td>about 1,650 log entries (30k tokens) in four phrasings with corrections; one of five aggregate questions</td><td>exact</td><td>OOLONG at a size that cannot be read once</td></tr>
+        <tr><td><code>memo-rubric</code></td><td>20</td><td>a 40-section services agreement with planted terms, a rejected proposal and a superseding amendment; a short memo</td><td>judge</td><td>Harvey LAB drafting</td></tr>
+        <tr><td><code>coding</code></td><td>12</td><td>a small Python project with visible tests; implement, extend, then fix a bug, in three-step episodes</td><td>shell (hidden tests)</td><td>SWE-bench</td></tr>
+      </tbody>
+    </table>
+    <p class="dim">The synthetic packs are frozen generator output, so two people see the same tasks in the same order. The external datasets they imitate are not redistributed; OOLONG, Harvey LAB and contract redlining import on demand with <code>bench import-*</code>.</p>
+
+    <h2>The runs</h2>
+    {RUNS.map((r, i) => (
+      <section class="run">
+        <h3>{r.label}, {r.date}</h3>
+        <p>{r.note}. Rows: <a href={`https://github.com/MarcusElwin/kleene/blob/main/${r.csv}`}><code>{r.csv}</code></a>. The five plots <code>bench plot</code> wrote beside them:</p>
+        <div class="plots">
+          {PLOTS.map(([file, title, what]) => (
+            <figure>
+              <a href={`/${r.plots}/${file}`}><img src={`/${r.plots}/${file}`} alt={`${title}, ${r.label}`} loading="lazy" /></a>
+              <figcaption><b>{title}</b>: {what}</figcaption>
+            </figure>
+          ))}
+        </div>
+      </section>
+    ))}
+
+    <h2>Reproduce</h2>
+    <Terminal title="sh">
+<span class="cmt"># a pack, one mode, with a fresh store per mode</span>&#10;<span class="prompt">$</span> kleene bench run tasks/oolong-like --mode frozen&#10;<span class="prompt">$</span> kleene bench run tasks/oolong-like --mode learning&#10;<span class="prompt">$</span> kleene bench run tasks/oolong-like --mode plain&#10;&#10;<span class="cmt"># the table, the rows and the plots</span>&#10;<span class="prompt">$</span> kleene bench report&#10;<span class="prompt">$</span> kleene bench csv > plots/&lt;model-date&gt;/evals.csv&#10;<span class="prompt">$</span> kleene bench plot plots/&lt;model-date&gt;&#10;&#10;<span class="cmt"># the README's results table and Pareto plots from every committed CSV</span>&#10;<span class="prompt">$</span> kleene bench results plots/evals.csv plots/haiku-2026-10-01/evals.csv --out plots/results --readme README.md</Terminal>
+    <p>A learning run replays candidates against earlier tasks, so budget about $45 for a full sweep of the first four packs at <code>replay_sample 3</code>, and use <code>bench run --resume &lt;run-id&gt;</code> after an interruption. Every model call is memoised, so a second run of the same pack in the same store is free, which is also why a clean comparison wants a fresh store per mode.</p>
+  </div>
+</Base>
+
+<style>
+  .wide { max-width: 100%; }
+  .wide > p, .wide > ul { max-width: var(--measure); }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0.8rem; margin: 1.5rem 0; }
+  .tile { border: 1px solid var(--line); background: var(--panel); padding: 0.7rem 0.9rem; display: flex; flex-direction: column; gap: 0.1rem; }
+  .tile b { font-family: var(--display); font-size: 2.4rem; color: var(--mauve); text-shadow: var(--glow-mauve); font-weight: 400; line-height: 1; font-variant-numeric: tabular-nums; }
+  .tile span { color: var(--dim); font-size: 0.8rem; }
+  .legend { display: flex; flex-wrap: wrap; gap: 1.2rem; font-size: 0.85rem; margin-bottom: 0.6rem; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 0.4rem; vertical-align: -1px; }
+  .panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 0.8rem; margin-bottom: 1.5rem; }
+  .panel { margin: 0; border: 1px solid var(--line); background: var(--panel); padding: 0.5rem 0.6rem 0.2rem; min-width: 0; }
+  .panel figcaption { font-size: 0.85rem; margin-bottom: 0.2rem; }
+  .panel svg { width: 100%; height: auto; display: block; }
+  .bars { margin: 0 0 1.2rem; border: 1px solid var(--line); background: var(--panel); padding: 0.5rem 0.8rem; max-width: 760px; min-width: 0; }
+  .bars figcaption { font-size: 0.85rem; color: var(--dim); margin-bottom: 0.3rem; }
+  .bars svg { width: 100%; height: auto; display: block; }
+  .results td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 0.4rem; }
+  .run h3 { margin-top: 1.4rem; }
+  .plots { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0.8rem; margin: 0.6rem 0 1.5rem; }
+  .plots figure { margin: 0; min-width: 0; }
+  .plots img { background: #fff; padding: 3px; width: 100%; }
+  .plots figcaption { font-size: 0.78rem; color: var(--dim); margin-top: 0.3rem; }
+</style>

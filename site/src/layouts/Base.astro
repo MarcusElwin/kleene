@@ -24,6 +24,7 @@ const current = (p: string) => (p === "/" ? path === "/" : path.startsWith(p)) ?
         <nav class="nav" aria-label="Site">
           <a href="/" aria-current={current("/")}>home</a>
           <a href="/overview/" aria-current={current("/overview")}>overview</a>
+          <a href="/benchmarks/" aria-current={current("/benchmarks")}>bench</a>
           <a href="/about/" aria-current={current("/about")}>about</a>
           <a href="/docs/" aria-current={current("/docs")}>docs</a>
           <a href="https://github.com/MarcusElwin/kleene">github</a>
