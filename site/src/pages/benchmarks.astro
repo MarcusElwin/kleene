@@ -37,7 +37,7 @@ const PLOTS = [
     <div class="tiles" id="tiles"></div>
 
     <h2>Pass rate against cost</h2>
-    <p>One panel per pack. Colour is the mode, a circle is {MODELS[0].label} and a diamond is {MODELS[1].label}. Hover or tap a mark for its numbers; click a mark to pin the tooltip.</p>
+    <p>One panel per pack. Colour is the mode and the shape is the model: {MODELS.map((m, i) => `${["a circle", "a diamond", "a triangle", "a square"][i] ?? "a square"} is ${m.label}`).join(", ")}. Hover or tap a mark for its numbers; click a mark to pin the tooltip.</p>
     <div class="legend" id="legend"></div>
     <div class="panels" id="panels"></div>
 
@@ -108,7 +108,9 @@ const PLOTS = [
     cells: any[]; packs: string[]; modes: string[]; models: { id: string; label: string }[];
   };
   const MODE_COLOR: Record<string, string> = { learning: "#cba6f7", frozen: "#fab387", plain: "#74c7ec" };
-  const shapeOf = (model: string) => (models.findIndex((m) => m.id === model) === 0 ? "circle" : "diamond");
+  const SHAPES = ["circle", "diamond", "triangle", "square"];
+  const SHAPE_GLYPH: Record<string, string> = { circle: "●", diamond: "◆", triangle: "▲", square: "■" };
+  const shapeOf = (model: string) => SHAPES[Math.min(Math.max(models.findIndex((m) => m.id === model), 0), SHAPES.length - 1)];
   const labelOf = (model: string) => models.find((m) => m.id === model)?.label ?? model;
   const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
   const money = (x: number) => (x >= 1 ? `$${x.toFixed(2)}` : `$${x.toFixed(3)}`);
@@ -153,6 +155,8 @@ const PLOTS = [
   function mark(shape: string, x: number, y: number, color: string, r = 5) {
     const ring = `stroke="#181825" stroke-width="2"`;
     if (shape === "diamond") return `<path d="M${x} ${y - r - 1} L${x + r + 1} ${y} L${x} ${y + r + 1} L${x - r - 1} ${y} Z" fill="${color}" ${ring}/>`;
+    if (shape === "triangle") return `<path d="M${x} ${y - r - 1} L${x + r + 1} ${y + r} L${x - r - 1} ${y + r} Z" fill="${color}" ${ring}/>`;
+    if (shape === "square") return `<rect x="${x - r}" y="${y - r}" width="${2 * r}" height="${2 * r}" fill="${color}" ${ring}/>`;
     return `<circle cx="${x}" cy="${y}" r="${r}" fill="${color}" ${ring}/>`;
   }
   const tipText = (c: any) => `<b>${esc(c.pack)}</b> · ${esc(labelOf(c.model))} · <span style="color:${MODE_COLOR[c.mode]}">${c.mode}</span><br>${c.solved}/${c.tasks} solved (${Math.round(c.pass * 100)}%)<br>${money(c.dollarsPerTask)} per task, ${money(c.dollars)} total<br>${c.callsPerTask.toFixed(1)} calls, ${int(c.tokensPerTask)} tokens, ${c.secondsPerTask.toFixed(1)} s per task`;
@@ -218,7 +222,7 @@ const PLOTS = [
       [int(calls), "model calls"],
       [money(dollars), "counted spend (gate replays excluded)"],
     ].map(([b, s]) => `<div class="tile"><b>${b}</b><span>${s}</span></div>`).join("");
-    document.getElementById("legend")!.innerHTML = modes.filter((m) => sel.mode.has(m)).map((m) => `<span><i style="background:${MODE_COLOR[m]}"></i>${m}</span>`).join("") + `<span class="dim">${models.filter((m) => sel.model.has(m.id)).map((m, i) => `${shapeOf(m.id) === "circle" ? "●" : "◆"} ${esc(m.label)}`).join(" &nbsp; ")}</span>`;
+    document.getElementById("legend")!.innerHTML = modes.filter((m) => sel.mode.has(m)).map((m) => `<span><i style="background:${MODE_COLOR[m]}"></i>${m}</span>`).join("") + `<span class="dim">${models.filter((m) => sel.model.has(m.id)).map((m, i) => `${SHAPE_GLYPH[shapeOf(m.id)]} ${esc(m.label)}`).join(" &nbsp; ")}</span>`;
     document.getElementById("panels")!.innerHTML = packs.filter((p) => sel.pack.has(p)).map((p) => {
       const pts = vis.filter((c) => c.pack === p);
       if (!pts.length) return "";

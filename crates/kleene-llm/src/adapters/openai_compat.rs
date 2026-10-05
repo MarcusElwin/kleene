@@ -81,7 +81,15 @@ fn strictify(schema: &Value) -> Value {
             );
         }
     }
-    if let Some(Value::Object(props)) = map.get("properties").cloned() {
+    let is_object = map.get("type").and_then(Value::as_str) == Some("object");
+    let props = match map.get("properties").cloned() {
+        Some(Value::Object(props)) => Some(props),
+        // An object with no properties at all (a model wrote only
+        // `required`): strict mode still wants the two lists, matching.
+        _ if is_object => Some(Map::new()),
+        _ => None,
+    };
+    if let Some(props) = props {
         let keys: Vec<Value> = props.keys().map(|k| json!(k)).collect();
         let props: Map<String, Value> =
             props.into_iter().map(|(k, v)| (k, strictify(&v))).collect();
@@ -826,6 +834,10 @@ mod tests {
         assert_eq!(inner["type"], "object");
         assert_eq!(inner["required"], json!(["k"]));
         assert_eq!(inner["additionalProperties"], false);
+
+        let (bare, _) = strict_schema(&json!({"type": "object", "required": ["output"]}));
+        assert_eq!(bare["properties"], json!({}));
+        assert_eq!(bare["required"], json!([]));
 
         let mut r = req();
         r.output_schema = Some(json!({"type": "array", "items": {"type": "integer"}}));
