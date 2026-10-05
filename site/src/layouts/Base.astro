@@ -1,5 +1,6 @@
 ---
 import "../styles/global.css";
+import Analytics from "@vercel/analytics/astro";
 interface Props { title: string; description?: string; mermaid?: boolean }
 const { title, description = "Kleene: relational algebra for recursive model calls. Write SQL, compile it into a planned, budgeted graph of language-model calls.", mermaid = false } = Astro.props;
 const path = Astro.url.pathname;
@@ -22,6 +23,7 @@ const current = (p: string) => (p === "/" ? path === "/" : path.startsWith(p)) ?
     <meta property="og:description" content={description} />
     <meta name="theme-color" content="#1e1e2e" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="alternate" type="text/plain" href="/llms.txt" title="llms.txt" />
   </head>
   <body>
     <header class="topbar">
@@ -80,5 +82,6 @@ const current = (p: string) => (p === "/" ? path === "/" : path.startsWith(p)) ?
         }
       </script>
     )}
+    <Analytics />
   </body>
 </html>
