@@ -227,10 +227,37 @@ impl RouterConfig {
         )
     }
 
+    /// OpenAI's first-party rate card for the models this crate knows,
+    /// standard tier, in dollars per million tokens: GPT-6 Luna at $0.10 in,
+    /// $0.50 out, cache reads $0.01, cache writes $0.125 (prices as of
+    /// October 2026). Models not listed here are unpriced, so their cost
+    /// reads zero unless a router TOML prices them.
+    pub fn openai_pricing() -> Pricing {
+        let mut pricing = Pricing::new();
+        for (model, input, output, cache_read, cache_write) in
+            [("gpt-6-luna", 0.10, 0.50, 0.01, 0.125)]
+        {
+            pricing.insert(
+                model,
+                ModelPricing {
+                    input_per_mtok: input,
+                    output_per_mtok: output,
+                    cache_read_per_mtok: cache_read,
+                    cache_write_per_mtok: cache_write,
+                },
+            );
+        }
+        pricing
+    }
+
     /// Single-model defaults for an OpenAI-compatible endpoint: every alias
-    /// resolves to `model` on the `openai_compat` provider. No pricing.
+    /// resolves to `model` on the `openai_compat` provider, priced by
+    /// [`openai_pricing`](Self::openai_pricing) where the model is known.
     pub fn default_for_openai_compat(model: &str) -> Self {
-        let mut cfg = Self::default();
+        let mut cfg = Self {
+            pricing: Self::openai_pricing(),
+            ..Self::default()
+        };
         for alias in ["root", "worker", "proxy", "judge"] {
             cfg = cfg.with_alias(
                 alias,
@@ -1026,5 +1053,19 @@ cache_read_per_mtok = 0.5
         let oa = RouterConfig::default_for_openai_compat("local");
         assert_eq!(oa.aliases.len(), 4);
         assert_eq!(oa.aliases["proxy"].candidates[0].provider, "openai_compat");
+    }
+
+    #[test]
+    fn openai_defaults_price_luna() {
+        let cfg = RouterConfig::default_for_openai_compat("gpt-6-luna");
+        let usage = Usage {
+            input_tokens: 1_000_000,
+            output_tokens: 1_000_000,
+            cache_read_tokens: 1_000_000,
+            ..Default::default()
+        };
+        // $0.10 in + $0.50 out + $0.01 cache read.
+        assert!((cfg.pricing.cost("gpt-6-luna", &usage).unwrap() - 0.61).abs() < 1e-9);
+        assert_eq!(cfg.pricing.cost("gpt-5.4-mini", &usage), None);
     }
 }

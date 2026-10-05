@@ -27,6 +27,31 @@ pub struct OpenAiCompatProvider {
     api_key: Option<String>,
     base_url: String,
     backoff: Vec<Duration>,
+    /// The request field that carries the output token limit: see
+    /// [`completion_limit_field`].
+    limit_field: &'static str,
+}
+
+/// The name of the output token limit field for a server at `base_url`.
+///
+/// OpenAI's own endpoint (`api.openai.com`) rejects `max_tokens` for every
+/// GPT-5 and GPT-6 model (`Unsupported parameter: 'max_tokens' is not
+/// supported with this model. Use 'max_completion_tokens' instead.`), so
+/// first-party requests send `max_completion_tokens`. Every other
+/// compatible server (local servers, gateways, older proxies) still gets
+/// `max_tokens`, which all of them accept.
+pub fn completion_limit_field(base_url: &str) -> &'static str {
+    let host = base_url
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .split('/')
+        .next()
+        .unwrap_or("");
+    if host == "api.openai.com" || host.ends_with(".api.openai.com") {
+        "max_completion_tokens"
+    } else {
+        "max_tokens"
+    }
 }
 
 impl std::fmt::Debug for OpenAiCompatProvider {
@@ -48,6 +73,7 @@ impl OpenAiCompatProvider {
                 .build()
                 .unwrap_or_default(),
             api_key,
+            limit_field: completion_limit_field(&base_url),
             base_url: base_url.trim_end_matches('/').to_string(),
             backoff: DEFAULT_BACKOFF.to_vec(),
         }
@@ -85,9 +111,17 @@ impl OpenAiCompatProvider {
     /// mapping is testable and can be logged by the trace.
     ///
     /// `max_tokens` is sent as `max_tokens`, which every compatible server
-    /// accepts; a server that insists on `max_completion_tokens` can be given
-    /// it through `options.extra` (extra keys override defaults).
+    /// accepts, except to OpenAI itself, where the adapter sends
+    /// `max_completion_tokens` (see [`completion_limit_field`]); a server
+    /// that insists on another name can be given it through `options.extra`
+    /// (extra keys override defaults).
     pub fn build_body(req: &CompletionRequest) -> Value {
+        Self::build_body_with_limit(req, "max_tokens")
+    }
+
+    /// [`build_body`](Self::build_body) with the output token limit under
+    /// `limit_field`.
+    pub fn build_body_with_limit(req: &CompletionRequest, limit_field: &str) -> Value {
         let mut messages = Vec::new();
         if !req.system.is_empty() {
             messages.push(json!({"role": "system", "content": req.system}));
@@ -98,7 +132,7 @@ impl OpenAiCompatProvider {
         let mut body = Map::new();
         body.insert("model".into(), json!(req.model));
         body.insert("messages".into(), Value::Array(messages));
-        body.insert("max_tokens".into(), json!(req.max_tokens));
+        body.insert(limit_field.to_string(), json!(req.max_tokens));
         if !req.tools.is_empty() {
             let tools = req
                 .tools
@@ -535,7 +569,7 @@ impl Provider for OpenAiCompatProvider {
     }
 
     async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse, ProviderError> {
-        let body = Self::build_body(&req);
+        let body = Self::build_body_with_limit(&req, self.limit_field);
         let resp = http::send(&self.backoff, || self.request(&body)).await?;
         let text = resp
             .text()
@@ -548,7 +582,7 @@ impl Provider for OpenAiCompatProvider {
         &self,
         req: CompletionRequest,
     ) -> Result<BoxStream<'static, Result<StreamEvent, ProviderError>>, ProviderError> {
-        let mut body = Self::build_body(&req);
+        let mut body = Self::build_body_with_limit(&req, self.limit_field);
         body["stream"] = json!(true);
         body["stream_options"] = json!({"include_usage": true});
         let resp = http::send(&self.backoff, || self.request(&body)).await?;
@@ -614,6 +648,28 @@ mod tests {
                 extra: [("seed".to_string(), json!(7))].into_iter().collect(),
             },
         }
+    }
+
+    #[test]
+    fn openai_itself_gets_max_completion_tokens() {
+        assert_eq!(
+            completion_limit_field("https://api.openai.com/v1"),
+            "max_completion_tokens"
+        );
+        assert_eq!(
+            completion_limit_field("http://localhost:11434/v1"),
+            "max_tokens"
+        );
+        assert_eq!(
+            completion_limit_field("https://gateway.example.com/openai/v1"),
+            "max_tokens"
+        );
+        let p = OpenAiCompatProvider::new(Some("k".into()), DEFAULT_BASE_URL.into());
+        let body = OpenAiCompatProvider::build_body_with_limit(&req(), p.limit_field);
+        assert_eq!(body["max_completion_tokens"], 256);
+        assert!(body.get("max_tokens").is_none());
+        let local = OpenAiCompatProvider::new(None, "http://localhost:11434/v1".into());
+        assert_eq!(local.limit_field, "max_tokens");
     }
 
     #[test]
