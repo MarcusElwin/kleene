@@ -470,8 +470,8 @@ plots are still written, with the rest, under
 Runs so far: Claude Opus 5.5 on 27 September 2026 over the four original
 packs; Claude Haiku 4.5 on 1 October 2026 over the harder packs with
 Claude Sonnet 5.5 as the judge, stopped before `logbook-hard` and the
-coding pack's plain mode; and GPT-6 Luna on 5 October 2026 over the
-harder packs, Sonnet 5.5 judging again, with `logbook-hard` capped at ten
+coding pack's plain mode; and GPT-6 Luna on 5 October 2026 over all
+seven packs, Sonnet 5.5 judging again, with `logbook-hard` capped at ten
 tasks and its learning run stopped after three. The reading is in
 [the write-up](docs/WRITEUP.md#4-what-the-benchmarks-measured) and what
 each column measures is in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md#results-across-models).
@@ -490,22 +490,22 @@ each column measures is in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md#results-acr
 | `coding` | plain | GPT-6 Luna | 12 | 9/12 (75%) | $0.002 | $0.028 | 10.2 | 27,860 | 51.7 |
 | `finance-synthetic` | learning | Claude Opus 5.5 | 20 | 20/20 (100%) | $0.031 | $0.628 | 2.4 | 29,999 | 10.2 |
 | `finance-synthetic` | learning | Claude Haiku 4.5 | | | | | | | |
-| `finance-synthetic` | learning | GPT-6 Luna | | | | | | | |
+| `finance-synthetic` | learning | GPT-6 Luna | 20 | 15/20 (75%) | $0.000 | $0.008 | 3.5 | 12,081 | 7.0 |
 | `finance-synthetic` | frozen | Claude Opus 5.5 | 20 | 20/20 (100%) | $0.042 | $0.831 | 3.5 | 42,177 | 12.2 |
 | `finance-synthetic` | frozen | Claude Haiku 4.5 | | | | | | | |
-| `finance-synthetic` | frozen | GPT-6 Luna | | | | | | | |
+| `finance-synthetic` | frozen | GPT-6 Luna | 20 | 14/20 (70%) | $0.000 | $0.009 | 4.2 | 11,789 | 9.1 |
 | `finance-synthetic` | plain | Claude Opus 5.5 | 20 | 20/20 (100%) | $0.004 | $0.072 | 1.0 | 1,244 | 3.0 |
 | `finance-synthetic` | plain | Claude Haiku 4.5 | | | | | | | |
-| `finance-synthetic` | plain | GPT-6 Luna | | | | | | | |
+| `finance-synthetic` | plain | GPT-6 Luna | 20 | 20/20 (100%) | $0.000 | $0.003 | 1.0 | 950 | 1.6 |
 | `legal-synthetic` | learning | Claude Opus 5.5 | 20 | 20/20 (100%) | $0.130 | $2.61 | 10.6 | 58,315 | 25.1 |
 | `legal-synthetic` | learning | Claude Haiku 4.5 | | | | | | | |
-| `legal-synthetic` | learning | GPT-6 Luna | | | | | | | |
+| `legal-synthetic` | learning | GPT-6 Luna | 20 | 15/20 (75%) | $0.001 | $0.014 | 4.2 | 15,893 | 13.3 |
 | `legal-synthetic` | frozen | Claude Opus 5.5 | 20 | 20/20 (100%) | $0.085 | $1.69 | 12.7 | 62,452 | 26.8 |
 | `legal-synthetic` | frozen | Claude Haiku 4.5 | | | | | | | |
-| `legal-synthetic` | frozen | GPT-6 Luna | | | | | | | |
+| `legal-synthetic` | frozen | GPT-6 Luna | 20 | 18/20 (90%) | $0.002 | $0.033 | 15.7 | 23,973 | 33.9 |
 | `legal-synthetic` | plain | Claude Opus 5.5 | 20 | 20/20 (100%) | $0.005 | $0.107 | 1.0 | 1,475 | 3.3 |
 | `legal-synthetic` | plain | Claude Haiku 4.5 | | | | | | | |
-| `legal-synthetic` | plain | GPT-6 Luna | | | | | | | |
+| `legal-synthetic` | plain | GPT-6 Luna | 20 | 20/20 (100%) | $0.000 | $0.003 | 1.0 | 1,004 | 1.6 |
 | `logbook-hard` | learning | Claude Opus 5.5 | | | | | | | |
 | `logbook-hard` | learning | Claude Haiku 4.5 | | | | | | | |
 | `logbook-hard` | learning | GPT-6 Luna | 3 | 1/3 (33%) | $0.062 | $0.187 | 686.7 | 746,259 | 760.8 |
@@ -526,22 +526,22 @@ each column measures is in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md#results-acr
 | `memo-rubric` | plain | GPT-6 Luna | 20 | 11/20 (55%) | $0.000 | $0.006 | 1.0 | 1,978 | 4.4 |
 | `oolong-like` | learning | Claude Opus 5.5 | 20 | 20/20 (100%) | $0.096 | $1.92 | 3.9 | 41,991 | 16.8 |
 | `oolong-like` | learning | Claude Haiku 4.5 | | | | | | | |
-| `oolong-like` | learning | GPT-6 Luna | | | | | | | |
+| `oolong-like` | learning | GPT-6 Luna | 20 | 20/20 (100%) | $0.000 | $0.005 | 1.3 | 4,516 | 3.5 |
 | `oolong-like` | frozen | Claude Opus 5.5 | 20 | 20/20 (100%) | $0.076 | $1.51 | 4.9 | 30,778 | 17.5 |
 | `oolong-like` | frozen | Claude Haiku 4.5 | | | | | | | |
-| `oolong-like` | frozen | GPT-6 Luna | | | | | | | |
+| `oolong-like` | frozen | GPT-6 Luna | 20 | 15/20 (75%) | $0.002 | $0.038 | 34.0 | 19,230 | 30.5 |
 | `oolong-like` | plain | Claude Opus 5.5 | 20 | 20/20 (100%) | $0.020 | $0.394 | 1.0 | 3,084 | 7.5 |
 | `oolong-like` | plain | Claude Haiku 4.5 | | | | | | | |
-| `oolong-like` | plain | GPT-6 Luna | | | | | | | |
+| `oolong-like` | plain | GPT-6 Luna | 20 | 14/20 (70%) | $0.000 | $0.007 | 1.0 | 2,031 | 3.9 |
 | `terminal` | learning | Claude Opus 5.5 | 6 | 6/6 (100%) | $0.007 | $0.043 | 1.3 | 6,742 | 4.1 |
 | `terminal` | learning | Claude Haiku 4.5 | | | | | | | |
-| `terminal` | learning | GPT-6 Luna | | | | | | | |
+| `terminal` | learning | GPT-6 Luna | 6 | 5/6 (83%) | $0.000 | $0.001 | 1.5 | 4,219 | 2.6 |
 | `terminal` | frozen | Claude Opus 5.5 | 6 | 6/6 (100%) | $0.012 | $0.074 | 2.2 | 10,551 | 5.1 |
 | `terminal` | frozen | Claude Haiku 4.5 | | | | | | | |
-| `terminal` | frozen | GPT-6 Luna | | | | | | | |
+| `terminal` | frozen | GPT-6 Luna | 6 | 6/6 (100%) | $0.000 | $0.001 | 1.5 | 4,128 | 2.7 |
 | `terminal` | plain | Claude Opus 5.5 | 6 | 6/6 (100%) | $0.006 | $0.033 | 2.5 | 2,395 | 8.0 |
 | `terminal` | plain | Claude Haiku 4.5 | | | | | | | |
-| `terminal` | plain | GPT-6 Luna | | | | | | | |
+| `terminal` | plain | GPT-6 Luna | 6 | 6/6 (100%) | $0.000 | $0.001 | 2.3 | 1,584 | 2.8 |
 
 Models: Claude Opus 5.5 is `claude-opus-5-5`, Claude Haiku 4.5 is `claude-haiku-4-5-20251001`, GPT-6 Luna is `gpt-6-luna`.
 

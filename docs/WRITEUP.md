@@ -229,7 +229,7 @@ What the numbers say:
 
 ### 4.2 GPT-6 Luna on the harder packs
 
-The same three packs ran on 5 October 2026 with every solver alias on
+All seven packs ran on 5 October 2026 with every solver alias on
 `gpt-6-luna` (OpenAI, chat completions, default reasoning effort) and the
 `judge` alias on `claude-sonnet-5-5`; the router file is
 `plots/luna-2026-10-05/router.toml`. Luna is priced at $0.10 per million
@@ -243,6 +243,18 @@ the SVGs beside them.
 
 | pack | mode | solved | calls / task | tokens / task | dollars |
 |---|---|---|---|---|---|
+| oolong-like (20) | frozen | 15/20 | 33.95 | 19,230 | 0.04 |
+| oolong-like (20) | learning | 20/20 | 1.30 | 4,516 | 0.00 |
+| oolong-like (20) | plain | 14/20 | 1.00 | 2,031 | 0.01 |
+| finance-synthetic (20) | frozen | 14/20 | 4.15 | 11,789 | 0.01 |
+| finance-synthetic (20) | learning | 15/20 | 3.45 | 12,081 | 0.01 |
+| finance-synthetic (20) | plain | 20/20 | 1.00 | 950 | 0.00 |
+| legal-synthetic (20) | frozen | 18/20 | 15.65 | 23,973 | 0.03 |
+| legal-synthetic (20) | learning | 15/20 | 4.25 | 15,893 | 0.01 |
+| legal-synthetic (20) | plain | 20/20 | 1.00 | 1,004 | 0.00 |
+| terminal (6) | frozen | 6/6 | 1.50 | 4,128 | 0.00 |
+| terminal (6) | learning | 5/6 | 1.50 | 4,219 | 0.00 |
+| terminal (6) | plain | 6/6 | 2.33 | 1,584 | 0.00 |
 | coding (12) | frozen | 11/12 | 12.08 | 55,286 | 0.02 |
 | coding (12) | learning | 10/12 | 8.17 | 42,094 | 0.02 |
 | coding (12) | plain | 9/12 | 10.25 | 27,860 | 0.03 |
@@ -253,9 +265,18 @@ the SVGs beside them.
 | logbook-hard (3 of 10) | learning | 1/3 | 686.67 | 746,259 | 0.19 |
 | logbook-hard (10) | plain | 3/10 | 2.30 | 97,000 | 0.07 |
 
-The counted runs cost $0.63 of Luna in all; the playbook gate's replays
-(29 candidates, 9 adopted) cost another $0.19, and the Sonnet judge's
+The counted runs cost $0.74 of Luna in all; the playbook gate's replays
+(84 candidates, 17 adopted) cost another $0.31, and the Sonnet judge's
 calls are not traced, roughly a dollar at the most. What the numbers say:
+
+- **The four original packs separate on accuracy with Luna.** Opus 5.5
+  solved every task of these packs in every mode; Luna does not, so they
+  measure something now. The one-call plain agent is perfect on finance
+  and legal, where the context fits and the question is one lookup, and
+  weakest on oolong-like (14/20), where aggregation over the whole
+  context is the task. Learning on oolong-like solved 20/20 at 1.3
+  calls a task against frozen's 15/20 at 34: the adopted playbook entry
+  carries the aggregation query, and the rest is a lookup.
 
 - **Luna solves what Haiku could not, for a tenth of the money.** 11 of
   the 12 coding steps frozen against Haiku's 2, including every "extend"
