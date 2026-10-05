@@ -35,7 +35,7 @@ pub const WRAP_KEY: &str = "output";
 /// object, and [`unwrap_output`] takes it back out of the reply, so the
 /// caller sees the JSON shape it asked for.
 pub fn strict_schema(schema: &Value) -> (Value, bool) {
-    let mut normalized = super::anthropic::normalize_schema(schema);
+    let mut normalized = strictify(&super::anthropic::normalize_schema(schema));
     // The Anthropic rewrite lowers `minItems` to 1 (that API takes no
     // more); OpenAI's strict mode enforces the exact count, so an array
     // root keeps the bound it asked for.
@@ -56,6 +56,43 @@ pub fn strict_schema(schema: &Value) -> (Value, bool) {
             true,
         )
     }
+}
+
+/// What strict mode insists on beyond the shared rewrite, applied at every
+/// level: a schema with neither a `type` nor a combinator is a string, and
+/// an object's `required` lists every property (a model-written schema
+/// often names only some, which strict mode rejects outright).
+fn strictify(schema: &Value) -> Value {
+    let Value::Object(map) = schema else {
+        return schema.clone();
+    };
+    let mut map = map.clone();
+    let combinator = ["anyOf", "oneOf", "allOf", "enum", "const", "$ref"]
+        .iter()
+        .any(|k| map.contains_key(*k));
+    if !map.contains_key("type") && !combinator {
+        map.insert("type".into(), json!("string"));
+    }
+    for key in ["anyOf", "oneOf", "allOf"] {
+        if let Some(Value::Array(items)) = map.get(key).cloned() {
+            map.insert(
+                key.into(),
+                Value::Array(items.iter().map(strictify).collect()),
+            );
+        }
+    }
+    if let Some(Value::Object(props)) = map.get("properties").cloned() {
+        let keys: Vec<Value> = props.keys().map(|k| json!(k)).collect();
+        let props: Map<String, Value> =
+            props.into_iter().map(|(k, v)| (k, strictify(&v))).collect();
+        map.insert("properties".into(), Value::Object(props));
+        map.insert("required".into(), Value::Array(keys));
+        map.insert("additionalProperties".into(), json!(false));
+    }
+    if let Some(items) = map.get("items").cloned() {
+        map.insert("items".into(), strictify(&items));
+    }
+    Value::Object(map)
 }
 
 /// Undo [`strict_schema`]'s wrapping on a reply: the text content, parsed
@@ -770,6 +807,25 @@ mod tests {
         assert!(!wrapped);
         assert_eq!(object["required"], json!(["ok"]));
         assert_eq!(object["additionalProperties"], false);
+
+        // Model-written schemas: a property without a type, a partial
+        // `required`, nested objects.
+        let (loose, wrapped) = strict_schema(&json!({
+            "type": "object",
+            "properties": {
+                "name": {"description": "who"},
+                "hours": {"type": "integer"},
+                "tags": {"type": "array", "items": {"properties": {"k": {"type": "string"}}}}
+            },
+            "required": ["name"]
+        }));
+        assert!(!wrapped);
+        assert_eq!(loose["properties"]["name"]["type"], "string");
+        assert_eq!(loose["required"], json!(["hours", "name", "tags"]));
+        let inner = &loose["properties"]["tags"]["items"];
+        assert_eq!(inner["type"], "object");
+        assert_eq!(inner["required"], json!(["k"]));
+        assert_eq!(inner["additionalProperties"], false);
 
         let mut r = req();
         r.output_schema = Some(json!({"type": "array", "items": {"type": "integer"}}));
