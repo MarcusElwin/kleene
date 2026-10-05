@@ -25,12 +25,7 @@ import Terminal from "../components/Terminal.astro";
 
     <Terminal title="kleene explain">
 <span class="prompt">$</span> kleene explain "SELECT c FROM candidates WHERE llm_bool('Is ' || c || ' a real place?')"
-<span class="dim">π c  ~120 rows</span>&#10;
-<span class="dim">  σ llm_bool(concat('Is ', c, ' a real place?'))  [λ llm_bool]  ~120 rows, 120 calls, 9.6k tok, $0.0144</span>&#10;
-<span class="dim">    scan candidates  ~120 rows</span>&#10;
-<span class="amber">total: ~120 calls, ~9.6k tokens, ~$0.0144, depth 0</span>&#10;
-<span class="cyan">fragment: CQ (conjunctive query: NP-complete combined, AC0 data)</span>&#10;
-<span class="dim">rules: cheap-first</span></Terminal>
+<span class="dim">π c  ~120 rows</span>&#10;<span class="dim">  σ llm_bool(concat('Is ', c, ' a real place?'))  [λ llm_bool]  ~120 rows, 120 calls, 9.6k tok, $0.0144</span>&#10;<span class="dim">    scan candidates  ~120 rows</span>&#10;<span class="amber">total: ~120 calls, ~9.6k tokens, ~$0.0144, depth 0</span>&#10;<span class="cyan">fragment: CQ (conjunctive query: NP-complete combined, AC0 data)</span>&#10;<span class="dim">rules: cheap-first</span></Terminal>
     <p class="dim" style="font-size:0.85rem">Illustrative numbers in the shape the renderer prints. <code>EXPLAIN</code> needs no provider; its output is part of the interface and tested, see <a href="/docs/cli/#kleene-explain-sql">kleene explain</a>.</p>
 
     <h2>One turn of a session</h2>
@@ -101,8 +96,7 @@ import Terminal from "../components/Terminal.astro";
     <Terminal title="beam.sql">
 <span class="kw">WITH RECURSIVE</span> frontier(state, score, depth) <span class="kw">AS</span> (
   <span class="kw">SELECT</span> seed, 0.0, 0 <span class="kw">FROM</span> seeds
-  <span class="kw">UNION</span>&#10;
-  <span class="kw">SELECT</span> n.state, judge(n.state), f.depth + 1
+  <span class="kw">UNION</span>&#10;  <span class="kw">SELECT</span> n.state, judge(n.state), f.depth + 1
   <span class="kw">FROM</span> frontier f <span class="kw">CROSS JOIN LATERAL</span> expand(f.state) n
   <span class="kw">WHERE</span> f.depth &lt; 4
   <span class="kw">ORDER BY</span> 2 <span class="kw">DESC LIMIT</span> 5          <span class="cmt">-- a beam of width five</span>

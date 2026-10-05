@@ -14,7 +14,7 @@ const current = (p: string) => (p === "/" ? path === "/" : path.startsWith(p)) ?
     <meta name="description" content={description} />
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
-    <meta name="theme-color" content="#050709" />
+    <meta name="theme-color" content="#1e1e2e" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   </head>
   <body>
@@ -38,6 +38,7 @@ const current = (p: string) => (p === "/" ? path === "/" : path.startsWith(p)) ?
         <span>kleene · MIT licensed · written in Rust, DuckDB inside</span>
         <span><a href="https://github.com/MarcusElwin/kleene">source</a> · <a href="/docs/">documentation</a> · <a href="/about/">why the name</a></span>
         <span class="dim">named for Stephen Cole Kleene, 1909–1994</span>
+        <span class="made">made with <span class="heart" aria-label="love">♥</span> by <a href="https://github.com/MarcusElwin">Marcus Elwin</a></span>
       </div>
     </footer>
     {mermaid && (
@@ -50,11 +51,11 @@ const current = (p: string) => (p === "/" ? path === "/" : path.startsWith(p)) ?
           startOnLoad: false,
           theme: "base",
           themeVariables: {
-            darkMode: true, background: "#0b1016", primaryColor: "#0f1a22", primaryTextColor: "#c9d4d2",
-            primaryBorderColor: "#39ff88", lineColor: "#28e5ff", secondaryColor: "#14202a", tertiaryColor: "#0b1016",
-            fontFamily: "IBM Plex Mono, monospace", fontSize: "13px", noteBkgColor: "#1a1408", noteTextColor: "#ffb000",
-            actorBorder: "#39ff88", actorBkg: "#0f1a22", actorTextColor: "#c9d4d2", signalColor: "#28e5ff", signalTextColor: "#c9d4d2",
-            labelBoxBkgColor: "#14202a", labelTextColor: "#ffb000", loopTextColor: "#ffb000", activationBorderColor: "#ff3cc7", activationBkgColor: "#2a1024",
+            darkMode: true, background: "#181825", primaryColor: "#313244", primaryTextColor: "#cdd6f4",
+            primaryBorderColor: "#cba6f7", lineColor: "#74c7ec", secondaryColor: "#45475a", tertiaryColor: "#181825",
+            fontFamily: "IBM Plex Mono, monospace", fontSize: "13px", noteBkgColor: "#45475a", noteTextColor: "#f9e2af",
+            actorBorder: "#cba6f7", actorBkg: "#313244", actorTextColor: "#cdd6f4", signalColor: "#74c7ec", signalTextColor: "#cdd6f4",
+            labelBoxBkgColor: "#313244", labelTextColor: "#fab387", loopTextColor: "#fab387", activationBorderColor: "#f5c2e7", activationBkgColor: "#45475a",
           },
         });
         const blocks = Array.from(document.querySelectorAll("pre[data-language='mermaid'], pre > code.language-mermaid"));

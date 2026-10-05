@@ -71,6 +71,20 @@ import TypedTerminal from "../components/TypedTerminal.astro";
     </div>
   </section>
 
+
+  <section class="rlm">
+    <h2>Recursive language models</h2>
+    <div class="split">
+      <div>
+        <p>A <strong>recursive language model</strong> (RLM) is a model that does not read its context. The root model sees only the task; the context sits in a variable it can peek at, grep, partition and hand to sub-calls, and a sub-call can be another model with the same powers one level down. Zhang, Kraska and Khattab (arXiv:2512.24601) showed that a root with a REPL and <code>llm_query</code> / <code>rlm_query</code> handles contexts far past the window: on OOLONG at 132k tokens an RLM beat GPT-5 by 114% at cost parity, and on BrowseComp-Plus it held 100% at a thousand documents. The strategies the model discovers on its own are peek, grep, partition-and-map, summarise, and solve in code.</p>
+        <p>Kleene's bet is that those strategies are queries. A peek is a <code>LIMIT</code>, grep is a table function, partition-and-map is <code>GROUP BY</code> and a <code>LATERAL rlm(...)</code>, summarise is an aggregate, and the answer is a relation. Once they are written as SQL the engine can plan them, price them, memoise them, run them concurrently and refuse the ones the budget cannot pay for. Depth is a budget dimension too: reproductions found that depth two degrades (format collapse, runaway sub-calls), so the harness caps it and shows every child under the turn that opened it.</p>
+        <p class="dim">Sources and the rest of the reading are in <a href="/docs/research/">the research digest</a>.</p>
+      </div>
+      <Terminal title="rlm in one statement">
+<span class="cmt">-- the root never reads the corpus; sixty notes become six children</span>&#10;<span class="kw">CREATE TABLE</span> parts <span class="kw">AS</span>&#10;<span class="kw">SELECT</span> ordinal / 10 <span class="kw">AS</span> part, string_agg(text, '\n' <span class="kw">ORDER BY</span> ordinal) <span class="kw">AS</span> chunk&#10;<span class="kw">FROM</span> ctx <span class="kw">GROUP BY</span> 1;&#10;&#10;<span class="kw">SELECT</span> r.answer, r.session&#10;<span class="kw">FROM</span> parts&#10;<span class="kw">CROSS JOIN LATERAL</span> rlm(<span class="amber">'Which project logged the most hours here?'</span>, chunk) r;&#10;&#10;<span class="cmt">-- each child is the same loop at depth 1 with a slice of the budget;</span>&#10;<span class="cmt">-- its FINAL comes back as the row, its trace is queryable afterwards:</span>&#10;<span class="kw">SELECT</span> depth, role, outcome, calls, dollars <span class="kw">FROM</span> trace_sessions <span class="kw">ORDER BY</span> started_at;</Terminal>
+    </div>
+  </section>
+
   <section class="split">
     <div>
       <h2>One query, priced before it runs</h2>
@@ -88,8 +102,7 @@ import TypedTerminal from "../components/TypedTerminal.astro";
       <h2>Delegation is a lateral join</h2>
       <p><code>rlm(question, chunk)</code> opens one child session per input row, with a slice of the budget and its own table namespace. <code>spawn('reviewer', task)</code> opens a child with that agent's tools. A child's <code>FINAL</code> comes back to the parent as a row.</p>
       <Terminal title="partition-and-map.sql">
-<span class="kw">CREATE TABLE</span> parts <span class="kw">AS</span>&#10;
-<span class="kw">SELECT</span> ordinal / 10 <span class="kw">AS</span> part, string_agg(text, '\n') <span class="kw">AS</span> chunk
+<span class="kw">CREATE TABLE</span> parts <span class="kw">AS</span>&#10;<span class="kw">SELECT</span> ordinal / 10 <span class="kw">AS</span> part, string_agg(text, '\n') <span class="kw">AS</span> chunk
 <span class="kw">FROM</span> ctx <span class="kw">GROUP BY</span> 1;
 
 <span class="kw">SELECT</span> r.answer, r.detail
@@ -101,19 +114,14 @@ import TypedTerminal from "../components/TypedTerminal.astro";
   <section>
     <h2>Install</h2>
     <Terminal title="sh">
-<span class="cmt"># curl: detects OS and architecture, verifies the SHA-256, installs to ~/.local/bin</span>&#10;
-<span class="prompt">$</span> curl -fsSL https://raw.githubusercontent.com/MarcusElwin/kleene/main/install.sh | sh
+<span class="cmt"># curl: detects OS and architecture, verifies the SHA-256, installs to ~/.local/bin</span>&#10;<span class="prompt">$</span> curl -fsSL https://raw.githubusercontent.com/MarcusElwin/kleene/main/install.sh | sh
 
-<span class="cmt"># Homebrew</span>&#10;
-<span class="prompt">$</span> brew install MarcusElwin/kleene/kleene
+<span class="cmt"># Homebrew</span>&#10;<span class="prompt">$</span> brew install MarcusElwin/kleene/kleene
 
-<span class="cmt"># From source (compiles DuckDB the first time, about ten minutes)</span>&#10;
-<span class="prompt">$</span> cargo install --git https://github.com/MarcusElwin/kleene kleene
+<span class="cmt"># From source (compiles DuckDB the first time, about ten minutes)</span>&#10;<span class="prompt">$</span> cargo install --git https://github.com/MarcusElwin/kleene kleene
 
-<span class="cmt"># Check the engine without a model</span>&#10;
-<span class="prompt">$</span> kleene repl -c "SELECT 1 + 1 AS two"
-  <span class="num">2</span>&#10;
-  <span class="dim">1 row</span></Terminal>
+<span class="cmt"># Check the engine without a model</span>&#10;<span class="prompt">$</span> kleene repl -c "SELECT 1 + 1 AS two"
+  <span class="num">2</span>&#10;  <span class="dim">1 row</span></Terminal>
     <p>Prebuilt binaries cover macOS (Apple silicon, Intel) and Linux (x86_64, aarch64). Then <code>kleene setup</code> for a provider (Anthropic, OpenAI, or any compatible endpoint), or just export <code>ANTHROPIC_API_KEY</code>. The full reference is in <a href="/docs/cli/">the CLI docs</a>.</p>
   </section>
 
@@ -131,22 +139,25 @@ import TypedTerminal from "../components/TypedTerminal.astro";
   .hero { padding: 3rem 0 1rem; text-align: center; }
   .logo {
     display: inline-block; text-align: left; background: none !important; border: 0; box-shadow: none;
-    color: var(--green); text-shadow: var(--glow-green); font-size: clamp(0.42rem, 1.6vw, 0.95rem); line-height: 1.15; padding: 0; margin: 0 0 1rem;
+    color: var(--mauve); text-shadow: var(--glow-mauve); font-size: clamp(0.42rem, 1.6vw, 0.95rem); line-height: 1.15; padding: 0; margin: 0 0 1rem;
   }
   .tag { font-family: var(--display); font-size: clamp(1.6rem, 4vw, 2.4rem); margin: 0 0 1rem; }
   .lede { max-width: 64ch; margin: 0 auto 1.5rem; color: var(--fg); }
   .ctas { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
-  .btn { font-family: var(--display); font-size: 1.4rem; color: var(--green); text-shadow: var(--glow-green); padding: 0.1rem 0.4rem; border: 1px solid transparent; }
-  .btn:hover { background: var(--green); color: #000; text-shadow: none; }
+  .btn { font-family: var(--display); font-size: 1.4rem; color: var(--mauve); text-shadow: var(--glow-mauve); padding: 0.1rem 0.4rem; border: 1px solid transparent; }
+  .btn:hover { background: var(--mauve); color: var(--crust); text-shadow: none; }
   .btn.alt { color: var(--amber); text-shadow: var(--glow-amber); }
-  .btn.alt:hover { background: var(--amber); color: #000; }
+  .btn.alt:hover { background: var(--amber); color: var(--crust); }
   .caption { font-size: 0.85rem; max-width: 80ch; margin-top: -0.5rem; }
   .three { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; margin: 3rem 0; }
   .card { border: 1px solid var(--line); background: var(--panel); padding: 0.2rem 1.1rem 0.6rem; }
   .card h3 { margin-top: 0.8rem; }
-  .card h3::before { content: "▸ "; color: var(--green); text-shadow: none; }
+  .card h3::before { content: "▸ "; color: var(--mauve); text-shadow: none; }
   .card p { font-size: 0.92rem; }
   .split { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 2rem; }
   .split h2 { font-size: 1.9rem; }
+  .rlm { margin-top: 1rem; }
+  .rlm .split { align-items: start; }
+  .rlm .term { margin-top: 0.4rem; }
   .status p:last-child { line-height: 2; }
 </style>
