@@ -49,6 +49,37 @@ pub enum Verify {
         /// Absolute tolerance.
         tolerance: f64,
     },
+    /// An OOLONG answer (Bertsch et al. 2025): a label, date, user id or
+    /// comparison is scored on exact match; a numeric answer scores
+    /// `0.75^|expected - got|` and passes only when the score is 1. The
+    /// score is reported in the detail either way, so a run's mean OOLONG
+    /// score can be read back from `evals.detail`.
+    Oolong {
+        /// Expected values. Several means a tie (OOLONG lists every label
+        /// that is equally least or most common), and any non-empty subset
+        /// of them passes, one row per value.
+        answer: Vec<String>,
+        /// Whether the answer is a number, which earns partial credit.
+        numeric: bool,
+    },
+    /// A contract redline (the UmaiTech `legal-contract-*-redlining`
+    /// datasets): the answer's `redline` cell must be a revision of the
+    /// original clause, and it is scored on how many of the reference
+    /// redline's new terms it carries (`redline recall`). With a judge
+    /// configured the judge decides, reading the reference redline, its
+    /// rationale and the changes it lists; without one the task passes at a
+    /// recall of 0.5 or more.
+    Redline {
+        /// The clause as the counterparty drafted it.
+        original: String,
+        /// The reference redline (a GPT-generated, client-protective
+        /// revision), not ground truth but what the dataset scores against.
+        redline: String,
+        /// The reference's rationale.
+        rationale: String,
+        /// The specific changes the reference lists.
+        changes: Vec<String>,
+    },
     /// A person decides; the task waits in `needs_review`.
     Human,
 }
@@ -71,6 +102,8 @@ impl Verify {
             Verify::Shell { .. } => "shell",
             Verify::Judge { .. } => "judge",
             Verify::Number { .. } => "number",
+            Verify::Oolong { .. } => "oolong",
+            Verify::Redline { .. } => "redline",
             Verify::Human => "human",
         }
     }
@@ -101,6 +134,16 @@ impl Verify {
                 },
             },
             Verify::Number { value, tolerance } => number(*value, *tolerance, answer),
+            Verify::Oolong {
+                answer: want,
+                numeric,
+            } => oolong(want, *numeric, answer),
+            Verify::Redline {
+                original,
+                redline,
+                rationale,
+                changes,
+            } => redline_check(original, redline, rationale, changes, answer, judge).await,
             Verify::Human => Verdict {
                 pass: false,
                 detail: "awaiting human review".into(),
@@ -133,6 +176,206 @@ fn number(value: f64, tolerance: f64, answer: &Batch) -> Verdict {
         Err(_) => Verdict {
             pass: false,
             detail: format!("expected a number, got {}", cell.render()),
+        },
+    }
+}
+
+/// The answer cells of a `FINAL` relation for an OOLONG question: the first
+/// column, with a `Label:` or `Answer:` prefix the model may have echoed
+/// from the question removed. One cell holding a comma-separated list is
+/// split when several values are expected.
+fn oolong_cells(answer: &Batch, expected: usize) -> Vec<String> {
+    let strip = |s: &str| -> String {
+        let t = s.trim();
+        let lower = t.to_ascii_lowercase();
+        let t = ["label:", "answer:", "user:", "date:"]
+            .iter()
+            .find(|p| lower.starts_with(*p))
+            .map(|p| &t[p.len()..])
+            .unwrap_or(t);
+        t.trim().trim_matches(|c| c == '\'' || c == '"').to_string()
+    };
+    let mut cells: Vec<String> = answer
+        .rows
+        .iter()
+        .filter_map(|r| r.first())
+        .map(|v| strip(&v.render()))
+        .filter(|s| !s.is_empty())
+        .collect();
+    if cells.len() == 1 && expected > 1 {
+        cells = cells[0]
+            .split(',')
+            .map(strip)
+            .filter(|s| !s.is_empty())
+            .collect();
+    }
+    cells
+}
+
+/// Score an OOLONG answer: exact match on normalised values (any of the
+/// expected values when several are tied), or `0.75^|y - ŷ|` for a
+/// number. Returns the score and a description.
+pub fn oolong_score(want: &[String], numeric: bool, got: &[String]) -> (f64, String) {
+    if numeric {
+        let parse = |s: &str| -> Option<f64> {
+            s.chars()
+                .filter(|c| c.is_ascii_digit() || *c == '.' || *c == '-')
+                .collect::<String>()
+                .parse::<f64>()
+                .ok()
+        };
+        let Some(expected) = want.first().and_then(|s| parse(s)) else {
+            return (0.0, format!("expected answer {want:?} is not a number"));
+        };
+        return match got.first().and_then(|s| parse(s)) {
+            Some(actual) => {
+                let score = 0.75f64.powf((expected - actual).abs());
+                (score, format!("expected {expected}, got {actual}"))
+            }
+            None => (
+                0.0,
+                format!(
+                    "expected {expected}, got {}",
+                    got.first().map(String::as_str).unwrap_or("nothing")
+                ),
+            ),
+        };
+    }
+    let mut w: Vec<String> = want.iter().map(|s| norm(s)).collect();
+    let mut g: Vec<String> = got.iter().map(|s| norm(s)).collect();
+    w.sort();
+    g.sort();
+    g.dedup();
+    let score = if !g.is_empty() && g.iter().all(|x| w.contains(x)) {
+        1.0
+    } else {
+        0.0
+    };
+    let how = if w.len() > 1 { "any of" } else { "expected" };
+    (score, format!("{how} {w:?}, got {g:?}"))
+}
+
+fn oolong(want: &[String], numeric: bool, answer: &Batch) -> Verdict {
+    let got = oolong_cells(answer, want.len());
+    if got.is_empty() {
+        return Verdict {
+            pass: false,
+            detail: "oolong score 0.000: empty answer".into(),
+        };
+    }
+    let (score, why) = oolong_score(want, numeric, &got);
+    Verdict {
+        pass: score >= 1.0 - 1e-9,
+        detail: format!("oolong score {score:.3}: {why}"),
+    }
+}
+
+/// The candidate redline: the `redline` (or `redlined_clause`, `clause`,
+/// `revised`) column of the first row, else its first cell.
+fn redline_cell(answer: &Batch) -> Option<String> {
+    let names = answer.schema.names();
+    let col = names
+        .iter()
+        .position(|n| {
+            matches!(
+                n.to_ascii_lowercase().as_str(),
+                "redline" | "redlined_clause" | "redlined" | "clause" | "revised" | "revision"
+            )
+        })
+        .unwrap_or(0);
+    let v = answer.rows.first()?.get(col)?;
+    let text = match v {
+        Value::Null => String::new(),
+        other => other.render(),
+    };
+    let text = text.trim();
+    (!text.is_empty()).then(|| text.to_string())
+}
+
+/// Words of four letters or more, lower-cased, as a set.
+fn terms(text: &str) -> std::collections::BTreeSet<String> {
+    text.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric() && c != '\'')
+        .map(|w| w.trim_matches('\''))
+        .filter(|w| w.len() >= 4)
+        .map(str::to_string)
+        .collect()
+}
+
+/// Whitespace- and case-insensitive text, for "did it change anything".
+fn squash(text: &str) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+/// How much of the reference redline's new vocabulary (terms in the
+/// reference that the original clause lacks) the candidate carries, in
+/// `0..=1`. A reference that only deletes has nothing to recall, and any
+/// changed candidate scores 1.
+pub fn redline_recall(original: &str, reference: &str, candidate: &str) -> f64 {
+    let before = terms(original);
+    let added: Vec<String> = terms(reference).difference(&before).cloned().collect();
+    if added.is_empty() {
+        return 1.0;
+    }
+    let got = terms(candidate);
+    added.iter().filter(|t| got.contains(*t)).count() as f64 / added.len() as f64
+}
+
+/// The rubric the judge grades a redline against.
+pub fn redline_rubric(original: &str, changes: &[String]) -> String {
+    let listed = if changes.is_empty() {
+        String::from("- the changes the reference redline makes")
+    } else {
+        changes
+            .iter()
+            .map(|c| format!("- {c}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    format!(
+        "The answer is a redline of this clause on behalf of the client:\n\n{original}\n\nPASS when the answer's redline is a complete, usable revision of that clause (clause text, not commentary or a diff), drafted in the client's favour, and it makes the substance of these changes, in its own words if it likes:\n{listed}\n\nFAIL when the redline leaves one of those risks unaddressed, drafts against the client, introduces a plain legal error, or is not clause text. Differences in wording, order or added protections beyond the reference do not matter."
+    )
+}
+
+async fn redline_check(
+    original: &str,
+    reference: &str,
+    rationale: &str,
+    changes: &[String],
+    answer: &Batch,
+    judge: Option<(Arc<dyn Provider>, String)>,
+) -> Verdict {
+    let Some(candidate) = redline_cell(answer) else {
+        return Verdict {
+            pass: false,
+            detail: "redline recall 0.00: empty answer".into(),
+        };
+    };
+    if squash(&candidate) == squash(original) {
+        return Verdict {
+            pass: false,
+            detail: "redline recall 0.00: the redline leaves the clause unchanged".into(),
+        };
+    }
+    let recall = redline_recall(original, reference, &candidate);
+    match judge {
+        Some((p, alias)) => {
+            let rubric = redline_rubric(original, changes);
+            let reference = format!("{reference}\n\nRationale: {rationale}");
+            let v = judge_call(p, &alias, &rubric, Some(&reference), answer).await;
+            Verdict {
+                pass: v.pass,
+                detail: format!("redline recall {recall:.2}; judge: {}", v.detail),
+            }
+        }
+        None => Verdict {
+            pass: recall >= 0.5,
+            detail: format!(
+                "redline recall {recall:.2} of the reference's new terms (no judge configured; passes at 0.50)"
+            ),
         },
     }
 }
@@ -496,6 +739,121 @@ mod tests {
         assert!(rt.block_on(v.check(&b, &ws, None)).pass);
         let b = batch(&["n"], vec![vec![Value::Int(41)]]);
         assert!(!rt.block_on(v.check(&b, &ws, None)).pass);
+    }
+
+    #[test]
+    fn oolong_oracle_scores_labels_exactly_and_numbers_with_decay() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let ws = std::env::temp_dir();
+        let label = Verify::Oolong {
+            answer: vec!["incorrect".into()],
+            numeric: false,
+        };
+        let b = batch(&["answer"], vec![vec![Value::from("Label: Incorrect")]]);
+        let v = rt.block_on(label.check(&b, &ws, None));
+        assert!(v.pass, "{}", v.detail);
+        assert!(v.detail.starts_with("oolong score 1.000"));
+        let b = batch(&["answer"], vec![vec![Value::from("correct")]]);
+        assert!(!rt.block_on(label.check(&b, &ws, None)).pass);
+
+        let num = Verify::Oolong {
+            answer: vec!["1542".into()],
+            numeric: true,
+        };
+        let b = batch(&["answer"], vec![vec![Value::Int(1542)]]);
+        assert!(rt.block_on(num.check(&b, &ws, None)).pass);
+        let b = batch(&["answer"], vec![vec![Value::from("Answer: 1,540")]]);
+        let v = rt.block_on(num.check(&b, &ws, None));
+        assert!(!v.pass);
+        assert_eq!(v.detail, "oolong score 0.562: expected 1542, got 1540");
+        let empty = batch(&["answer"], vec![]);
+        assert!(!rt.block_on(num.check(&empty, &ws, None)).pass);
+
+        // A tie: OOLONG lists every least-common label; naming one, or all
+        // of them, is right; naming a label outside the tie is wrong.
+        let tie = Verify::Oolong {
+            answer: vec!["human being".into(), "location".into()],
+            numeric: false,
+        };
+        let rows = batch(
+            &["answer"],
+            vec![
+                vec![Value::from("location")],
+                vec![Value::from("Human Being")],
+            ],
+        );
+        assert!(rt.block_on(tie.check(&rows, &ws, None)).pass);
+        let one_cell = batch(
+            &["answer"],
+            vec![vec![Value::from("human being, location")]],
+        );
+        assert!(rt.block_on(tie.check(&one_cell, &ws, None)).pass);
+        let one = batch(&["answer"], vec![vec![Value::from("Label: location")]]);
+        let v = rt.block_on(tie.check(&one, &ws, None));
+        assert!(v.pass);
+        assert_eq!(
+            v.detail,
+            "oolong score 1.000: any of [\"human being\", \"location\"], got [\"location\"]"
+        );
+        let outside = batch(
+            &["answer"],
+            vec![vec![Value::from("location")], vec![Value::from("entity")]],
+        );
+        assert!(!rt.block_on(tie.check(&outside, &ws, None)).pass);
+    }
+
+    #[test]
+    fn redline_oracle_wants_a_changed_clause_and_scores_recall() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let ws = std::env::temp_dir();
+        let original = "This Agreement shall be governed by the laws of the State of Texas.";
+        let v = Verify::Redline {
+            original: original.into(),
+            redline: "This Agreement shall be governed by the laws of the State of Illinois, without regard to its conflicts of law principles.".into(),
+            rationale: "Aligns governing law with the client.".into(),
+            changes: vec!["modification: Illinois law, conflicts exclusion".into()],
+        };
+        // Unchanged text (whitespace and case aside) is not a redline.
+        let same = batch(
+            &["redline", "rationale"],
+            vec![vec![
+                Value::from(original.to_uppercase()),
+                Value::from("fine"),
+            ]],
+        );
+        let r = rt.block_on(v.check(&same, &ws, None));
+        assert!(!r.pass);
+        assert!(r.detail.contains("unchanged"), "{}", r.detail);
+        // Carrying the reference's new terms passes without a judge.
+        let good = batch(
+            &["rationale", "redline"],
+            vec![vec![
+                Value::from("client is in Illinois"),
+                Value::from("This Agreement shall be governed by the laws of the State of Illinois without regard to conflicts of law principles."),
+            ]],
+        );
+        let r = rt.block_on(v.check(&good, &ws, None));
+        assert!(r.pass, "{}", r.detail);
+        assert!(r.detail.starts_with("redline recall 1.00"), "{}", r.detail);
+        // A change in another direction scores low and fails.
+        let other = batch(
+            &["redline"],
+            vec![vec![Value::from(
+                "This Agreement shall be governed by the laws of the State of Nevada.",
+            )]],
+        );
+        let r = rt.block_on(v.check(&other, &ws, None));
+        assert!(!r.pass);
+        assert!(r.detail.starts_with("redline recall 0.00"), "{}", r.detail);
+        assert!(
+            !rt.block_on(v.check(&batch(&["redline"], vec![]), &ws, None))
+                .pass
+        );
+        assert_eq!(
+            redline_recall("a b", "a b", "something else entirely here"),
+            1.0
+        );
+        assert!(redline_rubric(original, &[]).contains(original));
     }
 
     #[test]

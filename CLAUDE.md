@@ -50,9 +50,8 @@ The GitHub Actions workflow lives in `.github/workflows/ci.yml`: `fmt`,
 `clippy, doc` and `test` run as three parallel jobs, each with rust-cache
 keyed on the lockfile and sccache behind it, and a change that only touches
 docs, the formula or the installer (`paths-ignore` in the workflow) runs
-none of them. The copy
-under `ci/` is a leftover from when it was staged there and is scheduled for
-deletion; do not edit it and do not treat it as the source of truth.
+none of them. `release.yml` next to it builds the four release targets on
+`v*` tags.
 
 A coding agent's GitHub App token cannot push `.github/workflows/`, so an
 agent that changes the workflow must hand the push to a human. **Never

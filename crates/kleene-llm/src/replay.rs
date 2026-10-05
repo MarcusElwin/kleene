@@ -82,6 +82,10 @@ impl Provider for RecordingProvider {
         self.inner.capabilities()
     }
 
+    fn model_for(&self, alias: &str) -> Option<String> {
+        self.inner.model_for(alias)
+    }
+
     async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse, ProviderError> {
         let fp = req.fingerprint();
         let resp = self.inner.complete(req).await?;

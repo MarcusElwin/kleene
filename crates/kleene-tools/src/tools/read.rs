@@ -1,19 +1,17 @@
-//! `read(path TEXT)`: a whole file as one row.
+//! `read(path TEXT)`: a whole file as one row, documents converted to text.
 
 use crate::args::{check_arity, text};
+use crate::paths::{resolve, Access};
+use crate::tools::convert::{document_text, DOCUMENT_EXTENSIONS};
 use crate::tools::lines::read_recorded;
 use crate::{Signature, Tool, ToolContext, ToolError};
 use kleene_core::{Batch, DataType, Field, Schema, Value, Volatility};
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
-/// Extensions of binary document formats whose conversion (via pandoc)
-/// arrives in M7; `read` refuses them for now instead of returning bytes.
-const BINARY_DOCUMENTS: &[&str] = &["docx", "pdf", "xlsx", "pptx"];
-
 /// `read(path TEXT) -> (text TEXT)`, exactly one row. Records the read for
-/// the staleness check in `patch`. Plain text only in M2: `.docx`, `.pdf`,
-/// `.xlsx` and `.pptx` return an error until conversion lands in M7.
+/// the staleness check in `patch`. `.docx`, `.xlsx`, `.pptx`, `.pdf` and
+/// `.eml` come back as text (see `convert`); everything else as is.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Read;
 
@@ -40,7 +38,7 @@ impl Tool for Read {
     }
 
     fn description(&self) -> &str {
-        "the whole text of a workspace file as one row"
+        "the whole text of a workspace file as one row (.docx, .xlsx, .pptx, .pdf and .eml converted to text)"
     }
 
     async fn call(&self, args: &[Value], ctx: &ToolContext) -> Result<Batch, ToolError> {
@@ -50,10 +48,20 @@ impl Tool for Read {
             .extension()
             .and_then(|e| e.to_str())
             .map(|e| e.to_ascii_lowercase());
-        if ext.is_some_and(|e| BINARY_DOCUMENTS.contains(&e.as_str())) {
-            return Err(ToolError::Other(
-                "binary document; conversion arrives in M7".into(),
-            ));
+        if ext.is_some_and(|e| DOCUMENT_EXTENSIONS.contains(&e.as_str())) {
+            let resolved = resolve(ctx, path, Access::Read)?;
+            let meta = std::fs::metadata(&resolved.abs)?;
+            if meta.is_dir() {
+                return Err(ToolError::Args(format!("{path} is a directory")));
+            }
+            let contents = document_text(&resolved.abs).await?;
+            if let Ok(mtime) = meta.modified() {
+                ctx.record_read(resolved.abs.clone(), mtime);
+            }
+            return Ok(Batch {
+                schema: self.schema(),
+                rows: vec![vec![Value::Text(contents)]],
+            });
         }
         let (_, contents) = read_recorded(ctx, path)?;
         Ok(Batch {
@@ -80,12 +88,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn binary_documents_are_refused_before_any_io() {
+    async fn documents_are_converted_and_missing_ones_are_io_errors() {
         let dir = tempfile::tempdir().unwrap();
         let ctx = ToolContext::new(dir.path().to_path_buf());
-        for name in ["r.PDF", "d.docx", "s.xlsx", "p.pptx"] {
+        for name in ["r.PDF", "d.docx", "s.xlsx", "p.pptx", "m.eml"] {
             let err = Read.call(&[Value::from(name)], &ctx).await.unwrap_err();
-            assert_eq!(err.to_string(), "binary document; conversion arrives in M7");
+            assert!(matches!(err, ToolError::Io(_)), "{name}: {err}");
         }
+        let docx = dir.path().join("memo.docx");
+        crate::tools::convert::write_document(&docx, "# Memo\nBody line.")
+            .await
+            .unwrap();
+        let b = Read.call(&[Value::from("memo.docx")], &ctx).await.unwrap();
+        assert_eq!(b.rows[0][0].render(), "Memo\nBody line.\n");
+        assert!(ctx.last_read(&docx.canonicalize().unwrap()).is_some());
     }
 }

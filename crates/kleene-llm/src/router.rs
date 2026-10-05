@@ -489,6 +489,14 @@ impl Provider for RoutedProvider {
         "router"
     }
 
+    /// The first candidate's model for the alias; `None` for an unknown alias.
+    fn model_for(&self, alias: &str) -> Option<String> {
+        self.router
+            .candidates(&ModelAlias(alias.to_string()))
+            .first()
+            .map(|c| c.model.clone())
+    }
+
     /// The intersection of the registered backends' capabilities, except
     /// that cost is reported whenever the pricing table is non-empty.
     fn capabilities(&self) -> Capabilities {

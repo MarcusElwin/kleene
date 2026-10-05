@@ -48,13 +48,13 @@ and Linux (x86_64, aarch64).
 
 ```bash
 # curl: detects OS and architecture, verifies the SHA-256, installs to ~/.local/bin
-curl -fsSL https://raw.githubusercontent.com/MarcusElwin/callgebra/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/MarcusElwin/kleene/main/install.sh | sh
 
 # Homebrew
-brew install MarcusElwin/callgebra/kleene
+brew install MarcusElwin/kleene/kleene
 
 # From source (compiles DuckDB the first time, about ten minutes)
-cargo install --git https://github.com/MarcusElwin/callgebra kleene
+cargo install --git https://github.com/MarcusElwin/kleene kleene
 ```
 
 `KLEENE_VERSION=v0.1.0` pins the installer to a tag and
@@ -445,7 +445,89 @@ Every flag: `kleene <command> --help`, or [`docs/CLI.md`](docs/CLI.md#commands).
 | [`demos/`](demos/README.md) | runnable demos: long context, reviewer agents, the planner, the continual loop, benchmarks |
 | [`tasks/`](tasks/README.md) | the shipped task packs and their oracles |
 | [`CLAUDE.md`](CLAUDE.md) | working rules for contributors and coding agents |
-| [`ci/README.md`](ci/README.md) | the release workflow: tags, tarballs, checksums, the Homebrew formula |
+| [`.github/workflows/`](.github/workflows/) | CI (fmt, clippy, doc, test) and the release workflow: tags, tarballs, checksums, the Homebrew formula |
+
+## Benchmark results
+
+What `kleene bench` has measured on real models so far, one row per pack,
+mode and model. `learning` is Kleene with the
+playbook shown and adopted, `frozen` is Kleene with the playbook off (the
+control), and `plain` is a one-call tool-calling agent on the same
+provider, tools and budget. Pass counts the tasks the pack's oracle
+accepted; cost is the solver's own calls at list prices and leaves out the
+replay evals a learning run pays to gate its playbook. A row with blank
+metrics is a model that has not been run on that pack in that mode; the table is
+generated from the per-task rows under `plots/` by
+`kleene bench results plots/evals.csv plots/haiku-2026-10-01/evals.csv --readme README.md --plot coding --plot memo-rubric --plot logbook-hard`,
+so a new model or a new run is a new CSV and a re-run of that command.
+The hard packs expand below to their pass-rate-against-cost plot: one
+point per model and mode, with a dashed line through the points nothing
+beats on both axes. The four original packs have no plot here because
+every mode solved every task, so cost is the only axis that moves; their
+plots are still written, with the rest, under
+[`plots/results/`](plots/results/).
+
+Runs so far: Claude Opus 5.5 on 27 September 2026 over the four original
+packs, and Claude Haiku 4.5 on 1 October 2026 over the harder packs with
+Claude Sonnet 5.5 as the judge, stopped before `logbook-hard` and the
+coding pack's plain mode. The reading is in
+[the write-up](docs/WRITEUP.md#4-what-the-benchmarks-measured) and what
+each column measures is in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md#results-across-models).
+
+<!-- bench-results:begin -->
+| Pack | Mode | Model | Tasks | Pass | $/task | Total $ | Calls/task | Tokens/task | Seconds/task |
+|---|---|---|---:|---:|---:|---:|---:|---:|---:|
+| `coding` | learning | Claude Opus 5.5 | | | | | | | |
+| `coding` | learning | Claude Haiku 4.5 | 12 | 2/12 (17%) | $0.039 | $0.473 | 2.7 | 29,910 | 26.5 |
+| `coding` | frozen | Claude Opus 5.5 | | | | | | | |
+| `coding` | frozen | Claude Haiku 4.5 | 12 | 2/12 (17%) | $0.072 | $0.868 | 4.6 | 48,375 | 43.9 |
+| `finance-synthetic` | learning | Claude Opus 5.5 | 20 | 20/20 (100%) | $0.031 | $0.628 | 2.4 | 29,999 | 10.2 |
+| `finance-synthetic` | learning | Claude Haiku 4.5 | | | | | | | |
+| `finance-synthetic` | frozen | Claude Opus 5.5 | 20 | 20/20 (100%) | $0.042 | $0.831 | 3.5 | 42,177 | 12.2 |
+| `finance-synthetic` | frozen | Claude Haiku 4.5 | | | | | | | |
+| `finance-synthetic` | plain | Claude Opus 5.5 | 20 | 20/20 (100%) | $0.004 | $0.072 | 1.0 | 1,244 | 3.0 |
+| `finance-synthetic` | plain | Claude Haiku 4.5 | | | | | | | |
+| `legal-synthetic` | learning | Claude Opus 5.5 | 20 | 20/20 (100%) | $0.130 | $2.61 | 10.6 | 58,315 | 25.1 |
+| `legal-synthetic` | learning | Claude Haiku 4.5 | | | | | | | |
+| `legal-synthetic` | frozen | Claude Opus 5.5 | 20 | 20/20 (100%) | $0.085 | $1.69 | 12.7 | 62,452 | 26.8 |
+| `legal-synthetic` | frozen | Claude Haiku 4.5 | | | | | | | |
+| `legal-synthetic` | plain | Claude Opus 5.5 | 20 | 20/20 (100%) | $0.005 | $0.107 | 1.0 | 1,475 | 3.3 |
+| `legal-synthetic` | plain | Claude Haiku 4.5 | | | | | | | |
+| `memo-rubric` | learning | Claude Opus 5.5 | | | | | | | |
+| `memo-rubric` | learning | Claude Haiku 4.5 | 20 | 11/20 (55%) | $0.018 | $0.365 | 3.8 | 23,041 | 11.9 |
+| `memo-rubric` | frozen | Claude Opus 5.5 | | | | | | | |
+| `memo-rubric` | frozen | Claude Haiku 4.5 | 20 | 8/20 (40%) | $0.065 | $1.30 | 19.9 | 49,043 | 32.2 |
+| `memo-rubric` | plain | Claude Opus 5.5 | | | | | | | |
+| `memo-rubric` | plain | Claude Haiku 4.5 | 20 | 8/20 (40%) | $0.018 | $0.354 | 3.1 | 10,764 | 13.0 |
+| `oolong-like` | learning | Claude Opus 5.5 | 20 | 20/20 (100%) | $0.096 | $1.92 | 3.9 | 41,991 | 16.8 |
+| `oolong-like` | learning | Claude Haiku 4.5 | | | | | | | |
+| `oolong-like` | frozen | Claude Opus 5.5 | 20 | 20/20 (100%) | $0.076 | $1.51 | 4.9 | 30,778 | 17.5 |
+| `oolong-like` | frozen | Claude Haiku 4.5 | | | | | | | |
+| `oolong-like` | plain | Claude Opus 5.5 | 20 | 20/20 (100%) | $0.020 | $0.394 | 1.0 | 3,084 | 7.5 |
+| `oolong-like` | plain | Claude Haiku 4.5 | | | | | | | |
+| `terminal` | learning | Claude Opus 5.5 | 6 | 6/6 (100%) | $0.007 | $0.043 | 1.3 | 6,742 | 4.1 |
+| `terminal` | learning | Claude Haiku 4.5 | | | | | | | |
+| `terminal` | frozen | Claude Opus 5.5 | 6 | 6/6 (100%) | $0.012 | $0.074 | 2.2 | 10,551 | 5.1 |
+| `terminal` | frozen | Claude Haiku 4.5 | | | | | | | |
+| `terminal` | plain | Claude Opus 5.5 | 6 | 6/6 (100%) | $0.006 | $0.033 | 2.5 | 2,395 | 8.0 |
+| `terminal` | plain | Claude Haiku 4.5 | | | | | | | |
+
+Models: Claude Opus 5.5 is `claude-opus-5-5`, Claude Haiku 4.5 is `claude-haiku-4-5-20251001`.
+
+<details>
+<summary><code>coding</code>: pass rate against cost per task, every model and mode</summary>
+
+![coding: pass rate against cost](plots/results/coding-pareto.svg)
+
+</details>
+
+<details>
+<summary><code>memo-rubric</code>: pass rate against cost per task, every model and mode</summary>
+
+![memo-rubric: pass rate against cost](plots/results/memo-rubric-pareto.svg)
+
+</details>
+<!-- bench-results:end -->
 
 ## Status
 
@@ -492,7 +574,7 @@ Not yet, in the order they are planned:
 ## Developing
 
 ```bash
-git clone https://github.com/MarcusElwin/callgebra && cd callgebra
+git clone https://github.com/MarcusElwin/kleene && cd kleene
 cargo build                                                          # DuckDB compiles once, ~10 min
 cargo test --workspace --all-features
 cargo clippy --workspace --all-targets --all-features -- -D warnings
@@ -501,8 +583,9 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 
 `CLAUDE.md` holds the working rules (interfaces first, typed errors, the
 flag shapes that keep DuckDB from rebuilding), CI runs in
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) and `ci/README.md`
-describes the release workflow. Written in Rust, model-agnostic with no SDK
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) and
+[`.github/workflows/release.yml`](.github/workflows/release.yml) publishes
+tagged releases. Written in Rust, model-agnostic with no SDK
 and no gateway required, MIT licensed.
 
 ## Why "Kleene"
@@ -558,10 +641,10 @@ relies on, is collected in [`docs/RESEARCH.md`](docs/RESEARCH.md).
 
 <!-- Badge and repository links. If the repository is renamed, update the
      owner/repo below (and the install URLs above) in one place. -->
-[ci-badge]: https://github.com/MarcusElwin/callgebra/actions/workflows/ci.yml/badge.svg
-[ci-link]: https://github.com/MarcusElwin/callgebra/actions/workflows/ci.yml
-[release-badge]: https://img.shields.io/github/v/release/MarcusElwin/callgebra?include_prereleases&label=release
-[release-link]: https://github.com/MarcusElwin/callgebra/releases
+[ci-badge]: https://github.com/MarcusElwin/kleene/actions/workflows/ci.yml/badge.svg
+[ci-link]: https://github.com/MarcusElwin/kleene/actions/workflows/ci.yml
+[release-badge]: https://img.shields.io/github/v/release/MarcusElwin/kleene?include_prereleases&label=release
+[release-link]: https://github.com/MarcusElwin/kleene/releases
 [msrv-badge]: https://img.shields.io/badge/rust-1.88%2B-orange?logo=rust
 [msrv-link]: rust-toolchain.toml
 [duckdb-badge]: https://img.shields.io/badge/DuckDB-inside-fff100?logo=duckdb&logoColor=black

@@ -74,9 +74,72 @@ a subset, and the edge cases the hidden tests add are all stated in the task
 text.
 
 The external datasets these packs imitate (OOLONG, Terminal-Bench,
-FinanceBench, CUAD, Harvey LAB) are not redistributed. A Harvey LAB checkout
-imports with `bench import-lab <root> <out-dir>`; LAB's own evaluator stays
-the scorer of record and the in-loop `judge` oracle approximates it.
+FinanceBench, CUAD, Harvey LAB) are not redistributed. Three import on
+demand:
+
+- **OOLONG** (Bertsch et al. 2025, MIT): `bench import-oolong <out-dir>`
+  downloads questions from the Hugging Face dataset `oolongbench/oolong-synth`
+  and writes a pack with the `oolong` oracle. The default is the
+  `trec_coarse` source dataset at the 131,072-token bucket: 50 questions (33 counting,
+  17 per-user; comparisons, counts, labels and user ids) over two shared
+  context windows of about 3,200 TREC questions each, which is the split the Recursive Language Models paper reports on.
+  `--dataset`, `--context-len`, `--limit` and `--offset` pick another slice
+  (`spam` is the other validation dataset; `agnews`, `app_reviews`,
+  `formality`, `imdb`, `metaphors`, `multinli`, `negation` and `yahoo` are
+  the test datasets; buckets run from 1,024 to 4,194,304 tokens). Every
+  context window is written once to `contexts/` and shared by its questions,
+  one line of the original per `ctx` row, so the pack is self-contained and
+  the same arguments give the same pack. The importer reads each parquet
+  shard's footer with a range request to find the row groups that hold the
+  slice and fetches only those rows, so a 12 GB dataset costs a few tens of
+  megabytes to import. `--from-json <file>` builds the pack from rows saved
+  earlier instead of the network.
+- **Harvey LAB** (MIT, `harveyai/harvey-labs`): a checkout imports with
+  `bench import-lab <checkout>/tasks <out-dir>`, all 2,010 tasks (1,599
+  standalone plus 411 workflow scenarios) in about twenty seconds. Each
+  task's `documents/` folder is copied in as its workspace; the 250
+  firm-knowledge tasks that share one `dms` corpus through `docs_dir` share
+  one copy. The oracle is `judge` over the task's rubric exactly as shipped:
+  one line per criterion with its id, title, `match_criteria` and the
+  deliverables it is scoped to, all-pass. LAB's own evaluator
+  (`lab_core.evaluation.run_eval`, Sonnet 4.6 and GPT-5.5 as judges) stays
+  the scorer of record; the in-loop oracle approximates it with one judge
+  and no per-deliverable scoping. The matter documents are `.docx`,
+  `.xlsx`, `.pptx` and `.eml`, which `read` returns as text (paragraphs
+  and tables, one CSV block per sheet, one block per slide, decoded mail),
+  and a deliverable written with `CALL write_file` to a `.docx` or `.xlsx`
+  path is built from the Markdown or CSV given (through `pandoc` when it
+  is installed, else a minimal package), so LAB's evaluator can open it.
+
+  To score with LAB's evaluator, run with `--outputs <checkout>/results`:
+  every task's `output/` is exported as
+  `results/<task>/kleene-<mode>/<run>/output/` with the `config.json` and
+  `metrics.json` LAB's reports expect, and `bench run` prints one
+  `run_eval` command per task. Sampling keeps the cost of a first pass
+  down: `import-lab … --sample 50 --seed 1` imports a seeded sample (and
+  copies only its documents), `bench run … --sample 20 --seed 1` runs a
+  seeded sample of any pack, in pack order, so two people with the same
+  seed run the same tasks. One practice area
+  (`import-lab <checkout>/tasks/antitrust-competition …`, 33 tasks) is the
+  other cheap start.
+- **Contract redlining** (UmaiTech, CC BY 4.0): `bench import-redlining
+  <out-dir>` downloads examples from `UmaiTech/legal-contract-qpt5-redlining-1k`
+  (`--dataset 1k`, 992 redlines by a GPT-5 model mix, the default) or
+  `UmaiTech/legal-contract-gpt41-redlining-10k` (`--dataset 10k`, GPT-4.1),
+  synthetic client-protective redlines of clauses from the CUAD contracts:
+  ten contract types, ten US jurisdictions, the liability, termination,
+  warranty, IP and governing-law categories. The default is the held-out
+  `test` split (10%, 100 examples of the 1k set), read from the `alpaca`
+  config; `--split train`, `--limit` and `--offset` pick another slice and
+  `--from-json <file>` builds the pack from rows saved earlier. Each
+  example becomes one task: the task text names the clause category,
+  contract type, jurisdiction and expected risk reduction and quotes the
+  original clause, and asks for `FINAL` over one row with `redline` (the
+  full revised clause) and `rationale`. The oracle is `redline`, which holds
+  the reference redline, its rationale and the specific changes it lists
+  (below). The reference is itself model-written, so the pack measures
+  agreement with a GPT redline, not with a lawyer; it is the dataset's own
+  framing and it is cheap enough to run the whole test split.
 
 ## Modes
 
@@ -134,6 +197,8 @@ model call and is never the solver's own session. Definitions are in
 | `shell` | a command run in the task's workspace, with the answer rows as JSON on stdin, exits 0 |
 | `sat` | a 3-SAT verdict is right: `SAT` with a satisfying assignment, or `UNSAT` when brute force agrees |
 | `judge` | a separate `judge` model, given a rubric and an optional reference, answers `PASS` |
+| `oolong` | an OOLONG answer, scored as the paper scores it: a label, date, user id or comparison on exact match (any of the listed values when the dataset lists a tie), a number with partial credit `0.75^|expected − got|`. The task passes only at a score of 1; the score itself is in `detail` (`oolong score 0.562: expected 1542, got 1540`), so a run's mean OOLONG score is a query over `evals.detail` |
+| `redline` | a contract redline: the `redline` cell of the first row must differ from the original clause (an unchanged clause fails outright), and it is scored on `redline recall`, the share of the reference redline's new terms (words of four letters or more that the original lacks) the answer carries. With a judge configured the judge decides, given the original clause, the reference redline with its rationale and the specific changes it lists, and `detail` carries both (`redline recall 0.83; judge: PASS …`); without one the task passes at a recall of 0.50, so an imported redlining pack can be run for free at the cost of a lexical oracle |
 | `human` | a person marks it; the task waits in `needs_review` and counts as unsolved until then |
 
 The shipped packs use `shell` (terminal, coding), `exact` (oolong-like,
@@ -146,7 +211,9 @@ line; a first line that says PASS but also mentions FAIL ("PASS or FAIL?",
 a hedged pass is not a verdict. A rubric-judged verdict is as good as its
 rubric: the memo rubrics name every fact the memo must state, with its
 number, and forbid the superseded and rejected values, so the judge's job
-is checking, not appraising.
+is checking, not appraising. An imported OOLONG pack uses `oolong`, which
+needs no judge either; an imported redlining pack uses `redline`, which
+uses the judge when there is one and its recall score when there is not.
 
 ## What is recorded
 
@@ -158,6 +225,7 @@ columns are the raw material for every report and plot:
 |---|---|
 | `run` | the run id; one `bench run` invocation |
 | `pack`, `mode` | which pack, which of the three modes |
+| `model` | the model the `root` alias resolved to when the row was written (NULL under the replay and test providers, which cannot name one) |
 | `seq` | position in the stream, 0-based; the x axis of the learning curve |
 | `task`, `kind` | the task's id within the pack and its kind |
 | `solved` | the oracle's verdict |
@@ -177,7 +245,7 @@ was adopted after which replay and what was reverted.
 
 ## What `bench report` shows
 
-`bench report` groups `evals` by pack and mode over every recorded run:
+`bench report` groups `evals` by pack, mode and model over every recorded run:
 
 | Column | Definition |
 |---|---|
@@ -197,6 +265,54 @@ comparison.
 solve rate: at each position the fraction solved over the last `window`
 tasks, drawn as a sparkline and listed as numbers. This is the learning
 curve of that run.
+
+## Results across models
+
+Runs on different models usually live in different stores (one per
+machine, per day, per pack and mode), so the comparison across models
+starts from their `bench csv` exports rather than from a merged database:
+
+```bash
+kleene bench results plots/evals.csv plots/haiku-2026-10-01/evals.csv \
+  --out plots/results --readme README.md \
+  --plot coding --plot memo-rubric --plot logbook-hard
+```
+
+reads every CSV given, groups the rows by pack, mode and `model`, and
+writes to `--out`:
+
+- `results.md`: the summary table, one row per pack, mode and model with
+  the metrics as columns (tasks, pass rate as `solved/tasks (percent)`,
+  mean dollars per task, total dollars, mean calls, mean tokens and mean
+  seconds per task), followed by one collapsible `<details>` block per
+  plotted pack holding its plot. A model that has not been run on a pack
+  in a mode keeps its row with blank metrics, not zeros, so the table can
+  be published before every model has run every pack.
+- `<pack>-pareto.svg`: dollars per task against pass rate, one point per
+  model and mode (one colour per model, the mode written at the point)
+  and a dashed line through the Pareto frontier, the points no other point
+  beats on both axes. Reading it: a point on the line is a defensible
+  choice at its budget; a point below and to the right of the line is
+  dominated by one that is both cheaper and more often right.
+
+`--plot <pack>` (repeatable) limits which packs get a `<details>` block
+in the Markdown; every SVG is still written. The README shows the hard packs only: on the
+four original packs every mode scored the same, so their points sit on one
+horizontal line and the table says it all.
+
+With `--readme`, the Markdown also replaces the block between
+`<!-- bench-results:begin -->` and `<!-- bench-results:end -->` in that
+document, with image links relative to it; the README's results section
+is maintained this way, so a new model is a new CSV and a re-run of the
+command, never a hand-edited table. Models are shown by a readable form
+of their id (`claude-opus-5-5` as Claude Opus 5.5, a trailing date
+dropped) and the mapping is printed under the table.
+
+The `model` column is written by `bench run` from the provider's answer for
+the `root` alias (the router's first candidate). CSVs exported before the
+column existed need it added by hand, as `plots/evals.csv` (Opus 5.5) and
+`plots/haiku-2026-10-01/evals.csv` (Haiku 4.5) were; the command refuses a
+CSV without it rather than guessing.
 
 ## The five plots
 

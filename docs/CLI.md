@@ -21,7 +21,7 @@ aarch64) are attached to every tagged release. Pick one of the three.
 ### curl
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MarcusElwin/callgebra/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/MarcusElwin/kleene/main/install.sh | sh
 ```
 
 The script detects your OS and architecture, downloads the latest release
@@ -33,7 +33,7 @@ destination is not on your `PATH`. Environment variables it honours:
 |---|---|---|
 | `KLEENE_VERSION` | Install a specific tag, e.g. `v0.1.0` | latest release |
 | `KLEENE_INSTALL` | Destination directory | `~/.local/bin` |
-| `KLEENE_REPO` | `owner/repo` to fetch from | `MarcusElwin/callgebra` |
+| `KLEENE_REPO` | `owner/repo` to fetch from | `MarcusElwin/kleene` |
 | `GITHUB_TOKEN` (or `GH_TOKEN`) | Token with read access to the repository; required while it is private, and raises the API rate limit otherwise | unset |
 
 Read it before piping it into a shell if that is your habit:
@@ -49,22 +49,21 @@ prints the token the GitHub CLI holds:
 ```bash
 export GITHUB_TOKEN="$(gh auth token)"
 curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github.raw" \
-  "https://api.github.com/repos/MarcusElwin/callgebra/contents/install.sh?ref=main" | sh
+  "https://api.github.com/repos/MarcusElwin/kleene/contents/install.sh?ref=main" | sh
 ```
 
 or, letting `gh` handle the authentication:
 
 ```bash
 export GITHUB_TOKEN="$(gh auth token)"
-gh api -H "Accept: application/vnd.github.raw" repos/MarcusElwin/callgebra/contents/install.sh | sh
+gh api -H "Accept: application/vnd.github.raw" repos/MarcusElwin/kleene/contents/install.sh | sh
 ```
 
 The script downloads release assets through the GitHub API with the same
 token, which works for private and public repositories alike.
 
 **Until the first release exists** there is nothing for the installer to
-download and it says so. Publishing one is: move `ci/release.yml` to
-`.github/workflows/release.yml`, then `git tag v0.1.0 && git push origin
+download and it says so. Publishing one is `git tag v0.1.0 && git push origin
 v0.1.0`. The workflow builds the four targets, attaches the tarballs and
 checksums, and prints the values the Homebrew formula needs. Meanwhile,
 build from a checkout: `cargo install --path crates/kleene`.
@@ -72,7 +71,7 @@ build from a checkout: `cargo install --path crates/kleene`.
 ### Homebrew
 
 ```bash
-brew install MarcusElwin/callgebra/kleene
+brew install MarcusElwin/kleene/kleene
 ```
 
 This installs from the tap `MarcusElwin/homebrew-kleene`, whose formula is
@@ -96,7 +95,7 @@ public repository.
 ### cargo
 
 ```bash
-cargo install --git https://github.com/MarcusElwin/callgebra kleene
+cargo install --git https://github.com/MarcusElwin/kleene kleene
 ```
 
 Needs Rust 1.88 or newer and about ten minutes: DuckDB is compiled from source
@@ -112,8 +111,8 @@ works instead:
 ```bash
 cargo install --path crates/kleene                    # from a checkout you already have
 CARGO_NET_GIT_FETCH_WITH_CLI=true \
-  cargo install --git https://github.com/MarcusElwin/callgebra kleene   # let the git CLI authenticate
-cargo install --git ssh://git@github.com/MarcusElwin/callgebra kleene   # over SSH
+  cargo install --git https://github.com/MarcusElwin/kleene kleene   # let the git CLI authenticate
+cargo install --git ssh://git@github.com/MarcusElwin/kleene kleene   # over SSH
 ```
 
 ### Check
@@ -554,20 +553,27 @@ modes, oracles, report columns and plots measure is in
 
 | Command | What it does |
 |---|---|
-| `bench run <pack-dir> [--mode learning\|frozen\|plain] [--limit N] [--record <dir>] [--replay <dir>] [--resume <run-id>]` | Run a pack. `learning` shows and adopts the playbook; `frozen` is the control; `plain` is a tool-calling agent on the same provider, tools and budget. `--record` saves every model reply as fixtures; `--replay` serves them offline. A task that ends without a token spent (no credit, a bad key) stops the run with the reason in `bench_runs.note`; `--resume` continues that run at the first task without a row |
+| `bench run <pack-dir> [--mode learning\|frozen\|plain] [--limit N] [--sample N --seed S] [--outputs <dir>] [--record <dir>] [--replay <dir>] [--resume <run-id>]` | Run a pack. `learning` shows and adopts the playbook; `frozen` is the control; `plain` is a tool-calling agent on the same provider, tools and budget. `--sample` runs a seeded sample of N tasks in pack order; `--outputs` exports every task's `output/` in the layout Harvey LAB's evaluator reads and prints the `run_eval` commands; `--record` saves every model reply as fixtures; `--replay` serves them offline. A task that ends without a token spent (no credit, a bad key) stops the run with the reason in `bench_runs.note`; `--resume` continues that run at the first task without a row |
 | `bench build <out-dir> --from <generator> [--count 20] [--dial 0.5] [--seed 1] [--lazy]` | Freeze generator output into a pack; same seeds, same tasks. `--lazy` stores generator references and regenerates on load. Generators: `sat3`, `graph`, `puzzle`, `corpus`, `repo`, `statements`, `contracts`, `logbook`, `memo` |
 | `bench terminal <out-dir>` | Write the built-in Terminal-Bench-style pack |
-| `bench import-lab <lab-root> <out-dir>` | Import a Harvey LAB checkout into a pack |
+| `bench import-lab <checkout>/tasks <out-dir> [--sample N --seed S]` | Import a Harvey LAB checkout (or one practice area under it) into a pack with the shipped rubrics; `--sample` imports a seeded sample and copies only its documents |
+| `bench import-oolong <out-dir> [--dataset trec_coarse] [--context-len 131072] [--limit 50] [--offset 0] [--split validation\|test] [--from-json <file>]` | Import OOLONG-synth questions from Hugging Face into a pack with the `oolong` oracle; the defaults are the RLM paper's trec_coarse 128k split |
+| `bench import-redlining <out-dir> [--dataset 1k\|10k\|<repo>] [--split test\|train] [--limit 100] [--offset 0] [--from-json <file>]` | Import UmaiTech's contract redlining examples (synthetic redlines over CUAD, CC BY 4.0) from Hugging Face into a pack with the `redline` oracle; the default is the 1k set's held-out test split |
 | `bench report` | Accuracy, calls and dollars per pack and mode |
 | `bench curve <run-id> [--window 5]` | The learning curve of one run as a sparkline and rolling mean |
 | `bench csv` | Every eval row as CSV on stdout |
 | `bench plot <out-dir>` | The write-up's plots as SVG files: `learning_curve`, `cost_parity`, `calls_vs_difficulty`, `estimate_accuracy` (the planner's estimated calls against actuals, from `trace_statements`) and `plan_space` (join orders against relations joined) |
+| `bench results <evals.csv>... [--out plots/results] [--readme README.md] [--plot <pack>]...` | Results from several models side by side: reads `bench csv` files (every row names its model), writes `results.md` (one row per pack, mode and model with pass rate, $/task, calls, tokens and seconds as columns; a model not run on a pack and mode keeps a blank row) and one pass-rate-against-cost Pareto SVG per pack; `--plot` limits which packs' plots the Markdown shows (default all); `--readme` replaces the block between `<!-- bench-results:begin -->` and `<!-- bench-results:end -->` in that document |
 
 ```bash
+kleene bench import-oolong tasks/oolong-trec && kleene bench run tasks/oolong-trec --mode frozen
+kleene bench import-redlining tasks/redlining-1k && kleene bench run tasks/redlining-1k --mode plain
 kleene bench run tasks/oolong-like --mode frozen --record fixtures/oolong
 kleene bench run tasks/oolong-like --mode learning --replay fixtures/oolong
 kleene bench run tasks/terminal --mode plain
 kleene bench report && kleene bench csv > evals.csv
+kleene bench results plots/evals.csv plots/haiku-2026-10-01/evals.csv --readme README.md \
+  --plot coding --plot memo-rubric --plot logbook-hard
 ```
 
 Shipped packs are described in [`tasks/README.md`](../tasks/README.md).
@@ -575,7 +581,7 @@ Shipped packs are described in [`tasks/README.md`](../tasks/README.md).
 ## Working from source
 
 ```bash
-git clone https://github.com/MarcusElwin/callgebra && cd callgebra
+git clone https://github.com/MarcusElwin/kleene && cd kleene
 cargo build --release                       # first build compiles DuckDB: ~10 min, ~4 GB
 ./target/release/kleene --help
 cargo run -- repl -c "SELECT 42 AS answer"   # debug build, same engine
