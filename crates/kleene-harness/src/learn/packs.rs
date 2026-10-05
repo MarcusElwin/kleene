@@ -803,6 +803,7 @@ pub fn oolong_pack(name: &str, rows: &[OolongRow], pack_dir: &Path) -> Result<Pa
             context_file: Some(rel),
             setup: vec![],
             workspace_from: None,
+            check: None,
             verify: Verify::Oolong { answer, numeric },
             difficulty,
             continues: None,
@@ -985,6 +986,7 @@ pub fn redlining_pack(name: &str, source: &str, rows: &[RedlineRow]) -> Result<P
             context_file: None,
             setup: vec![],
             workspace_from: None,
+            check: None,
             verify: Verify::Redline {
                 original: parts.original,
                 redline: parts.redline,
