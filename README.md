@@ -7,6 +7,7 @@
 [![Rust 1.88+][msrv-badge]][msrv-link]
 [![DuckDB inside][duckdb-badge]][duckdb-link]
 [![License: MIT][license-badge]][license-link]
+[![Website][site-badge]][site-link]
 
 Write declarative SQL. Compile joins, recursion, predicates and aggregation
 into an execution graph of language-model calls, recursive sub-sessions and
@@ -433,6 +434,11 @@ Every flag: `kleene <command> --help`, or [`docs/CLI.md`](docs/CLI.md#commands).
 
 ## Documentation
 
+The website at [kleene.sh](https://kleene.sh) renders the documents below,
+with a [technical overview](https://kleene.sh/overview/) and
+[the benchmarks](https://kleene.sh/benchmarks/) as pages; its source is
+[`site/`](site/README.md).
+
 | Read this | For |
 |---|---|
 | [`docs/CLI.md`](docs/CLI.md) | install, [provider setup](docs/CLI.md#configuring-a-model-provider), [environment variables](docs/CLI.md#environment-variables), every command and flag, [troubleshooting](docs/CLI.md#troubleshooting) |
@@ -651,3 +657,5 @@ relies on, is collected in [`docs/RESEARCH.md`](docs/RESEARCH.md).
 [duckdb-link]: https://duckdb.org
 [license-badge]: https://img.shields.io/badge/license-MIT-blue
 [license-link]: LICENSE
+[site-badge]: https://img.shields.io/badge/website-kleene.sh-cba6f7
+[site-link]: https://kleene.sh

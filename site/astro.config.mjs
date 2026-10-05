@@ -1,4 +1,5 @@
 import { defineConfig } from "astro/config";
+import sitemap from "@astrojs/sitemap";
 import { visit } from "unist-util-visit";
 
 // Docs are rendered straight from ../docs/*.md. Their links are written for
@@ -39,7 +40,8 @@ function mermaidFences() {
 }
 
 export default defineConfig({
-  site: "https://kleene.dev",
+  site: "https://kleene.sh",
+  integrations: [sitemap()],
   markdown: {
     remarkPlugins: [mermaidFences],
     rehypePlugins: [rewriteDocLinks],
