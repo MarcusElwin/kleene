@@ -519,6 +519,32 @@ Aim for a task the agent solves about half the time. Reply with JSON only: {{\"t
         workspace: Option<&std::path::Path>,
         functions: Option<Vec<String>>,
     ) -> Result<RunReport, HarnessError> {
+        self.run_task_full(task, playbook, replay, workspace, functions, None)
+            .await
+    }
+
+    /// [`Learn::run_task_in`] with a finish check: a shell command that
+    /// must exit 0 in the workspace before a `FINAL` is accepted.
+    pub(crate) async fn run_task_checked(
+        &self,
+        task: &Task,
+        playbook: Vec<PlaybookExample>,
+        workspace: Option<&std::path::Path>,
+        check: Option<&str>,
+    ) -> Result<RunReport, HarnessError> {
+        self.run_task_full(task, playbook, false, workspace, None, check)
+            .await
+    }
+
+    async fn run_task_full(
+        &self,
+        task: &Task,
+        playbook: Vec<PlaybookExample>,
+        replay: bool,
+        workspace: Option<&std::path::Path>,
+        functions: Option<Vec<String>>,
+        check: Option<&str>,
+    ) -> Result<RunReport, HarnessError> {
         let mut cfg = self.harness_cfg.clone();
         cfg.playbook = playbook;
         cfg.functions = functions;
@@ -527,6 +553,9 @@ Aim for a task the agent solves about half the time. Reply with JSON only: {{\"t
         cfg.no_memo = replay;
         if let Some(w) = workspace {
             cfg.workspace = w.to_path_buf();
+        }
+        if check.is_some() {
+            cfg.finish_check = check.map(str::to_string);
         }
         let harness = Harness::new(self.store.clone(), cfg).await?;
         harness.run(&task.task, task.context.clone()).await

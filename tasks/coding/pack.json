@@ -14,7 +14,8 @@
         "command": "sh .grader/run.sh 1"
       },
       "difficulty": 1200.0,
-      "workspace_from": "workspaces/ledger"
+      "workspace_from": "workspaces/ledger",
+      "check": "python3 -m unittest -q"
     },
     {
       "id": "ledger-2-report",
@@ -29,7 +30,8 @@
         "command": "sh .grader/run.sh 2"
       },
       "difficulty": 1250.0,
-      "continues": "ledger-1-parse"
+      "continues": "ledger-1-parse",
+      "check": "python3 -m unittest -q"
     },
     {
       "id": "ledger-3-cli",
@@ -45,7 +47,8 @@
         "command": "sh .grader/run.sh 3"
       },
       "difficulty": 1350.0,
-      "continues": "ledger-2-report"
+      "continues": "ledger-2-report",
+      "check": "python3 -m unittest -q"
     },
     {
       "id": "textstats-1-tokenize",
@@ -57,7 +60,8 @@
         "command": "sh .grader/run.sh 1"
       },
       "difficulty": 1200.0,
-      "workspace_from": "workspaces/textstats"
+      "workspace_from": "workspaces/textstats",
+      "check": "python3 -m unittest -q"
     },
     {
       "id": "textstats-2-ranking",
@@ -72,7 +76,8 @@
         "command": "sh .grader/run.sh 2"
       },
       "difficulty": 1250.0,
-      "continues": "textstats-1-tokenize"
+      "continues": "textstats-1-tokenize",
+      "check": "python3 -m unittest -q"
     },
     {
       "id": "textstats-3-summary",
@@ -88,7 +93,8 @@
         "command": "sh .grader/run.sh 3"
       },
       "difficulty": 1300.0,
-      "continues": "textstats-2-ranking"
+      "continues": "textstats-2-ranking",
+      "check": "python3 -m unittest -q"
     },
     {
       "id": "inventory-1-stock",
@@ -100,7 +106,8 @@
         "command": "sh .grader/run.sh 1"
       },
       "difficulty": 1150.0,
-      "workspace_from": "workspaces/inventory"
+      "workspace_from": "workspaces/inventory",
+      "check": "python3 -m unittest -q"
     },
     {
       "id": "inventory-2-reservations",
@@ -115,7 +122,8 @@
         "command": "sh .grader/run.sh 2"
       },
       "difficulty": 1300.0,
-      "continues": "inventory-1-stock"
+      "continues": "inventory-1-stock",
+      "check": "python3 -m unittest -q"
     },
     {
       "id": "inventory-3-events",
@@ -131,7 +139,8 @@
         "command": "sh .grader/run.sh 3"
       },
       "difficulty": 1350.0,
-      "continues": "inventory-2-reservations"
+      "continues": "inventory-2-reservations",
+      "check": "python3 -m unittest -q"
     },
     {
       "id": "scheduler-1-intervals",
@@ -143,7 +152,8 @@
         "command": "sh .grader/run.sh 1"
       },
       "difficulty": 1150.0,
-      "workspace_from": "workspaces/scheduler"
+      "workspace_from": "workspaces/scheduler",
+      "check": "python3 -m unittest -q"
     },
     {
       "id": "scheduler-2-free",
@@ -158,7 +168,8 @@
         "command": "sh .grader/run.sh 2"
       },
       "difficulty": 1250.0,
-      "continues": "scheduler-1-intervals"
+      "continues": "scheduler-1-intervals",
+      "check": "python3 -m unittest -q"
     },
     {
       "id": "scheduler-3-overlap",
@@ -174,7 +185,8 @@
         "command": "sh .grader/run.sh 3"
       },
       "difficulty": 1300.0,
-      "continues": "scheduler-2-free"
+      "continues": "scheduler-2-free",
+      "check": "python3 -m unittest -q"
     }
   ]
 }

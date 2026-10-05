@@ -1,6 +1,7 @@
-//! `lines(path TEXT)`: a file as numbered lines.
+//! `lines(path TEXT [, from BIGINT, to BIGINT])`: a file, or a range of
+//! it, as numbered lines.
 
-use crate::args::{check_arity, text};
+use crate::args::{check_arity, opt_int, text};
 use crate::paths::{resolve, Access, Resolved};
 use crate::{Signature, Tool, ToolContext, ToolError};
 use kleene_core::{Batch, DataType, Field, Schema, Value, Volatility};
@@ -29,8 +30,10 @@ pub(crate) fn read_recorded(
     Ok((resolved, text))
 }
 
-/// `lines(path TEXT) -> (lineno BIGINT, text TEXT)`, 1-based, without line
-/// terminators. Records the read for the staleness check in `patch`.
+/// `lines(path TEXT [, from BIGINT, to BIGINT]) -> (lineno BIGINT, text TEXT)`,
+/// 1-based, without line terminators; `from` and `to` bound the range
+/// inclusively (a `to` past the end is fine). Records the read for the
+/// staleness check in `patch`.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Lines;
 
@@ -43,7 +46,7 @@ impl Tool for Lines {
     }
 
     fn signature(&self) -> Signature {
-        Signature::new(&[DataType::Text], &[])
+        Signature::new(&[DataType::Text], &[DataType::Int, DataType::Int])
     }
 
     fn schema(&self) -> Arc<Schema> {
@@ -62,17 +65,26 @@ impl Tool for Lines {
     }
 
     fn description(&self) -> &str {
-        "a workspace file as 1-based numbered lines"
+        "a workspace file, or lines from..to of it, as 1-based numbered lines"
     }
 
     async fn call(&self, args: &[Value], ctx: &ToolContext) -> Result<Batch, ToolError> {
         check_arity(self.name(), &self.signature(), args)?;
         let path = text(args, 0, "path")?;
+        let from = opt_int(args, 1, "from")?.unwrap_or(1).max(1);
+        let to = opt_int(args, 2, "to")?.unwrap_or(i64::MAX);
+        if to < from {
+            return Err(ToolError::Args(format!(
+                "to ({to}) is before from ({from})"
+            )));
+        }
         let (_, contents) = read_recorded(ctx, path)?;
         let rows = contents
             .lines()
             .enumerate()
-            .map(|(i, l)| vec![Value::Int(i as i64 + 1), Value::from(l)])
+            .map(|(i, l)| (i as i64 + 1, l))
+            .filter(|(n, _)| *n >= from && *n <= to)
+            .map(|(n, l)| vec![Value::Int(n), Value::from(l)])
             .collect();
         Ok(Batch {
             schema: self.schema(),
@@ -102,6 +114,29 @@ mod tests {
         );
         let abs = dir.path().canonicalize().unwrap().join("a.txt");
         assert!(ctx.last_read(&abs).is_some());
+    }
+
+    #[tokio::test]
+    async fn a_range_bounds_the_lines_inclusively() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "1\n2\n3\n4\n5\n").unwrap();
+        let ctx = ToolContext::new(dir.path().to_path_buf());
+        let b = Lines
+            .call(&[Value::from("a.txt"), Value::Int(2), Value::Int(4)], &ctx)
+            .await
+            .unwrap();
+        let got: Vec<i64> = b.rows.iter().map(|r| r[0].as_int().unwrap()).collect();
+        assert_eq!(got, vec![2, 3, 4]);
+        let b = Lines
+            .call(&[Value::from("a.txt"), Value::Int(4), Value::Int(99)], &ctx)
+            .await
+            .unwrap();
+        assert_eq!(b.rows.len(), 2);
+        let err = Lines
+            .call(&[Value::from("a.txt"), Value::Int(4), Value::Int(2)], &ctx)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ToolError::Args(_)), "{err}");
     }
 
     #[tokio::test]

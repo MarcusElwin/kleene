@@ -95,6 +95,7 @@ async fn run_is_streamed_and_replayable() {
             max_turns: None,
             max_depth: None,
             budget_calls: None,
+            check: None,
         })
         .await
         .unwrap();
@@ -236,6 +237,7 @@ async fn cancel_run_stops_it() {
             max_turns: Some(1000),
             max_depth: None,
             budget_calls: None,
+            check: None,
         })
         .await
         .unwrap();

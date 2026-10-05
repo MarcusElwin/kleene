@@ -55,6 +55,19 @@ pub enum ClientRequest {
         /// Call budget.
         #[serde(default)]
         budget_calls: Option<u64>,
+        /// A shell command that must exit 0 before a `FINAL` is accepted.
+        #[serde(default)]
+        check: Option<String>,
+    },
+    /// List the configured MCP servers with their state and tools. Replies
+    /// `Table` tagged `mcp`.
+    ListMcp,
+    /// List the loaded skills (`Table` tagged `skills`), or, with a name,
+    /// one skill's body (`Table` tagged `skill`, one `text` cell).
+    ListSkills {
+        /// A skill to show in full.
+        #[serde(default)]
+        name: Option<String>,
     },
     /// Submit SQL to a session (interactive REPL). An unknown session id
     /// opens a fresh interactive session under that id.
@@ -157,6 +170,10 @@ pub enum ServerMessage {
         sql: Option<String>,
         /// One entry per statement that ran.
         results: Vec<StatementOutput>,
+        /// The session's plan after the turn: `(step, status)`, latest
+        /// status per step; empty without a `plan` table.
+        #[serde(default)]
+        plan: Vec<(String, String)>,
     },
     /// Reply to `Submit`.
     Submitted {
@@ -193,7 +210,7 @@ pub enum ServerMessage {
 }
 
 /// Current protocol version.
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 
 /// Daemon errors.
 #[derive(Debug, thiserror::Error)]

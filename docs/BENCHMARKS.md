@@ -150,7 +150,7 @@ having three is that two comparisons fall out of them.
 |---|---|---|---|---|
 | `learning` | Kleene: the model writes CallSQL, the harness executes it | yes, the entries recorded for the task kind | yes: SQL that solved a task becomes a candidate and is adopted after a replay eval wins on solves and cost | the treatment: does the stream get easier as the playbook fills |
 | `frozen` | Kleene, same model, same tools, same budgets | no | no: no candidate is recorded, no rating moves | the control for learning: the same abstraction with the playbook off |
-| `plain` | a tool-calling agent on the same provider, tools and budgets, no SQL: each turn the model returns one JSON action (`{"tool": …}` or `{"final": …}`) and tool output comes back as text | n/a | n/a | the baseline for cost parity: same model, same spend, only the abstraction differs |
+| `plain` | a tool-calling agent on the same provider, tools and budgets, no SQL: the tools go to the model as native tool definitions, its `tool_use` blocks run and their results come back as `tool_result` blocks, and a `final` tool carries the answer | n/a | n/a | the baseline for cost parity: same model, same spend, only the abstraction differs |
 
 `learning` against `frozen` isolates the effect of the playbook.
 `frozen` against `plain` isolates the effect of the SQL abstraction. A
@@ -165,13 +165,20 @@ candidates or adopt anything. That is what makes the transfer measurement
 below work, and it is why a frozen run on a store that has seen a learning
 run is not the same control as a frozen run on a fresh store.
 
-The `plain` agent parses JSON actions from text rather than using a
-provider's native tool-calling API. That keeps it provider-agnostic, and is
-the one place the baseline is not identical to a vendor agent loop; the
-write-up lists it under honest gaps. A reply that holds several JSON
-objects (Haiku 4.5 writes five to ten actions per reply, with imagined
-tool output between them) has only its first object run; the real output
-of that one action comes back as the next user turn.
+The `plain` agent uses the provider's native tool-calling API wherever the
+provider has one (Anthropic, OpenAI-compatible): each tool is sent with a
+positional `args` array, several `tool_use` blocks in one reply all run, and
+the answer arrives through a `final` tool, so the loop is the one a vendor
+agent runs. On a provider without tool calling (the scripted test provider)
+it falls back to one JSON action per reply, `{"tool": …}` or `{"final": …}`,
+with the first balanced object of the reply run.
+
+A task's `check` (its visible test command, say) gates `FINAL` in every
+mode: when the solver finishes, the command runs in the workspace, and a
+non-zero exit refuses the finish with the output's tail so the solver
+continues. The hidden oracle in `verify` still grades the task; the check
+only stops a solver from declaring victory while its own tests fail, which
+is where most of the Haiku 4.5 coding failures ended.
 
 Every task, in every mode, runs in its own fresh temporary workspace,
 seeded from the pack's `workspace_from` directory and `setup` commands, so
@@ -414,6 +421,8 @@ fields as overrides. Steps of an episode name the step before in
 `continues`, which must be an earlier task of the pack; their `setup` runs
 in the inherited workspace, and a pack whose steps can repair a missing
 predecessor there (as the coding pack does from its reference solutions)
-resumes cleanly with `--resume`. Anything that needs a model to grade should
+resumes cleanly with `--resume`. A task whose workspace has a visible test
+command should name it in `check`, so a `FINAL` is refused while it fails
+(the coding pack's is `python3 -m unittest -q`). Anything that needs a model to grade should
 use `judge` with a written rubric and a reference answer, so the verdict is
 auditable; leave `human` for tasks that truly need a person.

@@ -59,6 +59,11 @@ pub struct PackTask {
     /// is this task's workspace; `setup` then runs in it. The task named
     /// must come earlier in the pack.
     pub continues: Option<String>,
+    /// A shell command (the task's visible tests, say) that must exit 0
+    /// before the solver's `FINAL` is accepted; a failing check is rendered
+    /// back and the solver continues. The hidden oracle in `verify` is still
+    /// what grades the task.
+    pub check: Option<String>,
     /// The oracle.
     pub verify: Verify,
     /// Difficulty prior in rating points.
@@ -98,6 +103,8 @@ struct PackTaskOnDisk {
     workspace_from: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     continues: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    check: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     verify: Option<Verify>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -142,6 +149,7 @@ impl TryFrom<PackTaskOnDisk> for PackTask {
             setup: d.setup,
             workspace_from: d.workspace_from,
             continues: d.continues,
+            check: d.check,
             verify,
             difficulty,
             from: d.from,
@@ -162,6 +170,7 @@ impl From<PackTask> for PackTaskOnDisk {
             setup: t.setup,
             workspace_from: t.workspace_from,
             continues: t.continues,
+            check: t.check,
             verify: (!lazy).then_some(t.verify),
             difficulty: (!lazy).then_some(t.difficulty),
         }
@@ -289,6 +298,7 @@ impl Pack {
                 setup: vec![],
                 workspace_from: None,
                 continues: None,
+                check: None,
                 verify: g.verify,
                 difficulty: g.difficulty,
                 from: lazy.then(|| GeneratorRef {
@@ -413,6 +423,7 @@ pub fn terminal_pack() -> Pack {
         setup: setup.iter().map(|s| s.to_string()).collect(),
         workspace_from: None,
         continues: None,
+        check: None,
         verify: Verify::Shell {
             command: check.into(),
         },
@@ -574,6 +585,7 @@ pub fn import_lab(
             setup: vec!["mkdir -p output".into()],
             workspace_from: Some(ws_rel),
             continues: None,
+            check: None,
             verify: Verify::Judge {
                 rubric,
                 reference: None,
@@ -791,6 +803,7 @@ pub fn oolong_pack(name: &str, rows: &[OolongRow], pack_dir: &Path) -> Result<Pa
             context_file: Some(rel),
             setup: vec![],
             workspace_from: None,
+            check: None,
             verify: Verify::Oolong { answer, numeric },
             difficulty,
             continues: None,
@@ -973,6 +986,7 @@ pub fn redlining_pack(name: &str, source: &str, rows: &[RedlineRow]) -> Result<P
             context_file: None,
             setup: vec![],
             workspace_from: None,
+            check: None,
             verify: Verify::Redline {
                 original: parts.original,
                 redline: parts.redline,
@@ -1089,6 +1103,7 @@ mod tests {
             setup: vec![],
             workspace_from: None,
             continues: continues.map(str::to_string),
+            check: None,
             verify: Verify::Human,
             difficulty: 1000.0,
             from: None,
