@@ -1,0 +1,146 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="420" viewBox="0 0 720 420" font-family="system-ui, sans-serif" font-size="12">
+<rect width="720" height="420" fill="#ffffff"/>
+<text x="360" y="22" text-anchor="middle" font-size="15" font-weight="600">Calls against difficulty</text>
+<text x="64" y="384" text-anchor="middle" fill="#444">1124</text>
+<text x="58" y="372" text-anchor="end" fill="#444">0</text>
+<line x1="64" y1="368" x2="696" y2="368" stroke="#eee"/>
+<text x="221.99999999999991" y="384" text-anchor="middle" fill="#444">1233</text>
+<text x="58" y="290" text-anchor="end" fill="#444">426.2</text>
+<line x1="64" y1="286" x2="696" y2="286" stroke="#eee"/>
+<text x="380.0000000000001" y="384" text-anchor="middle" fill="#444">1343</text>
+<text x="58" y="208" text-anchor="end" fill="#444">852.5</text>
+<line x1="64" y1="204" x2="696" y2="204" stroke="#eee"/>
+<text x="538" y="384" text-anchor="middle" fill="#444">1453</text>
+<text x="58" y="126" text-anchor="end" fill="#444">1279</text>
+<line x1="64" y1="122" x2="696" y2="122" stroke="#eee"/>
+<text x="696" y="384" text-anchor="middle" fill="#444">1562</text>
+<text x="58" y="44" text-anchor="end" fill="#444">1705</text>
+<line x1="64" y1="40" x2="696" y2="40" stroke="#eee"/>
+<line x1="64" y1="368" x2="696" y2="368" stroke="#444"/>
+<line x1="64" y1="40" x2="64" y2="368" stroke="#444"/>
+<text x="380" y="408" text-anchor="middle" fill="#222">task rating</text>
+<text transform="translate(14 204) rotate(-90)" text-anchor="middle" fill="#222">calls</text>
+<circle cx="174.0" cy="366.3" r="3" fill="#1f77b4"/>
+<circle cx="546.4" cy="366.3" r="3" fill="#1f77b4"/>
+<circle cx="611.9" cy="367.8" r="3" fill="#1f77b4"/>
+<circle cx="611.9" cy="367.8" r="3" fill="#1f77b4"/>
+<circle cx="121.5" cy="366.1" r="3" fill="#1f77b4"/>
+<circle cx="246.0" cy="365.5" r="3" fill="#1f77b4"/>
+<circle cx="611.9" cy="367.8" r="3" fill="#1f77b4"/>
+<circle cx="547.4" cy="366.8" r="3" fill="#1f77b4"/>
+<circle cx="611.9" cy="367.8" r="3" fill="#1f77b4"/>
+<circle cx="390.1" cy="365.5" r="3" fill="#1f77b4"/>
+<circle cx="611.9" cy="367.8" r="3" fill="#1f77b4"/>
+<circle cx="611.9" cy="367.8" r="3" fill="#1f77b4"/>
+<circle cx="174.0" cy="364.3" r="3" fill="#1f77b4"/>
+<circle cx="611.9" cy="367.8" r="3" fill="#1f77b4"/>
+<circle cx="611.9" cy="363.0" r="3" fill="#1f77b4"/>
+<circle cx="611.9" cy="367.8" r="3" fill="#1f77b4"/>
+<circle cx="246.0" cy="366.1" r="3" fill="#1f77b4"/>
+<circle cx="611.9" cy="367.8" r="3" fill="#1f77b4"/>
+<circle cx="548.6" cy="366.3" r="3" fill="#1f77b4"/>
+<circle cx="611.9" cy="367.8" r="3" fill="#1f77b4"/>
+<circle cx="611.9" cy="364.7" r="3" fill="#1f77b4"/>
+<circle cx="611.9" cy="367.8" r="3" fill="#1f77b4"/>
+<circle cx="174.0" cy="366.5" r="3" fill="#1f77b4"/>
+<circle cx="390.1" cy="364.2" r="3" fill="#1f77b4"/>
+<circle cx="611.9" cy="363.2" r="3" fill="#1f77b4"/>
+<circle cx="174.0" cy="363.8" r="3" fill="#1f77b4"/>
+<circle cx="549.9" cy="367.0" r="3" fill="#1f77b4"/>
+<circle cx="246.0" cy="366.7" r="3" fill="#1f77b4"/>
+<circle cx="611.9" cy="366.3" r="3" fill="#1f77b4"/>
+<circle cx="318.1" cy="365.9" r="3" fill="#1f77b4"/>
+<circle cx="318.1" cy="366.1" r="3" fill="#1f77b4"/>
+<circle cx="626.1" cy="299.9" r="3" fill="#1f77b4"/>
+<circle cx="122.9" cy="365.1" r="3" fill="#1f77b4"/>
+<circle cx="102.0" cy="366.7" r="3" fill="#1f77b4"/>
+<circle cx="611.9" cy="366.3" r="3" fill="#1f77b4"/>
+<circle cx="102.0" cy="366.3" r="3" fill="#1f77b4"/>
+<circle cx="318.1" cy="365.1" r="3" fill="#1f77b4"/>
+<circle cx="692.6" cy="321.8" r="3" fill="#1f77b4"/>
+<circle cx="551.7" cy="366.8" r="3" fill="#1f77b4"/>
+<circle cx="390.1" cy="364.9" r="3" fill="#1f77b4"/>
+<circle cx="692.6" cy="367.8" r="3" fill="#1f77b4"/>
+<circle cx="102.0" cy="366.3" r="3" fill="#1f77b4"/>
+<circle cx="692.6" cy="367.8" r="3" fill="#1f77b4"/>
+<circle cx="246.0" cy="366.3" r="3" fill="#1f77b4"/>
+<circle cx="611.9" cy="344.1" r="3" fill="#1f77b4"/>
+<circle cx="611.9" cy="366.7" r="3" fill="#1f77b4"/>
+<circle cx="553.0" cy="367.0" r="3" fill="#1f77b4"/>
+<circle cx="611.9" cy="366.7" r="3" fill="#1f77b4"/>
+<circle cx="390.1" cy="364.5" r="3" fill="#1f77b4"/>
+<circle cx="554.5" cy="367.0" r="3" fill="#1f77b4"/>
+<circle cx="193.8" cy="366.1" r="3" fill="#1f77b4"/>
+<circle cx="246.0" cy="366.5" r="3" fill="#1f77b4"/>
+<circle cx="318.1" cy="365.9" r="3" fill="#1f77b4"/>
+<circle cx="692.6" cy="315.7" r="3" fill="#1f77b4"/>
+<circle cx="692.6" cy="367.8" r="3" fill="#1f77b4"/>
+<circle cx="556.0" cy="366.8" r="3" fill="#1f77b4"/>
+<circle cx="264.9" cy="366.1" r="3" fill="#1f77b4"/>
+<circle cx="692.6" cy="338.0" r="3" fill="#1f77b4"/>
+<circle cx="557.7" cy="366.8" r="3" fill="#1f77b4"/>
+<circle cx="559.5" cy="367.0" r="3" fill="#1f77b4"/>
+<circle cx="64.0" cy="367.0" r="3" fill="#1f77b4"/>
+<circle cx="561.3" cy="366.7" r="3" fill="#1f77b4"/>
+<circle cx="692.6" cy="271.4" r="3" fill="#1f77b4"/>
+<circle cx="563.2" cy="366.8" r="3" fill="#1f77b4"/>
+<circle cx="268.1" cy="366.1" r="3" fill="#1f77b4"/>
+<circle cx="565.1" cy="366.8" r="3" fill="#1f77b4"/>
+<circle cx="692.6" cy="346.3" r="3" fill="#1f77b4"/>
+<circle cx="567.0" cy="366.7" r="3" fill="#1f77b4"/>
+<circle cx="568.9" cy="366.8" r="3" fill="#1f77b4"/>
+<circle cx="338.0" cy="365.1" r="3" fill="#1f77b4"/>
+<circle cx="569.6" cy="366.8" r="3" fill="#1f77b4"/>
+<circle cx="692.6" cy="229.7" r="3" fill="#1f77b4"/>
+<circle cx="70.4" cy="367.0" r="3" fill="#1f77b4"/>
+<circle cx="571.4" cy="366.7" r="3" fill="#1f77b4"/>
+<circle cx="573.3" cy="366.7" r="3" fill="#1f77b4"/>
+<circle cx="206.0" cy="366.8" r="3" fill="#1f77b4"/>
+<circle cx="692.6" cy="309.3" r="3" fill="#1f77b4"/>
+<circle cx="275.1" cy="366.8" r="3" fill="#1f77b4"/>
+<rect x="496" y="46" width="10" height="10" fill="#1f77b4"/>
+<text x="510" y="55" fill="#222">solved</text>
+<circle cx="611.9" cy="367.8" r="3" fill="#d62728"/>
+<circle cx="611.9" cy="367.8" r="3" fill="#d62728"/>
+<circle cx="611.9" cy="367.8" r="3" fill="#d62728"/>
+<circle cx="611.9" cy="367.8" r="3" fill="#d62728"/>
+<circle cx="611.9" cy="366.1" r="3" fill="#d62728"/>
+<circle cx="611.9" cy="367.8" r="3" fill="#d62728"/>
+<circle cx="611.9" cy="367.8" r="3" fill="#d62728"/>
+<circle cx="261.7" cy="367.0" r="3" fill="#d62728"/>
+<circle cx="399.3" cy="367.8" r="3" fill="#d62728"/>
+<circle cx="611.9" cy="367.8" r="3" fill="#d62728"/>
+<circle cx="619.3" cy="367.6" r="3" fill="#d62728"/>
+<circle cx="611.9" cy="367.8" r="3" fill="#d62728"/>
+<circle cx="611.9" cy="367.8" r="3" fill="#d62728"/>
+<circle cx="611.9" cy="367.8" r="3" fill="#d62728"/>
+<circle cx="246.0" cy="367.6" r="3" fill="#d62728"/>
+<circle cx="611.9" cy="365.9" r="3" fill="#d62728"/>
+<circle cx="611.9" cy="367.8" r="3" fill="#d62728"/>
+<circle cx="611.9" cy="367.8" r="3" fill="#d62728"/>
+<circle cx="611.9" cy="367.8" r="3" fill="#d62728"/>
+<circle cx="692.6" cy="367.8" r="3" fill="#d62728"/>
+<circle cx="692.6" cy="366.1" r="3" fill="#d62728"/>
+<circle cx="692.6" cy="367.8" r="3" fill="#d62728"/>
+<circle cx="692.6" cy="367.8" r="3" fill="#d62728"/>
+<circle cx="318.1" cy="364.2" r="3" fill="#d62728"/>
+<circle cx="318.1" cy="367.8" r="3" fill="#d62728"/>
+<circle cx="611.9" cy="367.8" r="3" fill="#d62728"/>
+<circle cx="611.9" cy="367.8" r="3" fill="#d62728"/>
+<circle cx="692.6" cy="367.8" r="3" fill="#d62728"/>
+<circle cx="692.6" cy="367.8" r="3" fill="#d62728"/>
+<circle cx="611.9" cy="367.8" r="3" fill="#d62728"/>
+<circle cx="611.9" cy="367.8" r="3" fill="#d62728"/>
+<circle cx="611.9" cy="366.5" r="3" fill="#d62728"/>
+<circle cx="102.0" cy="367.8" r="3" fill="#d62728"/>
+<circle cx="611.9" cy="365.9" r="3" fill="#d62728"/>
+<circle cx="692.6" cy="367.0" r="3" fill="#d62728"/>
+<circle cx="692.6" cy="367.8" r="3" fill="#d62728"/>
+<circle cx="692.6" cy="367.8" r="3" fill="#d62728"/>
+<circle cx="640.0" cy="366.8" r="3" fill="#d62728"/>
+<circle cx="692.6" cy="336.5" r="3" fill="#d62728"/>
+<circle cx="696.0" cy="40.0" r="3" fill="#d62728"/>
+<circle cx="696.0" cy="367.8" r="3" fill="#d62728"/>
+<rect x="496" y="62" width="10" height="10" fill="#d62728"/>
+<text x="510" y="71" fill="#222">failed</text>
+</svg>

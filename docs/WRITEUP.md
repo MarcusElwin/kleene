@@ -227,6 +227,70 @@ What the numbers say:
   adapter learned to omit it. And `claude-sonnet-5-5` is served now (it
   was not on 27 September).
 
+### 4.2 GPT-6 Luna on the harder packs
+
+The same three packs ran on 5 October 2026 with every solver alias on
+`gpt-6-luna` (OpenAI, chat completions, default reasoning effort) and the
+`judge` alias on `claude-sonnet-5-5`; the router file is
+`plots/luna-2026-10-05/router.toml`. Luna is priced at $0.10 per million
+input tokens and $0.50 per million output, a tenth of Haiku. Each pack
+and mode ran in its own store, so the learning columns are independent
+of the frozen ones this time. `logbook-hard` was capped at ten tasks
+after the Haiku run; its learning run was stopped after three tasks,
+with the second task alone taking 1,705 calls and running out of turns.
+Rows and report are `plots/luna-2026-10-05/evals.csv` and `report.txt`,
+the SVGs beside them.
+
+| pack | mode | solved | calls / task | tokens / task | dollars |
+|---|---|---|---|---|---|
+| coding (12) | frozen | 11/12 | 12.08 | 55,286 | 0.02 |
+| coding (12) | learning | 10/12 | 8.17 | 42,094 | 0.02 |
+| coding (12) | plain | 9/12 | 10.25 | 27,860 | 0.03 |
+| memo-rubric (20) | frozen | 8/20 | 13.60 | 36,571 | 0.03 |
+| memo-rubric (20) | learning | 18/20 | 6.10 | 27,683 | 0.02 |
+| memo-rubric (20) | plain | 11/20 | 1.00 | 1,978 | 0.01 |
+| logbook-hard (10) | frozen | 7/10 | 247.30 | 180,736 | 0.24 |
+| logbook-hard (3 of 10) | learning | 1/3 | 686.67 | 746,259 | 0.19 |
+| logbook-hard (10) | plain | 3/10 | 2.30 | 97,000 | 0.07 |
+
+The counted runs cost $0.63 of Luna in all; the playbook gate's replays
+(29 candidates, 9 adopted) cost another $0.19, and the Sonnet judge's
+calls are not traced, roughly a dollar at the most. What the numbers say:
+
+- **Luna solves what Haiku could not, for a tenth of the money.** 11 of
+  the 12 coding steps frozen against Haiku's 2, including every "extend"
+  and "fix the bug report" step but one; 7 of 10 logbook tasks frozen
+  where Haiku never finished one. Each coding step cost about a fifth of
+  a cent.
+- **Learning beat frozen on memo-rubric again, now cleanly.** 18/20
+  against 8/20 at 6.1 calls a task against 13.6, in separate stores, so
+  no memo replay is hiding in the learning column. Four memo entries were
+  adopted out of 18 candidates; both halves of the learning run solved 9
+  of 10, so the gap to frozen is there from the start and is mostly the
+  shorter route the playbook gives. On coding, learning cost fewer calls
+  (8.2 against 12.1) and lost one task.
+- **Plain is the cheap mode where the context fits, and no further.**
+  On memo-rubric the one-call agent solves 11/20 for half a cent; on
+  logbook-hard, whose contexts are around 30k tokens, it gets 3/10 and
+  on coding 9/12 with a tool loop. Frozen beats it on every pack on
+  accuracy.
+- **Logbook-hard is where the calls go.** Frozen tasks took 113 to 719
+  calls each, nearly all of them `worker` calls from batched
+  `LLM_JSON` extraction over the log; Luna sometimes answers a batch of
+  20 with the wrong number of elements, and the harness then retries one
+  call per row. Learning was worse, not better: the one task it finished
+  past the first took 1,705 calls and no FINAL. The per-row fallback is
+  the next thing to fix on this pack, for any model.
+- **Three provider facts, all now in the adapter.** OpenAI rejects
+  `max_tokens` for every GPT-5 and GPT-6 model (the adapter sends
+  `max_completion_tokens` to api.openai.com); strict structured outputs
+  want an object root with every property required and
+  `additionalProperties: false` (an array or scalar schema is wrapped and
+  unwrapped); and a model-written schema with a typeless property or a
+  partial `required` list is rejected outright, so the adapter completes
+  it. Before those fixes a Luna run could not make a single `LLM_JSON`
+  call.
+
 ## 5. Honest gaps
 
 - One run per pack and mode. Opus 5.5 solved every task of the first four

@@ -1,7 +1,8 @@
 //! Results across models: the README's summary table and the per-pack
 //! quality-against-cost (Pareto) plots, built from `evals` CSV files rather
 //! than from a store, so results recorded by different runs, machines and
-//! models (`plots/evals.csv`, `plots/haiku-2026-10-01/evals.csv`, ...) can
+//! models (`plots/evals.csv`, `plots/haiku-2026-10-01/evals.csv`,
+//! `plots/luna-2026-10-05/evals.csv`, ...) can
 //! be put side by side without merging DuckDB files. Every row names its
 //! model; a (pack, mode) a model has not been run on is left blank in the
 //! table and absent from the plot, so adding a model is adding its CSV.
@@ -418,8 +419,9 @@ pub fn relative_dir(document: &Path, dir: &Path) -> String {
 
 /// A readable model name from its identifier: `claude-opus-5-5` reads
 /// `Claude Opus 5.5`, `claude-haiku-4-5-20251001` reads `Claude Haiku 4.5`
-/// (the date is dropped), `gpt-5.6` reads `GPT 5.6`. An id with no
-/// hyphens is shown as is.
+/// (the date is dropped), `gpt-5.6` reads `GPT-5.6` and `gpt-6-luna`
+/// `GPT-6 Luna` (OpenAI hyphenates the generation). An id with no hyphens
+/// is shown as is.
 pub fn display_name(model: &str) -> String {
     let parts: Vec<&str> = model
         .split('-')
@@ -449,10 +451,13 @@ pub fn display_name(model: &str) -> String {
         }
     }
     if words.is_empty() {
-        model.to_string()
-    } else {
-        words.join(" ")
+        return model.to_string();
     }
+    let mut name = words.join(" ");
+    if let Some(rest) = name.strip_prefix("GPT ") {
+        name = format!("GPT-{rest}");
+    }
+    name
 }
 
 fn pass(c: &Cell) -> String {
@@ -607,7 +612,8 @@ r4,terminal,plain,claude-opus-5-5,0,\"x,y\",terminal,true,1,100,0.01,0,1,500\n";
             "Claude Haiku 4.5"
         );
         assert_eq!(display_name("claude-sonnet-5-5"), "Claude Sonnet 5.5");
-        assert_eq!(display_name("gpt-5.6"), "GPT 5.6");
+        assert_eq!(display_name("gpt-5.6"), "GPT-5.6");
+        assert_eq!(display_name("gpt-6-luna"), "GPT-6 Luna");
         assert_eq!(display_name("llama"), "Llama");
         assert_eq!(thousands(1234567.0), "1,234,567");
         assert_eq!(thousands(999.0), "999");

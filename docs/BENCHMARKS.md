@@ -274,7 +274,7 @@ starts from their `bench csv` exports rather than from a merged database:
 
 ```bash
 kleene bench results plots/evals.csv plots/haiku-2026-10-01/evals.csv \
-  --out plots/results --readme README.md \
+  plots/luna-2026-10-05/evals.csv --out plots/results --readme README.md \
   --plot coding --plot memo-rubric --plot logbook-hard
 ```
 
@@ -311,8 +311,9 @@ dropped) and the mapping is printed under the table.
 The `model` column is written by `bench run` from the provider's answer for
 the `root` alias (the router's first candidate). CSVs exported before the
 column existed need it added by hand, as `plots/evals.csv` (Opus 5.5) and
-`plots/haiku-2026-10-01/evals.csv` (Haiku 4.5) were; the command refuses a
-CSV without it rather than guessing.
+`plots/haiku-2026-10-01/evals.csv` (Haiku 4.5) were;
+`plots/luna-2026-10-05/evals.csv` (GPT-6 Luna) was exported with it. The
+command refuses a CSV without it rather than guessing.
 
 ## The five plots
 
