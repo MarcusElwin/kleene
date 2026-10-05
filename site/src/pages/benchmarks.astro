@@ -10,72 +10,8 @@ const totalTasks = rows.length;
 const totalDollars = rows.reduce((a, r) => a + r.dollars, 0);
 const totalCalls = rows.reduce((a, r) => a + r.calls, 0);
 
-// Colour by mode (the series), shape by model. Catppuccin steps; identity is
-// also carried by the direct label and the legend, never by colour alone.
-const MODE_COLOR: Record<string, string> = { learning: "#cba6f7", frozen: "#fab387", plain: "#74c7ec" };
-const MODEL_SHAPE: Record<string, string> = { "claude-opus-5-5": "circle", "claude-haiku-4-5-20251001": "diamond" };
-const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
-
-function mark(shape: string, x: number, y: number, color: string, r = 5): string {
-  const ring = `stroke="#181825" stroke-width="2"`;
-  if (shape === "diamond") return `<path d="M${x} ${y - r - 1} L${x + r + 1} ${y} L${x} ${y + r + 1} L${x - r - 1} ${y} Z" fill="${color}" ${ring}/>`;
-  return `<circle cx="${x}" cy="${y}" r="${r}" fill="${color}" ${ring}/>`;
-}
-
-/** Pass rate against dollars per task for one pack: one mark per mode and model. */
-function pareto(pack: string): string {
-  const pts = cells.filter((c) => c.pack === pack);
-  const W = 320, H = 220, L = 44, R = 16, T = 28, B = 36;
-  const xmax = Math.max(0.02, ...pts.map((p) => p.dollarsPerTask)) * 1.25;
-  const xs = (v: number) => L + (v / xmax) * (W - L - R);
-  const ys = (v: number) => T + (1 - v) * (H - T - B);
-  const xt = [0, xmax / 2, xmax];
-  const out: string[] = [];
-  out.push(`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(pack)}: pass rate against dollars per task" font-family="IBM Plex Mono, monospace" font-size="10">`);
-  for (const v of [0, 0.5, 1]) out.push(`<line x1="${L}" x2="${W - R}" y1="${ys(v)}" y2="${ys(v)}" stroke="#313244"/><text x="${L - 6}" y="${ys(v) + 3}" text-anchor="end" fill="#a6adc8">${v * 100}%</text>`);
-  for (const v of xt) out.push(`<text x="${xs(v)}" y="${H - B + 14}" text-anchor="middle" fill="#a6adc8">$${v.toFixed(2)}</text>`);
-  out.push(`<line x1="${L}" x2="${W - R}" y1="${ys(0)}" y2="${ys(0)}" stroke="#45475a"/>`);
-  out.push(`<text x="${(L + W - R) / 2}" y="${H - 4}" text-anchor="middle" fill="#6c7086">dollars per task</text>`);
-  // Direct labels: nudge apart marks that share a spot.
-  const placed: { x: number; y: number }[] = [];
-  for (const p of pts) {
-    const x = xs(p.dollarsPerTask), y = ys(p.pass);
-    let dy = -9;
-    for (const q of placed) if (Math.abs(q.x - x) < 40 && Math.abs(q.y - y) < 14) dy = 16;
-    placed.push({ x, y });
-    const tip = `${p.label}, ${p.mode}: ${p.solved}/${p.tasks} solved, ${fmt.money(p.dollarsPerTask)} per task, ${fmt.num(p.callsPerTask)} calls per task`;
-    out.push(`<g><title>${esc(tip)}</title>${mark(MODEL_SHAPE[p.model] ?? "circle", x, y, MODE_COLOR[p.mode])}<text x="${x}" y="${y + dy}" text-anchor="middle" fill="#cdd6f4">${p.mode}</text></g>`);
-  }
-  out.push(`</svg>`);
-  return out.join("");
-}
-
-/** Calls per task by mode, one row per pack, for one model. */
-function callsBars(model: string): string {
-  const ps = packs.filter((p) => cells.some((c) => c.pack === p && c.model === model));
-  const W = 640, L = 150, R = 60, rowH = 16, gap = 12, T = 8;
-  const H = T + ps.length * (MODES.length * rowH + gap) + 24;
-  const vmax = Math.max(...cells.filter((c) => c.model === model).map((c) => c.callsPerTask)) * 1.1;
-  const xs = (v: number) => L + (v / vmax) * (W - L - R);
-  const out: string[] = [`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="calls per task by mode and pack" font-family="IBM Plex Mono, monospace" font-size="11">`];
-  for (const v of [0, Math.round(vmax / 2), Math.round(vmax)]) out.push(`<line x1="${xs(v)}" x2="${xs(v)}" y1="${T}" y2="${H - 20}" stroke="#313244"/><text x="${xs(v)}" y="${H - 6}" text-anchor="middle" fill="#a6adc8">${v}</text>`);
-  ps.forEach((p, i) => {
-    const y0 = T + i * (MODES.length * rowH + gap);
-    out.push(`<text x="${L - 10}" y="${y0 + (MODES.length * rowH) / 2 + 4}" text-anchor="end" fill="#cdd6f4">${esc(p)}</text>`);
-    MODES.forEach((m, j) => {
-      const c = cells.find((c) => c.pack === p && c.model === model && c.mode === m);
-      const y = y0 + j * rowH;
-      if (!c) { out.push(`<text x="${L + 4}" y="${y + 12}" fill="#6c7086">${m}: not run</text>`); return; }
-      const w = Math.max(2, xs(c.callsPerTask) - L);
-      out.push(`<g><title>${esc(`${p}, ${m}: ${fmt.num(c.callsPerTask)} calls per task, ${c.solved}/${c.tasks} solved`)}</title><rect x="${L}" y="${y + 2}" width="${w}" height="${rowH - 4}" rx="2" fill="${MODE_COLOR[m]}"/><text x="${L + w + 6}" y="${y + 12}" fill="#cdd6f4">${fmt.num(c.callsPerTask)} <tspan fill="#6c7086">${m}</tspan></text></g>`);
-    });
-  });
-  out.push(`</svg>`);
-  return out.join("");
-}
-
-const opusCells = cells.filter((c) => c.model === "claude-opus-5-5");
-const haikuCells = cells.filter((c) => c.model !== "claude-opus-5-5");
+const MODELS = RUNS.map((r) => ({ id: r.model, label: r.label, date: r.date, plots: r.plots, csv: r.csv, note: r.note }));
+const DATA = JSON.stringify({ cells, packs, modes: MODES, models: MODELS });
 const PLOTS = [
   ["learning_curve.svg", "Learning curve", "task number against rolling-5 accuracy, one line per run; a learning line that rises while frozen stays flat is the playbook working"],
   ["cost_parity.svg", "Cost parity", "cumulative dollars against cumulative accuracy; at equal spend, which mode is higher"],
@@ -85,36 +21,36 @@ const PLOTS = [
 ] as const;
 ---
 <Base title="Benchmarks · Kleene" description="What kleene bench measured on real models: pass rate, calls and dollars per task across packs and modes.">
-  <div class="prose wide">
+  <div class="prose wide" id="bench" data-bench={DATA}>
     <h1>Benchmarks</h1>
-    <p class="dim">Every number on this page is computed at build time from the per-task rows under <code>plots/</code> (the output of <code>kleene bench csv</code>), so a new run that lands in the repository lands here. How the harness works is in <a href="/docs/benchmarks/">the benchmark doc</a>; the reading is in <a href="/docs/writeup/#4-what-the-benchmarks-measured">the write-up</a>.</p>
+    <p class="dim">Every number on this page is computed from the per-task rows under <code>plots/</code> (the output of <code>kleene bench csv</code>), so a new run that lands in the repository lands here. How the harness works is in <a href="/docs/benchmarks/">the benchmark doc</a>; the reading is in <a href="/docs/writeup/#4-what-the-benchmarks-measured">the write-up</a>.</p>
 
-    <div class="tiles">
-      <div class="tile"><b>{packs.length}</b><span>packs with results</span></div>
-      <div class="tile"><b>{totalTasks}</b><span>task runs counted</span></div>
-      <div class="tile"><b>{fmt.int(totalCalls)}</b><span>model calls</span></div>
-      <div class="tile"><b>{fmt.money(totalDollars)}</b><span>counted spend (gate replays excluded)</span></div>
-    </div>
-
-    <h2>The question</h2>
     <p>Does writing the work as SQL make a model solve more for less? Three modes on the same model, tools and budgets answer two comparisons: <b class="amber">frozen</b> is Kleene with the playbook off, <b class="magenta">learning</b> is Kleene with the playbook on and adoption gated by replay, and <b class="cyan">plain</b> is a tool-calling agent with no SQL. Learning against frozen isolates the playbook; frozen against plain isolates the abstraction.</p>
 
-    <h2>Pass rate against cost</h2>
-    <p>One panel per pack. Colour is the mode; a circle is {RUNS[0].label}, a diamond is {RUNS[1].label}. Hover a mark for its numbers; the table below has them all.</p>
-    <div class="legend"><span><i style={`background:${MODE_COLOR.learning}`}></i>learning</span><span><i style={`background:${MODE_COLOR.frozen}`}></i>frozen</span><span><i style={`background:${MODE_COLOR.plain}`}></i>plain</span><span class="dim">● Opus 5.5 &nbsp; ◆ Haiku 4.5</span></div>
-    <div class="panels">
-      {packs.map((p) => (
-        <figure class="panel">
-          <figcaption><b>{p}</b> <span class="dim">{cells.find((c) => c.pack === p)?.tasks} tasks</span></figcaption>
-          <Fragment set:html={pareto(p)} />
-        </figure>
-      ))}
+    <div class="filters" role="group" aria-label="Filters">
+      <div class="fgroup"><span class="flabel">model</span><span class="chips" data-filter="model"></span></div>
+      <div class="fgroup"><span class="flabel">mode</span><span class="chips" data-filter="mode"></span></div>
+      <div class="fgroup"><span class="flabel">pack</span><span class="chips" data-filter="pack"></span></div>
+      <button type="button" class="reset" id="reset">reset</button>
     </div>
 
+    <div class="tiles" id="tiles"></div>
+
+    <h2>Pass rate against cost</h2>
+    <p>One panel per pack. Colour is the mode, a circle is {MODELS[0].label} and a diamond is {MODELS[1].label}. Hover or tap a mark for its numbers; click a mark to pin the tooltip.</p>
+    <div class="legend" id="legend"></div>
+    <div class="panels" id="panels"></div>
+
     <h2>Calls per task</h2>
-    <p>The playbook's effect shows in calls. On the four first packs with {RUNS[0].label}, learning takes fewer calls per task than frozen on every pack; on legal the second half of the learning run took 7.5 calls a task where the first took 13.7. The plain agent answers each of these in one call, because every context fits in one prompt.</p>
-    <figure class="bars"><figcaption>{RUNS[0].label}, {RUNS[0].date}</figcaption><Fragment set:html={callsBars("claude-opus-5-5")} /></figure>
-    <figure class="bars"><figcaption>{RUNS[1].label}, {RUNS[1].date}</figcaption><Fragment set:html={callsBars("claude-haiku-4-5-20251001")} /></figure>
+    <p>The playbook's effect shows in calls. On the four first packs with {MODELS[0].label}, learning takes fewer calls per task than frozen on every pack; on legal the second half of the learning run took 7.5 calls a task where the first took 13.7. The plain agent answers each of these in one call, because every context fits in one prompt.</p>
+    <div id="bars"></div>
+
+    <h2>Every cell</h2>
+    <table class="results" id="table">
+      <thead><tr><th>pack</th><th>mode</th><th>model</th><th>solved</th><th>$ / task</th><th>total $</th><th>calls / task</th><th>tokens / task</th><th>s / task</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <noscript><p class="dim">The charts and filters need JavaScript; the same numbers are in <a href="https://github.com/MarcusElwin/kleene/blob/main/plots/results/results.md">plots/results/results.md</a>.</p></noscript>
 
     <h2>What the numbers say</h2>
     <ul>
@@ -124,26 +60,6 @@ const PLOTS = [
       <li><b>The harder packs separate on accuracy.</b> On Haiku 4.5, coding solves 2 of 12 steps in either Kleene mode, always the first step of an episode. On memo-rubric learning beat frozen on both axes, 11/20 against 8/20 at 3.8 against 20 calls a task, though part of the frozen cost was a schema failure mode the adapter has since fixed, and learning shares the frozen run's memo.</li>
       <li><b>Not run yet:</b> logbook-hard in any mode (a frozen task took about 500 calls at Haiku's pace), coding in plain mode, and the harder packs on Opus 5.5. The caveats in full are in <a href="/docs/writeup/#41-haiku-45-on-the-harder-packs">write-up 4.1</a>.</li>
     </ul>
-
-    <h2>Every cell</h2>
-    <table class="results">
-      <thead><tr><th>pack</th><th>mode</th><th>model</th><th>solved</th><th>$ / task</th><th>total $</th><th>calls / task</th><th>tokens / task</th><th>s / task</th></tr></thead>
-      <tbody>
-        {packs.flatMap((p) => cells.filter((c) => c.pack === p)).map((c) => (
-          <tr>
-            <td><code>{c.pack}</code></td>
-            <td><span class="swatch" style={`background:${MODE_COLOR[c.mode]}`}></span>{c.mode}</td>
-            <td>{c.label}</td>
-            <td class="n">{c.solved}/{c.tasks} <span class="dim">({fmt.pct(c.pass)})</span></td>
-            <td class="n">{fmt.money(c.dollarsPerTask)}</td>
-            <td class="n">{fmt.money(c.dollars)}</td>
-            <td class="n">{fmt.num(c.callsPerTask)}</td>
-            <td class="n">{fmt.int(c.tokensPerTask)}</td>
-            <td class="n">{fmt.num(c.secondsPerTask)}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
 
     <h2>The packs</h2>
     <table>
@@ -160,11 +76,11 @@ const PLOTS = [
     </table>
     <p class="dim">The synthetic packs are frozen generator output, so two people see the same tasks in the same order. The external datasets they imitate are not redistributed; OOLONG, Harvey LAB and contract redlining import on demand with <code>bench import-*</code>.</p>
 
-    <h2>The runs</h2>
-    {RUNS.map((r, i) => (
-      <section class="run">
-        <h3>{r.label}, {r.date}</h3>
-        <p>{r.note}. Rows: <a href={`https://github.com/MarcusElwin/kleene/blob/main/${r.csv}`}><code>{r.csv}</code></a>. The five plots <code>bench plot</code> wrote beside them:</p>
+    <h2>The five plots</h2>
+    <p>What <code>bench plot</code> wrote beside each run's rows, for the models selected above.</p>
+    {MODELS.map((r) => (
+      <section class="run" data-model={r.id}>
+        <p class="dim"><b>{r.label}, {r.date}.</b> {r.note}. Rows: <a href={`https://github.com/MarcusElwin/kleene/blob/main/${r.csv}`}><code>{r.csv}</code></a>.</p>
         <div class="plots">
           {PLOTS.map(([file, title, what]) => (
             <figure>
@@ -180,30 +96,203 @@ const PLOTS = [
     <Terminal title="sh">
 <span class="cmt"># a pack, one mode, with a fresh store per mode</span>&#10;<span class="prompt">$</span> kleene bench run tasks/oolong-like --mode frozen&#10;<span class="prompt">$</span> kleene bench run tasks/oolong-like --mode learning&#10;<span class="prompt">$</span> kleene bench run tasks/oolong-like --mode plain&#10;&#10;<span class="cmt"># the table, the rows and the plots</span>&#10;<span class="prompt">$</span> kleene bench report&#10;<span class="prompt">$</span> kleene bench csv > plots/&lt;model-date&gt;/evals.csv&#10;<span class="prompt">$</span> kleene bench plot plots/&lt;model-date&gt;&#10;&#10;<span class="cmt"># the README's results table and Pareto plots from every committed CSV</span>&#10;<span class="prompt">$</span> kleene bench results plots/evals.csv plots/haiku-2026-10-01/evals.csv --out plots/results --readme README.md</Terminal>
     <p>A learning run replays candidates against earlier tasks, so budget about $45 for a full sweep of the first four packs at <code>replay_sample 3</code>, and use <code>bench run --resume &lt;run-id&gt;</code> after an interruption. Every model call is memoised, so a second run of the same pack in the same store is free, which is also why a clean comparison wants a fresh store per mode.</p>
+    <div class="tip" id="tip" hidden></div>
   </div>
 </Base>
 
-<style>
-  .wide { max-width: 100%; }
-  .wide > p, .wide > ul { max-width: var(--measure); }
-  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0.8rem; margin: 1.5rem 0; }
-  .tile { border: 1px solid var(--line); background: var(--panel); padding: 0.7rem 0.9rem; display: flex; flex-direction: column; gap: 0.1rem; }
-  .tile b { font-family: var(--display); font-size: 2.4rem; color: var(--mauve); text-shadow: var(--glow-mauve); font-weight: 400; line-height: 1; font-variant-numeric: tabular-nums; }
-  .tile span { color: var(--dim); font-size: 0.8rem; }
-  .legend { display: flex; flex-wrap: wrap; gap: 1.2rem; font-size: 0.85rem; margin-bottom: 0.6rem; }
-  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 0.4rem; vertical-align: -1px; }
-  .panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 0.8rem; margin-bottom: 1.5rem; }
-  .panel { margin: 0; border: 1px solid var(--line); background: var(--panel); padding: 0.5rem 0.6rem 0.2rem; min-width: 0; }
-  .panel figcaption { font-size: 0.85rem; margin-bottom: 0.2rem; }
-  .panel svg { width: 100%; height: auto; display: block; }
-  .bars { margin: 0 0 1.2rem; border: 1px solid var(--line); background: var(--panel); padding: 0.5rem 0.8rem; max-width: 760px; min-width: 0; }
-  .bars figcaption { font-size: 0.85rem; color: var(--dim); margin-bottom: 0.3rem; }
-  .bars svg { width: 100%; height: auto; display: block; }
-  .results td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 0.4rem; }
-  .run h3 { margin-top: 1.4rem; }
-  .plots { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0.8rem; margin: 0.6rem 0 1.5rem; }
-  .plots figure { margin: 0; min-width: 0; }
-  .plots img { background: #fff; padding: 3px; width: 100%; }
-  .plots figcaption { font-size: 0.78rem; color: var(--dim); margin-top: 0.3rem; }
+<script>
+  // The charts, tiles and table are drawn here from the cells embedded in
+  // data-bench, and redrawn whenever a filter chip changes.
+  const root = document.getElementById("bench")!;
+  const { cells, packs, modes, models } = JSON.parse(root.dataset.bench!) as {
+    cells: any[]; packs: string[]; modes: string[]; models: { id: string; label: string }[];
+  };
+  const MODE_COLOR: Record<string, string> = { learning: "#cba6f7", frozen: "#fab387", plain: "#74c7ec" };
+  const shapeOf = (model: string) => (models.findIndex((m) => m.id === model) === 0 ? "circle" : "diamond");
+  const labelOf = (model: string) => models.find((m) => m.id === model)?.label ?? model;
+  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+  const money = (x: number) => (x >= 1 ? `$${x.toFixed(2)}` : `$${x.toFixed(3)}`);
+  const int = (x: number) => Math.round(x).toLocaleString("en-US");
+
+  const sel: Record<string, Set<string>> = {
+    model: new Set(models.map((m) => m.id)), mode: new Set(modes), pack: new Set(packs),
+  };
+  const options: Record<string, { id: string; label: string }[]> = {
+    model: models.map((m) => ({ id: m.id, label: m.label })),
+    mode: modes.map((m) => ({ id: m, label: m })),
+    pack: packs.map((p) => ({ id: p, label: p })),
+  };
+
+  function chips() {
+    for (const key of Object.keys(options)) {
+      const host = root.querySelector<HTMLElement>(`[data-filter="${key}"]`)!;
+      host.innerHTML = options[key].map((o) => {
+        const on = sel[key].has(o.id);
+        const sw = key === "mode" ? `<i style="background:${MODE_COLOR[o.id]}"></i>` : "";
+        return `<button type="button" class="chip${on ? " on" : ""}" data-key="${key}" data-id="${esc(o.id)}" aria-pressed="${on}">${sw}${esc(o.label)}</button>`;
+      }).join("");
+    }
+  }
+  root.addEventListener("click", (e) => {
+    const b = (e.target as HTMLElement).closest<HTMLElement>(".chip");
+    if (!b) return;
+    const key = b.dataset.key!, id = b.dataset.id!;
+    // Alt/shift-click solos; a plain click toggles. Never leave a group empty.
+    if (e.altKey || e.shiftKey) { sel[key] = new Set([id]); }
+    else if (sel[key].has(id)) { if (sel[key].size > 1) sel[key].delete(id); }
+    else sel[key].add(id);
+    draw();
+  });
+  document.getElementById("reset")!.addEventListener("click", () => {
+    for (const key of Object.keys(options)) sel[key] = new Set(options[key].map((o) => o.id));
+    draw();
+  });
+
+  const visible = () => cells.filter((c) => sel.model.has(c.model) && sel.mode.has(c.mode) && sel.pack.has(c.pack));
+
+  function mark(shape: string, x: number, y: number, color: string, r = 5) {
+    const ring = `stroke="#181825" stroke-width="2"`;
+    if (shape === "diamond") return `<path d="M${x} ${y - r - 1} L${x + r + 1} ${y} L${x} ${y + r + 1} L${x - r - 1} ${y} Z" fill="${color}" ${ring}/>`;
+    return `<circle cx="${x}" cy="${y}" r="${r}" fill="${color}" ${ring}/>`;
+  }
+  const tipText = (c: any) => `<b>${esc(c.pack)}</b> · ${esc(labelOf(c.model))} · <span style="color:${MODE_COLOR[c.mode]}">${c.mode}</span><br>${c.solved}/${c.tasks} solved (${Math.round(c.pass * 100)}%)<br>${money(c.dollarsPerTask)} per task, ${money(c.dollars)} total<br>${c.callsPerTask.toFixed(1)} calls, ${int(c.tokensPerTask)} tokens, ${c.secondsPerTask.toFixed(1)} s per task`;
+
+  function pareto(pack: string, pts: any[]) {
+    const W = 320, H = 220, L = 44, R = 16, T = 28, B = 36;
+    const xmax = Math.max(0.02, ...pts.map((p) => p.dollarsPerTask)) * 1.25;
+    const xs = (v: number) => L + (v / xmax) * (W - L - R);
+    const ys = (v: number) => T + (1 - v) * (H - T - B);
+    const out: string[] = [`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(pack)}: pass rate against dollars per task" font-family="IBM Plex Mono, monospace" font-size="10">`];
+    for (const v of [0, 0.5, 1]) out.push(`<line x1="${L}" x2="${W - R}" y1="${ys(v)}" y2="${ys(v)}" stroke="#313244"/><text x="${L - 6}" y="${ys(v) + 3}" text-anchor="end" fill="#a6adc8">${v * 100}%</text>`);
+    for (const v of [0, xmax / 2, xmax]) out.push(`<text x="${xs(v)}" y="${H - B + 14}" text-anchor="middle" fill="#a6adc8">$${v.toFixed(2)}</text>`);
+    out.push(`<line x1="${L}" x2="${W - R}" y1="${ys(0)}" y2="${ys(0)}" stroke="#45475a"/><text x="${(L + W - R) / 2}" y="${H - 4}" text-anchor="middle" fill="#6c7086">dollars per task</text>`);
+    const placed: { x: number; y: number }[] = [];
+    pts.forEach((p) => {
+      const x = xs(p.dollarsPerTask), y = ys(p.pass);
+      let dy = -9;
+      for (const q of placed) if (Math.abs(q.x - x) < 40 && Math.abs(q.y - y) < 14) dy = 16;
+      placed.push({ x, y });
+      const idx = cells.indexOf(p);
+      out.push(`<g class="mk" data-cell="${idx}" tabindex="0"><circle cx="${x}" cy="${y}" r="12" fill="transparent"/>${mark(shapeOf(p.model), x, y, MODE_COLOR[p.mode])}<text x="${x}" y="${y + dy}" text-anchor="middle" fill="#cdd6f4">${p.mode}</text></g>`);
+    });
+    out.push(`</svg>`);
+    return out.join("");
+  }
+
+  function bars(model: string, vis: any[]) {
+    const ps = packs.filter((p) => vis.some((c) => c.pack === p && c.model === model));
+    if (!ps.length) return "";
+    const ms = modes.filter((m) => sel.mode.has(m));
+    const W = 640, L = 150, R = 60, rowH = 16, gap = 12, T = 8;
+    const H = T + ps.length * (ms.length * rowH + gap) + 24;
+    const vmax = Math.max(1, ...vis.filter((c) => c.model === model).map((c) => c.callsPerTask)) * 1.1;
+    const xs = (v: number) => L + (v / vmax) * (W - L - R);
+    const out = [`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="calls per task by mode and pack, ${esc(labelOf(model))}" font-family="IBM Plex Mono, monospace" font-size="11">`];
+    for (const v of [0, Math.round(vmax / 2), Math.round(vmax)]) out.push(`<line x1="${xs(v)}" x2="${xs(v)}" y1="${T}" y2="${H - 20}" stroke="#313244"/><text x="${xs(v)}" y="${H - 6}" text-anchor="middle" fill="#a6adc8">${v}</text>`);
+    ps.forEach((p, i) => {
+      const y0 = T + i * (ms.length * rowH + gap);
+      out.push(`<text x="${L - 10}" y="${y0 + (ms.length * rowH) / 2 + 4}" text-anchor="end" fill="#cdd6f4">${esc(p)}</text>`);
+      ms.forEach((m, j) => {
+        const c = vis.find((c) => c.pack === p && c.model === model && c.mode === m);
+        const y = y0 + j * rowH;
+        if (!c) { out.push(`<text x="${L + 4}" y="${y + 12}" fill="#6c7086">${m}: not run</text>`); return; }
+        const w = Math.max(2, xs(c.callsPerTask) - L);
+        out.push(`<g class="mk" data-cell="${cells.indexOf(c)}" tabindex="0"><rect x="${L}" y="${y + 2}" width="${w}" height="${rowH - 4}" rx="2" fill="${MODE_COLOR[m]}"/><text x="${L + w + 6}" y="${y + 12}" fill="#cdd6f4">${c.callsPerTask.toFixed(1)} <tspan fill="#6c7086">${m}</tspan></text></g>`);
+      });
+    });
+    out.push(`</svg>`);
+    return `<figure class="bars"><figcaption>${esc(labelOf(model))}</figcaption>${out.join("")}</figure>`;
+  }
+
+  function draw() {
+    chips();
+    const vis = visible();
+    const tasks = vis.reduce((a, c) => a + c.tasks, 0);
+    const solved = vis.reduce((a, c) => a + c.solved, 0);
+    const dollars = vis.reduce((a, c) => a + c.dollars, 0);
+    const calls = vis.reduce((a, c) => a + c.callsPerTask * c.tasks, 0);
+    document.getElementById("tiles")!.innerHTML = [
+      [String(new Set(vis.map((c) => c.pack)).size), "packs"],
+      [String(tasks), "task runs"],
+      [tasks ? `${Math.round((solved / tasks) * 100)}%` : "–", `solved (${solved}/${tasks})`],
+      [int(calls), "model calls"],
+      [money(dollars), "counted spend (gate replays excluded)"],
+    ].map(([b, s]) => `<div class="tile"><b>${b}</b><span>${s}</span></div>`).join("");
+    document.getElementById("legend")!.innerHTML = modes.filter((m) => sel.mode.has(m)).map((m) => `<span><i style="background:${MODE_COLOR[m]}"></i>${m}</span>`).join("") + `<span class="dim">${models.filter((m) => sel.model.has(m.id)).map((m, i) => `${shapeOf(m.id) === "circle" ? "●" : "◆"} ${esc(m.label)}`).join(" &nbsp; ")}</span>`;
+    document.getElementById("panels")!.innerHTML = packs.filter((p) => sel.pack.has(p)).map((p) => {
+      const pts = vis.filter((c) => c.pack === p);
+      if (!pts.length) return "";
+      return `<figure class="panel"><figcaption><b>${esc(p)}</b> <span class="dim">${pts[0].tasks} tasks</span></figcaption>${pareto(p, pts)}</figure>`;
+    }).join("") || `<p class="dim">Nothing matches these filters.</p>`;
+    document.getElementById("bars")!.innerHTML = models.filter((m) => sel.model.has(m.id)).map((m) => bars(m.id, vis)).join("");
+    document.querySelector("#table tbody")!.innerHTML = vis.map((c) => `<tr><td><code>${esc(c.pack)}</code></td><td><span class="swatch" style="background:${MODE_COLOR[c.mode]}"></span>${c.mode}</td><td>${esc(labelOf(c.model))}</td><td class="n">${c.solved}/${c.tasks} <span class="dim">(${Math.round(c.pass * 100)}%)</span></td><td class="n">${money(c.dollarsPerTask)}</td><td class="n">${money(c.dollars)}</td><td class="n">${c.callsPerTask.toFixed(1)}</td><td class="n">${int(c.tokensPerTask)}</td><td class="n">${c.secondsPerTask.toFixed(1)}</td></tr>`).join("");
+    root.querySelectorAll<HTMLElement>(".run").forEach((r) => { r.hidden = !sel.model.has(r.dataset.model!); });
+  }
+
+  // Tooltip: follows the pointer over a mark, pins on click, closes on Escape or a click elsewhere.
+  const tip = document.getElementById("tip")!;
+  let pinned = false;
+  function showTip(el: HTMLElement, x: number, y: number) {
+    const c = cells[Number(el.dataset.cell)];
+    tip.innerHTML = tipText(c);
+    tip.hidden = false;
+    const w = tip.offsetWidth, h = tip.offsetHeight;
+    const px = Math.min(x + 14, window.innerWidth - w - 8), py = y - h - 12 > 8 ? y - h - 12 : y + 18;
+    tip.style.left = `${px + window.scrollX}px`; tip.style.top = `${py + window.scrollY}px`;
+  }
+  root.addEventListener("pointermove", (e) => {
+    if (pinned) return;
+    const m = (e.target as Element).closest<HTMLElement>(".mk");
+    if (m) showTip(m, e.clientX, e.clientY); else tip.hidden = true;
+  });
+  root.addEventListener("click", (e) => {
+    const m = (e.target as Element).closest<HTMLElement>(".mk");
+    if (m) { pinned = true; showTip(m, e.clientX, e.clientY); }
+    else { pinned = false; tip.hidden = true; }
+  });
+  root.addEventListener("focusin", (e) => { const m = (e.target as Element).closest<HTMLElement>(".mk"); if (m) { const r = m.getBoundingClientRect(); showTip(m, r.left + r.width / 2, r.top); } });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") { pinned = false; tip.hidden = true; } });
+
+  draw();
+</script>
+
+<style is:global>
+  #bench.wide { max-width: 100%; }
+  #bench.wide > p, #bench.wide > ul { max-width: var(--measure); }
+  #bench .filters { display: flex; flex-wrap: wrap; gap: 0.6rem 1.4rem; align-items: center; border: 1px solid var(--line); background: var(--panel); padding: 0.6rem 0.9rem; margin: 1.2rem 0 0.8rem; font-size: 0.82rem; }
+  #bench .fgroup { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+  #bench .flabel { color: var(--faint); }
+  #bench .chips { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+  #bench .chip { font: inherit; font-size: 0.8rem; background: transparent; color: var(--dim); border: 1px solid var(--line-2); border-radius: 3px; padding: 0.1rem 0.5rem; cursor: pointer; display: inline-flex; align-items: center; gap: 0.35rem; }
+  #bench .chip i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; opacity: 0.4; }
+  #bench .chip.on { color: var(--fg); border-color: var(--mauve); background: rgba(203, 166, 247, 0.1); }
+  #bench .chip.on i { opacity: 1; }
+  #bench .chip:hover, #bench .chip:focus-visible { border-color: var(--mauve); outline: none; }
+  #bench .reset { font: inherit; font-size: 0.78rem; background: none; border: 0; color: var(--blue); cursor: pointer; margin-left: auto; padding: 0; }
+  #bench .reset:hover { text-decoration: underline; }
+  #bench .tip { position: absolute; z-index: 60; background: var(--crust); border: 1px solid var(--line-2); color: var(--fg); font-size: 0.78rem; line-height: 1.45; padding: 0.4rem 0.6rem; border-radius: 4px; pointer-events: none; max-width: 280px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
+  #bench .mk { cursor: pointer; }
+  #bench .mk:focus { outline: none; }
+  #bench .mk:hover text, #bench .mk:focus text { fill: #fff; }
+  #bench .run[hidden] { display: none; }
+  #bench .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.8rem; margin: 1.5rem 0; }
+  #bench .tile { border: 1px solid var(--line); background: var(--panel); padding: 0.7rem 0.9rem; display: flex; flex-direction: column; gap: 0.1rem; }
+  #bench .tile b { font-family: var(--display); font-size: 2.4rem; color: var(--mauve); text-shadow: var(--glow-mauve); font-weight: 400; line-height: 1; font-variant-numeric: tabular-nums; }
+  #bench .tile span { color: var(--dim); font-size: 0.8rem; }
+  #bench .legend { display: flex; flex-wrap: wrap; gap: 1.2rem; font-size: 0.85rem; margin-bottom: 0.6rem; }
+  #bench .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 0.4rem; vertical-align: -1px; }
+  #bench .panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 0.8rem; margin-bottom: 1.5rem; }
+  #bench .panel { margin: 0; border: 1px solid var(--line); background: var(--panel); padding: 0.5rem 0.6rem 0.2rem; min-width: 0; }
+  #bench .panel figcaption { font-size: 0.85rem; margin-bottom: 0.2rem; }
+  #bench .panel svg { width: 100%; height: auto; display: block; }
+  #bench .bars { margin: 0 0 1.2rem; border: 1px solid var(--line); background: var(--panel); padding: 0.5rem 0.8rem; max-width: 760px; min-width: 0; }
+  #bench .bars figcaption { font-size: 0.85rem; color: var(--dim); margin-bottom: 0.3rem; }
+  #bench .bars svg { width: 100%; height: auto; display: block; }
+  #bench .results td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  #bench .swatch { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 0.4rem; }
+  #bench .run h3 { margin-top: 1.4rem; }
+  #bench .plots { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0.8rem; margin: 0.6rem 0 1.5rem; }
+  #bench .plots figure { margin: 0; min-width: 0; }
+  #bench .plots img { background: #fff; padding: 3px; width: 100%; }
+  #bench .plots figcaption { font-size: 0.78rem; color: var(--dim); margin-top: 0.3rem; }
 </style>
