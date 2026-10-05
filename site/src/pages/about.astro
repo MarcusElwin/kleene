@@ -1,0 +1,81 @@
+---
+import Base from "../layouts/Base.astro";
+import Terminal from "../components/Terminal.astro";
+---
+<Base title="About · Kleene and the Kleene backstory">
+  <div class="prose">
+    <h1>About</h1>
+    <p><strong>Kleene</strong> is a harness that runs recursive language-model workflows written in SQL. The model writes CallSQL; the engine parses it, annotates every operator with the calls it implies, prices the plan against a budget, executes it with memoised and concurrent calls, persists tables, memo and trace in DuckDB, and shows it all in a terminal UI. It is a Rust workspace of twelve crates, model-agnostic, with no SDK and no gateway required, released under the MIT licence. It is built by <a href="https://github.com/MarcusElwin">Marcus Elwin</a> and started life as <em>Callgebra</em>, "call algebra", before taking its present name; the dialect kept its own name, CallSQL, because the SQL is where the calls are.</p>
+
+    <Terminal title="man kleene">
+<span class="amber">NAME</span>
+    kleene — relational algebra for recursive model calls
+
+<span class="amber">SYNOPSIS</span>&#10;    <span class="prompt">kleene</span> [run | repl | explain | trace | tui | attach | daemon | learn | bench | setup]
+
+<span class="amber">PRONUNCIATION</span>
+    /ˈkleɪniː/, "KLAY-nee". Stephen Kleene was particular about it: not "clean", not "clean-ee".
+
+<span class="amber">SEE ALSO</span>&#10;    <a href="/overview/">overview(7)</a>, <a href="/docs/">docs(1)</a>, <a href="https://github.com/MarcusElwin/kleene">github(1)</a></Terminal>
+
+    <h2>Why "Kleene"</h2>
+    <p>Stephen Cole Kleene (1909–1994) gave computation three of its load-bearing ideas, and this project leans on all three.</p>
+    <ul>
+      <li><strong>The Kleene star</strong> turns "one step" into "any number of steps". Kleene introduced <code>a*</code> in 1951 to describe the "regular events" a McCulloch–Pitts nerve net can recognise <a href="#refs">[1]</a>; it is the closure of <code>a</code> under repetition, and it is exactly what a recursive CTE computes when it runs a term to its fixpoint. Aho and Ullman later showed that relational algebra needs precisely such a least-fixpoint operator to express transitive closure at all <a href="#refs">[4]</a>, which is why CallSQL has <code>WITH RECURSIVE</code>.</li>
+      <li><strong>The Kleene fixed-point theorem</strong> says how to reach that closure: start from nothing and apply the step until nothing changes. The construction is the "first recursion theorem" of <em>Introduction to Metamathematics</em> <a href="#refs">[2]</a>, and in its database form it is semi-naive evaluation <a href="#refs">[5]</a>: each round sees only the previous round's delta, which is how the executor runs a recursive term and where a <code>LIMIT k</code> inside it becomes a beam.</li>
+      <li><strong>The recursion theorem</strong> shows a program can refer to itself without paradox. Kleene proved it in 1938 as a lemma about ordinal notations <a href="#refs">[3]</a>; it is what a session does when it opens a child session with <code>rlm(...)</code>, the same loop one level deeper with a slice of the budget.</li>
+    </ul>
+    <p>There is a fourth, smaller debt. The same 1938 paper introduced a three-valued logic, now called <em>strong Kleene logic</em> or K<sub>3</sub>, to reason about predicates that may not terminate: true, false, and <em>undefined</em>, where <code>false AND undefined</code> is still <code>false</code>. SQL's <code>NULL</code> follows those tables, with <em>unknown</em> in the third seat. CallSQL inherits them, and the planner relies on them: a conjunction can be evaluated cheap-conjunct-first and stop as soon as one side is <code>false</code>, which is the whole trick behind putting a cheap proxy predicate in front of an expensive model call.</p>
+    <p>That is this project in three theorems and a truth table. A model call is a step; SQL gives it joins, predicates and aggregation; recursion with a beam gives it search; the planner prices the closure before it is computed. The engine is named for the mathematician who showed that closure is a thing you can compute.</p>
+
+    <h2>Stephen Cole Kleene, 1909–1994</h2>
+    <Terminal title="kleene trace &quot;SELECT year, event FROM biography ORDER BY year&quot;">
+<span class="dim">  year  │ event</span>&#10;<span class="rule">────────┼──────────────────────────────────────────────────────────────────────</span>&#10;  <span class="num">1909</span>  │ Born 5 January in Hartford, Connecticut.
+  <span class="num">1930</span>  │ Bachelor's degree from Amherst College.
+  <span class="num">1934</span>  │ PhD at Princeton under Alonzo Church; with Church and J. B. Rosser he
+        │ works out the lambda calculus and shows which functions it can express.
+  <span class="num">1935</span>  │ Joins the University of Wisconsin–Madison, where he stays for his career.
+  <span class="num">1936</span>  │ "General recursive functions of natural numbers": the normal form theorem
+        │ and the T predicate; the definition of computability that Church's thesis
+        │ names.
+  <span class="num">1938</span>  │ "On notation for ordinal numbers": the recursion theorem, and the
+        │ three-valued logic that SQL's NULL would later follow.
+  <span class="num">1943</span>  │ "Recursive predicates and quantifiers": the arithmetical hierarchy.
+        │ Serves as a navigation instructor in the US Naval Reserve during the war.
+  <span class="num">1945</span>  │ Realizability: a computational reading of intuitionistic proofs.
+  <span class="num">1951</span>  │ "Representation of events in nerve nets and finite automata" (RAND, printed
+        │ in Automata Studies, 1956): regular expressions, the star, and Kleene's
+        │ theorem that they recognise exactly what finite automata do.
+  <span class="num">1952</span>  │ Introduction to Metamathematics, the textbook that taught a generation
+        │ recursion theory; still in print.
+  <span class="num">1969</span>  │ Dean of the College of Letters and Science at Wisconsin, until 1974.
+  <span class="num">1990</span>  │ National Medal of Science.
+  <span class="num">1994</span>  │ Died 25 January in Madison, Wisconsin.
+<span class="dim">  13 rows</span></Terminal>
+    <p>Beyond the three theorems above, his name is on the Kleene algebra (the algebra of regular sets, later axiomatised by Kozen), the Kleene hierarchy, the Church–Kleene ordinal, the Kleene–Rosser paradox that sank the first version of the lambda calculus, and the Kleene plus. The lambda calculus itself, the "Church" in Church's thesis, and the word <em>regular</em> for the sets a finite automaton recognises all pass through his desk. It is a good name for an engine whose job is to compute closures of a step, price them, and stop when nothing changes.</p>
+
+    <h2>What the engine does with the name</h2>
+    <table>
+      <thead><tr><th>Kleene's idea</th><th>Where it is in the engine</th></tr></thead>
+      <tbody>
+        <tr><td>Star, closure under repetition</td><td><code>WITH RECURSIVE</code> run to a fixpoint by semi-naive evaluation</td></tr>
+        <tr><td>Least fixed point from the bottom up</td><td>each round sees only the last round's delta; <code>ORDER BY ... LIMIT k</code> in the term is a beam</td></tr>
+        <tr><td>Recursion theorem, self-reference</td><td><code>rlm(...)</code> and <code>spawn(...)</code> open a child session: the same loop with a budget slice</td></tr>
+        <tr><td>Strong three-valued logic</td><td>SQL <code>NULL</code> semantics; cheap-conjunct-first short-circuiting the planner relies on</td></tr>
+        <tr><td>Regular expressions</td><td>the <code>grep</code> table function the model reads its workspace with</td></tr>
+      </tbody>
+    </table>
+
+    <h2 id="refs">References</h2>
+    <ol>
+      <li>S. C. Kleene, "Representation of Events in Nerve Nets and Finite Automata", RAND RM-704 (1951); in <em>Automata Studies</em>, Princeton University Press, 1956, pp. 3–41.</li>
+      <li>S. C. Kleene, <em>Introduction to Metamathematics</em>, North-Holland, 1952, §66 (the first recursion theorem; the least-fixed-point construction) and §64 (the three-valued logic).</li>
+      <li>S. C. Kleene, "On Notation for Ordinal Numbers", <em>Journal of Symbolic Logic</em> 3(4), 1938, pp. 150–155 (the second recursion theorem; the three-valued tables).</li>
+      <li>A. V. Aho and J. D. Ullman, "Universality of Data Retrieval Languages", <em>POPL '79</em>, pp. 110–119 (relational algebra plus a least fixpoint).</li>
+      <li>F. Bancilhon and R. Ramakrishnan, "An Amateur's Introduction to Recursive Query Processing Strategies", <em>SIGMOD '86</em>, pp. 16–52 (semi-naive evaluation).</li>
+      <li>S. C. Kleene, "General Recursive Functions of Natural Numbers", <em>Mathematische Annalen</em> 112, 1936, pp. 727–742.</li>
+      <li>D. Kozen, "A Completeness Theorem for Kleene Algebras and the Algebra of Regular Events", <em>Information and Computation</em> 110(2), 1994, pp. 366–390.</li>
+    </ol>
+    <p class="dim">The research the design draws on beyond Kleene, from recursive language models to SQL as a model interface and the complexity results the planner relies on, is collected in <a href="/docs/research/">the research digest</a>.</p>
+  </div>
+</Base>

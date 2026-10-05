@@ -1,0 +1,78 @@
+---
+import "../styles/global.css";
+interface Props { title: string; description?: string; mermaid?: boolean }
+const { title, description = "Kleene: relational algebra for recursive model calls. Write SQL, compile it into a planned, budgeted graph of language-model calls.", mermaid = false } = Astro.props;
+const path = Astro.url.pathname;
+const current = (p: string) => (p === "/" ? path === "/" : path.startsWith(p)) ? "page" : undefined;
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta name="theme-color" content="#1e1e2e" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="wrap">
+        <a class="brand flicker" href="/">kleene<span class="dim">@</span>sql<span class="cursor"></span></a>
+        <nav class="nav" aria-label="Site">
+          <a href="/" aria-current={current("/")}>home</a>
+          <a href="/overview/" aria-current={current("/overview")}>overview</a>
+          <a href="/benchmarks/" aria-current={current("/benchmarks")}>bench</a>
+          <a href="/about/" aria-current={current("/about")}>about</a>
+          <a href="/docs/" aria-current={current("/docs")}>docs</a>
+          <a href="https://github.com/MarcusElwin/kleene">github</a>
+        </nav>
+      </div>
+    </header>
+    <main class="wrap">
+      <slot />
+    </main>
+    <footer class="footer">
+      <div class="wrap">
+        <span>kleene · MIT licensed · written in Rust, DuckDB inside</span>
+        <span><a href="https://github.com/MarcusElwin/kleene">source</a> · <a href="/docs/">documentation</a> · <a href="/about/">why the name</a></span>
+        <span class="dim">named for Stephen Cole Kleene, 1909–1994</span>
+        <span class="made">made with <span class="heart" aria-label="love">♥</span> by <a href="https://github.com/MarcusElwin">Marcus Elwin</a></span>
+      </div>
+    </footer>
+    {mermaid && (
+      <script type="module" is:inline>
+        // Turn ```mermaid fences (rendered by Astro as <pre><code>) into diagrams.
+        // Loaded from the CDN rather than bundled: mermaid's lazy diagram chunks do
+        // not survive the bundle, and this keeps the site's own JS tiny.
+        import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+        mermaid.initialize({
+          startOnLoad: false,
+          theme: "base",
+          themeVariables: {
+            darkMode: true, background: "#181825", primaryColor: "#313244", primaryTextColor: "#cdd6f4",
+            primaryBorderColor: "#cba6f7", lineColor: "#74c7ec", secondaryColor: "#45475a", tertiaryColor: "#181825",
+            fontFamily: "IBM Plex Mono, monospace", fontSize: "13px", noteBkgColor: "#45475a", noteTextColor: "#f9e2af",
+            actorBorder: "#cba6f7", actorBkg: "#313244", actorTextColor: "#cdd6f4", signalColor: "#74c7ec", signalTextColor: "#cdd6f4",
+            labelBoxBkgColor: "#313244", labelTextColor: "#fab387", loopTextColor: "#fab387", activationBorderColor: "#f5c2e7", activationBkgColor: "#45475a",
+          },
+        });
+        const blocks = Array.from(document.querySelectorAll("pre[data-language='mermaid'], pre > code.language-mermaid"));
+        for (const el of blocks) {
+          const pre = el.tagName === "PRE" ? el : el.parentElement;
+          const src = pre.textContent ?? "";
+          const div = document.createElement("div");
+          div.className = "mermaid";
+          div.textContent = src;
+          pre.replaceWith(div);
+        }
+        for (const node of document.querySelectorAll(".mermaid")) {
+          try { await mermaid.run({ nodes: [node] }); }
+          catch (e) { console.error("mermaid:", e); node.classList.add("mermaid-failed"); }
+        }
+      </script>
+    )}
+  </body>
+</html>

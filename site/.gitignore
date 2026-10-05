@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.astro/
+# copied from ../docs/screenshots and ../plots by scripts/sync-assets.mjs
+public/screenshots/
+public/plots/
