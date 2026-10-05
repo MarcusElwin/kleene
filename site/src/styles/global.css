@@ -181,3 +181,41 @@ details summary { cursor: pointer; color: var(--amber); }
   .replay:hover { color: var(--mauve); border-color: var(--mauve); }
 .typed .term-body { white-space: normal; }
 .typed [data-line] { white-space: pre-wrap; }
+
+/* Reveal on scroll: `reveal` is added by scripts/ui.ts, so without JS nothing is hidden. */
+.reveal { opacity: 0; transform: translateY(14px); transition: opacity 0.55s ease-out, transform 0.55s ease-out; }
+.reveal.shown { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) { .reveal { opacity: 1; transform: none; transition: none; } }
+
+/* Expandable diagrams and images: a corner button and a zoomable lightbox. */
+.expandable { position: relative; cursor: zoom-in; display: block; }
+.expandable .expand {
+  position: absolute; top: 0.5rem; right: 0.5rem; font: inherit; font-size: 0.72rem;
+  background: var(--bg-2); color: var(--dim); border: 1px solid var(--line); border-radius: 3px;
+  padding: 0.1rem 0.45rem; cursor: pointer; opacity: 0; transition: opacity 0.2s;
+}
+.expandable:hover .expand, .expandable:focus-within .expand { opacity: 1; }
+.expandable .expand:hover { color: var(--mauve); border-color: var(--mauve); }
+.lightbox {
+  border: 1px solid var(--line-2); background: var(--bg-2); color: var(--fg); padding: 0;
+  width: min(96vw, 1600px); height: min(94vh, 1100px); max-width: none; max-height: none;
+  box-shadow: 0 0 40px rgba(203, 166, 247, 0.25);
+}
+.lightbox::backdrop { background: rgba(17, 17, 27, 0.85); backdrop-filter: blur(2px); }
+.lightbox .lb-bar {
+  display: flex; align-items: center; gap: 0.45rem; height: 34px; padding: 0 0.7rem;
+  background: var(--line); border-bottom: 1px solid var(--line); font-size: 0.78rem; color: var(--dim);
+}
+.lightbox .lb-bar .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--line-2); }
+.lightbox .lb-bar .dot.r { background: var(--red); } .lightbox .lb-bar .dot.y { background: var(--amber); } .lightbox .lb-bar .dot.g { background: var(--green); }
+.lightbox .lb-title { margin-left: 0.4rem; color: var(--fg); }
+.lightbox .lb-hint { margin-left: auto; color: var(--faint); }
+.lightbox .lb-zoom { min-width: 3.2em; text-align: center; color: var(--amber); }
+.lightbox .lb-btn { font: inherit; font-size: 0.78rem; background: none; color: var(--dim); border: 1px solid var(--line); border-radius: 3px; padding: 0 0.45rem; cursor: pointer; }
+.lightbox .lb-btn:hover { color: var(--mauve); border-color: var(--mauve); }
+.lightbox .lb-stage { position: absolute; inset: 34px 0 0 0; overflow: hidden; display: grid; place-items: center; cursor: grab; touch-action: none; }
+.lightbox .lb-stage.dragging { cursor: grabbing; }
+.lightbox .lb-inner { transform-origin: center center; will-change: transform; display: grid; place-items: center; }
+.lightbox .lb-inner img { border: 0; max-width: none; height: auto; }
+.lightbox .lb-inner svg { max-width: none; }
+@media (max-width: 700px) { .lightbox .lb-hint { display: none; } }

@@ -77,11 +77,17 @@ const current = (p: string) => (p === "/" ? path === "/" : path.startsWith(p)) ?
           pre.replaceWith(div);
         }
         for (const node of document.querySelectorAll(".mermaid")) {
-          try { await mermaid.run({ nodes: [node] }); }
+          try {
+            await mermaid.run({ nodes: [node] });
+            node.dispatchEvent(new CustomEvent("mermaid:rendered", { bubbles: true }));
+          }
           catch (e) { console.error("mermaid:", e); node.classList.add("mermaid-failed"); }
         }
       </script>
     )}
+    <script>
+      import "../scripts/ui";
+    </script>
     <Analytics />
   </body>
 </html>
