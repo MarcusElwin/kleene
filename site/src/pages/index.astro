@@ -85,6 +85,25 @@ import TypedTerminal from "../components/TypedTerminal.astro";
     </div>
   </section>
 
+
+  <section class="why">
+    <h2>Why build this</h2>
+    <div class="three">
+      <div class="card">
+        <h3>A learning journey</h3>
+        <p>Kleene started as a question worth a few evenings: if a recursive language model's strategies are peek, grep, partition and map, what happens when the model writes them as queries and an engine plans them? Every milestone answered one part of that, from a differential-tested relational core to a planner that prices model calls. The design and its dead ends are in <a href="/docs/plan/">the plan</a>, and the honest gaps in <a href="/docs/writeup/#5-honest-gaps">the write-up</a>.</p>
+      </div>
+      <div class="card">
+        <h3>Shared with the community</h3>
+        <p>Everything is in the open: MIT licensed Rust, the dialect reference, the architecture, the benchmark packs with their fixtures and plots, and a <a href="https://github.com/MarcusElwin/kleene/tree/main/paper">technical report</a>. If the idea is right, others should be able to reproduce it, break it and build on it; if it is wrong, the trace tables will say so in SQL.</p>
+      </div>
+      <div class="card">
+        <h3>Nobody uses SQL like this yet</h3>
+        <p>SQL is usually where the data waits for the program. Since SQL:1999 added <code>WITH RECURSIVE</code> it has been Turing complete (Andrew Gierth ran a cyclic tag system in one PostgreSQL query in 2010), yet almost nobody writes programs in it. Kleene does: the query is the program, a model call is a function, a child session is a recursive call, and the executor runs it to a fixpoint. The pay-off is that forty years of query optimisation apply to agent workflows, and <code>EXPLAIN</code> tells you which complexity fragment you are in (CQ, FO or REC) before anything runs.</p>
+      </div>
+    </div>
+  </section>
+
   <section class="split">
     <div>
       <h2>One query, priced before it runs</h2>
@@ -157,6 +176,8 @@ import TypedTerminal from "../components/TypedTerminal.astro";
   .split { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 2rem; }
   .split h2 { font-size: 1.9rem; }
   .rlm { margin-top: 1rem; }
+  .why .three { margin-top: 0.5rem; margin-bottom: 2.5rem; }
+  .why .card h3 { font-size: 1.5rem; }
   .rlm .split { align-items: start; }
   .rlm .term { margin-top: 0.4rem; }
   .status p:last-child { line-height: 2; }
