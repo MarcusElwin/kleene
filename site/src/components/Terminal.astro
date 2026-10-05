@@ -1,0 +1,9 @@
+---
+/** A CRT-styled terminal window. Put the content in the slot; `title` is the window title. */
+interface Props { title?: string; class?: string; id?: string }
+const { title = "kleene", class: cls = "", id } = Astro.props;
+---
+<div class={`term ${cls}`} id={id}>
+  <div class="term-bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">{title}</span></div>
+  <div class="term-body"><slot /></div>
+</div>

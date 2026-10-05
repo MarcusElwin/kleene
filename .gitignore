@@ -8,5 +8,10 @@
 .claude/worktrees/
 /.claude/
 
+# imported benchmark packs (downloaded on demand, not redistributed)
+/tasks/oolong-*/
+!/tasks/oolong-like/
+/tasks/harvey-lab/
+/tasks/redlining-*/
 # recorded model replies from bench runs; re-record with bench run --record
 /fixtures/

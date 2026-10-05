@@ -5,7 +5,7 @@ note, a default task kind and a list of tasks, each with its text, optional
 context (inline or a file), optional setup commands and source directory for
 a fresh workspace, an optional `check` command that must exit 0 before a
 `FINAL` is accepted, an oracle (`exact`, `number`, `sat`, `shell`, `judge`,
-`human`) and a difficulty prior. `kleene bench run <dir> --mode
+`oolong`, `redline`, `human`) and a difficulty prior. `kleene bench run <dir> --mode
 learning|frozen|plain` runs one; `kleene bench report` summarises every run.
 What the modes, oracles, report columns and plots mean is in
 [`docs/BENCHMARKS.md`](../docs/BENCHMARKS.md).
@@ -24,7 +24,14 @@ Rebuild a frozen pack with `kleene bench build <dir> --from <generator>
 --count N --dial D --seed S`; the same seeds give the same tasks. With
 `--lazy` the pack stores only the generator, dial and seed per task and
 regenerates on load, which is how `logbook-hard` and `memo-rubric` are kept
-small. Import a
-Harvey LAB checkout with `kleene bench import-lab <root> tasks/harvey-lab`
-(matter folders are copied into the pack; LAB's own evaluator remains the
-scorer of record). The external datasets themselves are not redistributed.
+small. Import the real OOLONG with `kleene bench import-oolong
+tasks/oolong-trec` (the `trec_coarse` 128k-token split the RLM paper uses,
+50 questions, `oolong` oracle; `--dataset`, `--context-len` and `--limit`
+pick another slice), UmaiTech's contract redlining sets with `kleene bench
+import-redlining tasks/redlining-1k [--dataset 1k|10k] [--split test|train]`
+(each clause becomes a task with the `redline` oracle holding the reference
+redline) and a Harvey LAB checkout with `kleene bench import-lab
+<checkout>/tasks tasks/harvey-lab [--sample N --seed S]` (matter folders are
+copied into the pack; run with `bench run --outputs <checkout>/results` and
+LAB's own evaluator remains the scorer of record). The external datasets
+themselves are not redistributed; imported packs live outside git.

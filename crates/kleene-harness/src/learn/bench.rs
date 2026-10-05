@@ -18,6 +18,9 @@ use std::path::Path;
 const DDL: &[&str] = &[
     "CREATE TABLE IF NOT EXISTS evals (run VARCHAR, pack VARCHAR, mode VARCHAR, seq INTEGER, task VARCHAR, kind VARCHAR, solved BOOLEAN, detail VARCHAR, calls BIGINT, tokens BIGINT, dollars DOUBLE, depth INTEGER, turns INTEGER, wall_ms BIGINT, recorded_at TIMESTAMP)",
     "CREATE TABLE IF NOT EXISTS bench_runs (run VARCHAR PRIMARY KEY, pack VARCHAR, mode VARCHAR, tasks INTEGER, solved INTEGER, dollars DOUBLE, started_at TIMESTAMP, finished_at TIMESTAMP, note VARCHAR)",
+    // Added after the first runs: the model the `root` alias resolved to,
+    // so one store (or one CSV) can hold results from several models.
+    "ALTER TABLE evals ADD COLUMN IF NOT EXISTS model VARCHAR",
 ];
 
 /// How a pack is run.
@@ -72,6 +75,111 @@ pub struct EvalRow {
     pub dollars: f64,
     /// Turns.
     pub turns: u32,
+    /// Where the task's `output/` was exported (`BenchOptions::outputs`),
+    /// as the run id LAB's evaluator takes.
+    #[serde(default)]
+    pub exported: Option<String>,
+}
+
+/// What a `bench run` covers and keeps, beyond the mode.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct BenchOptions {
+    /// Only the first N tasks (after sampling).
+    pub limit: Option<usize>,
+    /// A seeded sample of `k` tasks, in pack order, instead of the whole
+    /// pack: `(k, seed)`.
+    pub sample: Option<(usize, u64)>,
+    /// Export every task's `output/` directory here in the layout the
+    /// Harvey LAB evaluator reads: `<task id with / for __>/kleene-<mode>/<run>/`
+    /// holding `output/`, `config.json` and `metrics.json`, so
+    /// `lab_core.evaluation.run_eval --run-id <that path> --task <task id>`
+    /// scores it when the directory is the checkout's `results/`.
+    pub outputs: Option<std::path::PathBuf>,
+    /// Continue this earlier run instead of starting one (see
+    /// [`Learn::bench_from`]).
+    pub resume: Option<String>,
+}
+
+/// Copy a finished task's `output/` into `dir` in the layout the Harvey
+/// LAB evaluator reads, and return the LAB run id (`<task>/kleene-<mode>/<run>`).
+/// A pack task id spells the LAB task id with `__` for `/`.
+#[allow(clippy::too_many_arguments)]
+fn export_outputs(
+    dir: &Path,
+    task_id: &str,
+    mode: Mode,
+    run: &str,
+    workspace: &Path,
+    turns: u32,
+    tokens: u64,
+    wall_ms: u64,
+    verdict: &Verdict,
+) -> Result<String, HarnessError> {
+    let lab_task = task_id.replace("__", "/");
+    let lab_run = format!("{lab_task}/kleene-{}/{run}", mode.label());
+    let dest = dir.join(&lab_run);
+    let err = |e: std::io::Error| HarnessError::Config(format!("export {}: {e}", dest.display()));
+    std::fs::create_dir_all(dest.join("output")).map_err(err)?;
+    let out = workspace.join("output");
+    if out.is_dir() {
+        copy_tree(&out, &dest.join("output"))?;
+    }
+    let now = chrono_now();
+    let config = serde_json::json!({
+        "model": format!("kleene-{}", mode.label()),
+        "task": lab_task,
+        "run_id": lab_run,
+        "harness": "kleene",
+        "started_at": now,
+    });
+    let metrics = serde_json::json!({
+        "model": format!("kleene-{}", mode.label()),
+        "task": lab_task,
+        "run_id": lab_run,
+        "turn_count": turns,
+        "input_tokens": tokens,
+        "output_tokens": 0,
+        "total_tokens": tokens,
+        "wall_clock_seconds": wall_ms as f64 / 1000.0,
+        "finished_cleanly": true,
+        "finish_reason": "final",
+        "completed_at": now,
+        "kleene_verdict": { "pass": verdict.pass, "detail": verdict.detail },
+    });
+    std::fs::write(
+        dest.join("config.json"),
+        serde_json::to_string_pretty(&config).unwrap_or_default(),
+    )
+    .map_err(err)?;
+    std::fs::write(
+        dest.join("metrics.json"),
+        serde_json::to_string_pretty(&metrics).unwrap_or_default(),
+    )
+    .map_err(err)?;
+    Ok(lab_run)
+}
+
+fn chrono_now() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    format!("{secs}")
+}
+
+fn copy_tree(from: &Path, to: &Path) -> Result<(), HarnessError> {
+    let err = |e: std::io::Error| HarnessError::Config(format!("copy {}: {e}", from.display()));
+    std::fs::create_dir_all(to).map_err(err)?;
+    for entry in std::fs::read_dir(from).map_err(err)? {
+        let entry = entry.map_err(err)?;
+        let target = to.join(entry.file_name());
+        if entry.path().is_dir() {
+            copy_tree(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), &target).map_err(err)?;
+        }
+    }
+    Ok(())
 }
 
 /// A whole run.
@@ -178,6 +286,39 @@ impl Learn {
         limit: Option<usize>,
         resume: Option<&str>,
     ) -> Result<BenchReport, HarnessError> {
+        self.bench_with(
+            pack_dir,
+            pack,
+            mode,
+            BenchOptions {
+                limit,
+                resume: resume.map(str::to_string),
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    /// [`Learn::bench_from`] with sampling and output export (see
+    /// [`BenchOptions`]). Sampling happens before anything else, so a
+    /// resumed sampled run must be given the same sample and seed.
+    pub async fn bench_with(
+        &self,
+        pack_dir: &Path,
+        pack: &Pack,
+        mode: Mode,
+        options: BenchOptions,
+    ) -> Result<BenchReport, HarnessError> {
+        let sampled;
+        let pack = match options.sample {
+            Some((k, seed)) => {
+                sampled = pack.sampled(k, seed);
+                &sampled
+            }
+            None => pack,
+        };
+        let limit = options.limit;
+        let resume = options.resume.as_deref();
         self.init_bench().await?;
         let (run, mut rows) = match resume {
             Some(run) => (run.to_string(), self.bench_rows(run, pack, mode).await?),
@@ -196,6 +337,13 @@ impl Learn {
         };
         let n = limit.unwrap_or(pack.tasks.len()).min(pack.tasks.len());
         let first = rows.len();
+        // The model behind the solver, as the provider reports it; a replay
+        // or test provider cannot say, and the row's `model` stays NULL.
+        let model: Option<String> = self
+            .harness_cfg()
+            .provider
+            .as_ref()
+            .and_then(|p| p.model_for("root"));
         // Workspaces a later task continues, by the id of the task that left them.
         let mut held: HashMap<String, Workspace> = HashMap::new();
         for (seq, pt) in pack.tasks.iter().enumerate().take(n).skip(first) {
@@ -264,16 +412,27 @@ impl Learn {
                 .await?;
             self.store()
                 .execute(&format!(
-                    "INSERT INTO evals VALUES ({}, {}, {}, {seq}, {}, {}, {}, {}, {calls}, {tokens}, {dollars}, {depth}, {turns}, {wall_ms}, now())",
+                    "INSERT INTO evals (run, pack, mode, seq, task, kind, solved, detail, calls, tokens, dollars, depth, turns, wall_ms, recorded_at, model) \
+                     VALUES ({}, {}, {}, {seq}, {}, {}, {}, {}, {calls}, {tokens}, {dollars}, {depth}, {turns}, {wall_ms}, now(), {})",
                     s(&run),
                     s(&pack.name),
                     s(mode.label()),
                     s(&pt.id),
                     s(&task.kind),
                     verdict.pass,
-                    s(&verdict.detail)
+                    s(&verdict.detail),
+                    model
+                        .as_deref()
+                        .map(s)
+                        .unwrap_or_else(|| "NULL".to_string())
                 ))
                 .await?;
+            let exported = match &options.outputs {
+                Some(dir) => Some(export_outputs(
+                    dir, &pt.id, mode, &run, &workspace, turns, tokens, wall_ms, &verdict,
+                )?),
+                None => None,
+            };
             rows.push(EvalRow {
                 seq,
                 task: pt.id.clone(),
@@ -283,6 +442,7 @@ impl Learn {
                 tokens,
                 dollars,
                 turns,
+                exported,
             });
             if pack
                 .tasks
@@ -355,6 +515,7 @@ impl Learn {
                 tokens: text_at(&b, i, 5).parse().unwrap_or(0),
                 dollars: text_at(&b, i, 6).parse().unwrap_or(0.0),
                 turns: text_at(&b, i, 7).parse().unwrap_or(0),
+                exported: None,
             })
             .collect();
         for (i, r) in rows.iter().enumerate() {
@@ -464,16 +625,16 @@ impl Learn {
         )
     }
 
-    /// Summary per (pack, mode) over every recorded run: tasks, accuracy,
-    /// calls and dollars per task.
+    /// Summary per (pack, mode, model) over every recorded run: tasks,
+    /// accuracy, calls and dollars per task.
     pub async fn bench_summary(&self) -> Result<Batch, HarnessError> {
         self.init_bench().await?;
         Ok(self
             .store()
             .query(
-                "SELECT pack, mode, COUNT(*) AS tasks, ROUND(AVG(CASE WHEN solved THEN 1.0 ELSE 0.0 END), 3) AS accuracy, \
+                "SELECT pack, mode, model, COUNT(*) AS tasks, ROUND(AVG(CASE WHEN solved THEN 1.0 ELSE 0.0 END), 3) AS accuracy, \
                  ROUND(AVG(calls), 2) AS calls_per_task, ROUND(SUM(dollars), 4) AS dollars, ROUND(AVG(tokens)) AS tokens_per_task, \
-                 ROUND(AVG(depth), 2) AS depth FROM evals GROUP BY pack, mode ORDER BY pack, mode",
+                 ROUND(AVG(depth), 2) AS depth FROM evals GROUP BY pack, mode, model ORDER BY pack, mode, model",
             )
             .await?)
     }
@@ -502,10 +663,10 @@ impl Learn {
         self.init_bench().await?;
         let b = self
             .store()
-            .query("SELECT run, pack, mode, seq, task, kind, solved, calls, tokens, dollars, depth, turns, wall_ms FROM evals ORDER BY run, seq")
+            .query("SELECT run, pack, mode, model, seq, task, kind, solved, calls, tokens, dollars, depth, turns, wall_ms FROM evals ORDER BY run, seq")
             .await?;
         let mut out = String::from(
-            "run,pack,mode,seq,task,kind,solved,calls,tokens,dollars,depth,turns,wall_ms\n",
+            "run,pack,mode,model,seq,task,kind,solved,calls,tokens,dollars,depth,turns,wall_ms\n",
         );
         for row in &b.rows {
             let cells: Vec<String> = row
@@ -586,6 +747,7 @@ mod tests {
                     tokens: 10,
                     dollars: 0.01,
                     turns: 1,
+                    exported: None,
                 })
                 .collect(),
         };

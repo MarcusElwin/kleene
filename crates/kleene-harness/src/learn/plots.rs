@@ -34,10 +34,22 @@ pub struct Chart {
     pub diagonal: bool,
     /// Log-scale the y axis (plan-space size).
     pub log_y: bool,
+    /// Start the x axis at zero even when every point is to the right of it
+    /// (spend, so the cheapest point is read against nothing spent).
+    pub x_from_zero: bool,
+    /// Draw a dashed line through the Pareto frontier of every point: the
+    /// points no other point beats on both axes (less x, more y).
+    pub frontier: bool,
+    /// Text drawn next to a point, as `(x, y, text)`.
+    pub annotations: Vec<(f64, f64, String)>,
+    /// The y axis is a rate: it runs from 0 to 1 whatever the points, with
+    /// the ticks written as percentages.
+    pub percent_y: bool,
 }
 
 impl Chart {
-    fn new(title: &str, x_label: &str, y_label: &str) -> Self {
+    /// An empty line chart with these labels.
+    pub fn new(title: &str, x_label: &str, y_label: &str) -> Self {
         Self {
             title: title.into(),
             x_label: x_label.into(),
@@ -46,8 +58,31 @@ impl Chart {
             scatter: false,
             diagonal: false,
             log_y: false,
+            x_from_zero: false,
+            frontier: false,
+            annotations: vec![],
+            percent_y: false,
         }
     }
+}
+
+/// The Pareto frontier of `points`, in increasing x: the points no other
+/// point beats on both axes, where less x and more y is better. Ties on x
+/// keep the higher y; ties on y keep the lower x.
+pub fn pareto_frontier(points: &[(f64, f64)]) -> Vec<(f64, f64)> {
+    let mut sorted: Vec<(f64, f64)> = points.to_vec();
+    sorted.sort_by(|a, b| {
+        a.0.partial_cmp(&b.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal))
+    });
+    let mut out: Vec<(f64, f64)> = vec![];
+    for p in sorted {
+        if out.last().is_none_or(|last| p.1 > last.1) {
+            out.push(p);
+        }
+    }
+    out
 }
 
 const PALETTE: [&str; 8] = [
@@ -114,6 +149,15 @@ pub fn render(chart: &Chart) -> String {
     if !chart.log_y {
         y0 = y0.min(0.0);
     }
+    if chart.x_from_zero {
+        // Room on the right for the label of the most expensive point.
+        x0 = x0.min(0.0);
+        x1 += (x1 - x0) * 0.12;
+    }
+    if chart.percent_y {
+        y0 = 0.0;
+        y1 = 1.0;
+    }
     if (x1 - x0).abs() < 1e-12 {
         x1 = x0 + 1.0;
     }
@@ -122,18 +166,17 @@ pub fn render(chart: &Chart) -> String {
     }
     let sx = |x: f64| left + (x - x0) / (x1 - x0) * pw;
     let sy = |y: f64| top + ph - (y - y0) / (y1 - y0) * ph;
-    // Axes and ticks.
-    out.push_str(&format!(
-        "<line x1=\"{left}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"#444\"/>\n<line x1=\"{left}\" y1=\"{top}\" x2=\"{left}\" y2=\"{}\" stroke=\"#444\"/>\n",
-        top + ph,
-        left + pw,
-        top + ph,
-        top + ph
-    ));
+    // Ticks and grid lines first, then the axes over them, so the grid
+    // line at zero does not hide the x axis.
     for i in 0..=4 {
         let fx = x0 + (x1 - x0) * i as f64 / 4.0;
         let fy = y0 + (y1 - y0) * i as f64 / 4.0;
         let label_y = if chart.log_y { 10f64.powf(fy) } else { fy };
+        let y_text = if chart.percent_y {
+            format!("{:.0}%", label_y * 100.0)
+        } else {
+            fmt_tick(label_y)
+        };
         out.push_str(&format!(
             "<text x=\"{}\" y=\"{}\" text-anchor=\"middle\" fill=\"#444\">{}</text>\n<text x=\"{}\" y=\"{}\" text-anchor=\"end\" fill=\"#444\">{}</text>\n<line x1=\"{left}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"#eee\"/>\n",
             sx(fx),
@@ -141,12 +184,19 @@ pub fn render(chart: &Chart) -> String {
             fmt_tick(fx),
             left - 6.0,
             sy(fy) + 4.0,
-            fmt_tick(label_y),
+            y_text,
             sy(fy),
             left + pw,
             sy(fy)
         ));
     }
+    out.push_str(&format!(
+        "<line x1=\"{left}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"#444\"/>\n<line x1=\"{left}\" y1=\"{top}\" x2=\"{left}\" y2=\"{}\" stroke=\"#444\"/>\n",
+        top + ph,
+        left + pw,
+        top + ph,
+        top + ph
+    ));
     out.push_str(&format!(
         "<text x=\"{}\" y=\"{}\" text-anchor=\"middle\" fill=\"#222\">{}</text>\n<text transform=\"translate(14 {}) rotate(-90)\" text-anchor=\"middle\" fill=\"#222\">{}</text>\n",
         left + pw / 2.0,
@@ -163,6 +213,23 @@ pub fn render(chart: &Chart) -> String {
             sx(x1.min(y1)),
             sy(x1.min(y1))
         ));
+    }
+    if chart.frontier {
+        let all: Vec<(f64, f64)> = chart
+            .series
+            .iter()
+            .flat_map(|s| s.points.iter().copied())
+            .collect();
+        let path: Vec<String> = pareto_frontier(&all)
+            .iter()
+            .map(|&(x, y)| format!("{:.1},{:.1}", sx(x), sy(ty(y))))
+            .collect();
+        if path.len() > 1 {
+            out.push_str(&format!(
+                "<polyline fill=\"none\" stroke=\"#999\" stroke-width=\"1.5\" stroke-dasharray=\"5 4\" points=\"{}\"/>\n",
+                path.join(" ")
+            ));
+        }
     }
     for (i, s) in chart.series.iter().enumerate() {
         let color = PALETTE[i % PALETTE.len()];
@@ -188,6 +255,19 @@ pub fn render(chart: &Chart) -> String {
             left + pw - 186.0,
             ly + 9.0,
             esc(&s.label)
+        ));
+    }
+    for (x, y, text) in &chart.annotations {
+        // To the right of the point, or to its left near the right edge.
+        let (ax, anchor) = if sx(*x) > left + pw - 70.0 {
+            (sx(*x) - 6.0, "end")
+        } else {
+            (sx(*x) + 6.0, "start")
+        };
+        out.push_str(&format!(
+            "<text x=\"{ax:.1}\" y=\"{:.1}\" text-anchor=\"{anchor}\" font-size=\"11\" fill=\"#333\">{}</text>\n",
+            sy(ty(*y)) - 6.0,
+            esc(text)
         ));
     }
     out.push_str("</svg>\n");
@@ -375,5 +455,28 @@ mod tests {
             rolling(&[true, false, true, true], 2),
             vec![1.0, 0.5, 0.5, 1.0]
         );
+    }
+
+    #[test]
+    fn frontier_keeps_the_undominated_points_and_renders_dashed() {
+        let pts = [(1.0, 0.5), (2.0, 0.4), (3.0, 0.9), (0.5, 0.2), (3.0, 0.8)];
+        assert_eq!(
+            pareto_frontier(&pts),
+            vec![(0.5, 0.2), (1.0, 0.5), (3.0, 0.9)]
+        );
+        let mut c = Chart::new("t", "x", "y");
+        c.scatter = true;
+        c.frontier = true;
+        c.x_from_zero = true;
+        c.series.push(Series {
+            label: "m".into(),
+            points: pts.to_vec(),
+        });
+        c.annotations.push((1.0, 0.5, "a < b".into()));
+        c.percent_y = true;
+        let svg = render(&c);
+        assert!(svg.contains("stroke-dasharray=\"5 4\""), "{svg}");
+        assert!(svg.contains("a &lt; b"), "{svg}");
+        assert!(svg.contains(">100%<") && svg.contains(">0%<"), "{svg}");
     }
 }

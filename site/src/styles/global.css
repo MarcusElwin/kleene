@@ -1,0 +1,183 @@
+/* Kleene site: a phosphor terminal in Catppuccin Mocha. Scanlines, glow, the TUI's colours. */
+@import url("https://fonts.googleapis.com/css2?family=VT323&family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&display=swap");
+
+:root {
+  /* Catppuccin Mocha, the TUI's default flavour; roles follow kleene-tui/src/theme.rs. */
+  --bg: #1e1e2e;        /* base */
+  --bg-2: #181825;      /* mantle */
+  --panel: #181825;     /* mantle */
+  --crust: #11111b;
+  --line: #313244;      /* surface0 */
+  --line-2: #45475a;    /* surface1 */
+  --fg: #cdd6f4;        /* text */
+  --dim: #a6adc8;       /* subtext0 */
+  --faint: #6c7086;     /* overlay0 */
+  --mauve: #cba6f7;     /* accent */
+  --green: #a6e3a1;     /* ok, the prompt */
+  --amber: #fab387;     /* peach: money, numbers */
+  --yellow: #f9e2af;
+  --magenta: #f5c2e7;   /* pink: calls, keywords */
+  --cyan: #74c7ec;      /* sapphire: SQL */
+  --sky: #89dceb;
+  --blue: #89b4fa;      /* links */
+  --teal: #94e2d5;      /* tools */
+  --red: #f38ba8;
+  --glow-mauve: 0 0 6px rgba(203, 166, 247, 0.55), 0 0 18px rgba(203, 166, 247, 0.22);
+  --glow-green: 0 0 6px rgba(166, 227, 161, 0.55), 0 0 18px rgba(166, 227, 161, 0.22);
+  --glow-amber: 0 0 6px rgba(250, 179, 135, 0.55), 0 0 18px rgba(250, 179, 135, 0.22);
+  --glow-magenta: 0 0 6px rgba(245, 194, 231, 0.55), 0 0 18px rgba(245, 194, 231, 0.22);
+  --glow-cyan: 0 0 6px rgba(116, 199, 236, 0.55), 0 0 18px rgba(116, 199, 236, 0.22);
+  --display: "VT323", "IBM Plex Mono", ui-monospace, monospace;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --measure: 72ch;
+}
+
+* { box-sizing: border-box; }
+html { background: var(--bg); color-scheme: dark; scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: radial-gradient(ellipse at 50% 0%, #24243a 0%, var(--bg) 55%);
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 15px;
+  line-height: 1.65;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+@media (max-width: 640px) { body { font-size: 14px; } }
+
+/* CRT overlay: scanlines and a soft vignette, non-interactive. */
+body::before {
+  content: "";
+  position: fixed; inset: 0; z-index: 50; pointer-events: none;
+  background: repeating-linear-gradient(0deg, rgba(0,0,0,0) 0px, rgba(0,0,0,0) 2px, rgba(0,0,0,0.18) 3px, rgba(0,0,0,0) 4px);
+  mix-blend-mode: multiply;
+}
+body::after {
+  content: "";
+  position: fixed; inset: 0; z-index: 51; pointer-events: none;
+  background: radial-gradient(ellipse at center, rgba(0,0,0,0) 60%, rgba(0,0,0,0.45) 100%);
+}
+
+a { color: var(--blue); text-decoration: none; }
+a:hover { color: var(--fg); text-shadow: var(--glow-cyan); }
+::selection { background: var(--mauve); color: var(--crust); }
+
+h1, h2, h3, h4 { font-family: var(--display); font-weight: 400; line-height: 1.05; margin: 1.6em 0 0.5em; letter-spacing: 0.01em; }
+h1 { font-size: 3.2rem; color: var(--mauve); text-shadow: var(--glow-mauve); margin-top: 0.4em; }
+h2 { font-size: 2.2rem; color: var(--amber); text-shadow: var(--glow-amber); }
+h3 { font-size: 1.7rem; color: var(--cyan); text-shadow: var(--glow-cyan); }
+h4 { font-size: 1.3rem; color: var(--magenta); }
+h2::before { content: "## "; color: var(--faint); text-shadow: none; }
+h3::before { content: "### "; color: var(--faint); text-shadow: none; }
+p, ul, ol, blockquote, table { margin: 0 0 1.1em; }
+code, pre, kbd { font-family: var(--mono); }
+code { color: var(--amber); font-size: 0.93em; }
+p code, li code, td code { background: rgba(250, 179, 135, 0.1); padding: 0.05em 0.3em; border-radius: 2px; }
+pre {
+  background: var(--panel) !important;
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--mauve);
+  padding: 0.9rem 1rem;
+  overflow-x: auto;
+  font-size: 0.88rem;
+  line-height: 1.55;
+  box-shadow: inset 0 0 40px rgba(0,0,0,0.3);
+}
+pre code { color: inherit; background: none; padding: 0; }
+blockquote { border-left: 2px solid var(--magenta); margin-left: 0; padding-left: 1rem; color: var(--dim); }
+hr { border: 0; border-top: 1px dashed var(--line); margin: 2rem 0; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; display: block; overflow-x: auto; }
+th, td { border: 1px solid var(--line); padding: 0.4rem 0.6rem; text-align: left; vertical-align: top; }
+th { color: var(--mauve); font-weight: 500; background: rgba(203,166,247,0.06); }
+img { max-width: 100%; height: auto; border: 1px solid var(--line); }
+details summary { cursor: pointer; color: var(--amber); }
+
+.wrap { max-width: 1040px; margin: 0 auto; padding: 0 16px; }
+.prose { max-width: var(--measure); }
+.prose h1 a, .prose h2 a, .prose h3 a { color: inherit; }
+.dim { color: var(--dim); }
+.green { color: var(--green); text-shadow: var(--glow-green); }
+.amber { color: var(--amber); text-shadow: var(--glow-amber); }
+.magenta { color: var(--magenta); text-shadow: var(--glow-magenta); }
+.cyan { color: var(--cyan); text-shadow: var(--glow-cyan); }
+
+/* The blinking block cursor. */
+.cursor::after { content: "█"; color: var(--mauve); animation: blink 1s steps(1) infinite; margin-left: 1px; }
+@keyframes blink { 50% { opacity: 0; } }
+
+/* Subtle phosphor flicker on display text; disabled for reduced motion. */
+.flicker { animation: flicker 4s infinite; }
+@keyframes flicker {
+  0%, 97%, 100% { opacity: 1; }
+  98% { opacity: 0.86; }
+  99% { opacity: 0.95; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .flicker, .cursor::after { animation: none; }
+  html { scroll-behavior: auto; }
+}
+
+/* Nav: a menu bar from a 1980s terminal. */
+.topbar {
+  position: sticky; top: 0; z-index: 40;
+  background: rgba(24, 24, 37, 0.92);
+  backdrop-filter: blur(4px);
+  border-bottom: 1px solid var(--line);
+}
+.topbar .wrap { display: flex; align-items: center; gap: 1.2rem; height: 48px; flex-wrap: wrap; }
+.brand { font-family: var(--display); font-size: 1.6rem; color: var(--mauve); text-shadow: var(--glow-mauve); letter-spacing: 0.04em; }
+.brand:hover { color: var(--fg); }
+.nav { display: flex; gap: 1.1rem; margin-left: auto; font-size: 0.86rem; }
+.nav a { color: var(--dim); }
+.nav a[aria-current="page"], .nav a:hover { color: var(--mauve); text-shadow: var(--glow-mauve); }
+.nav a::before { content: "/"; color: var(--line-2); margin-right: 1px; }
+@media (max-width: 640px) { .topbar .wrap { height: auto; padding: 8px 16px; } .nav { margin-left: 0; gap: 0.9rem; flex-wrap: wrap; } }
+
+/* Terminal window chrome used by the landing and overview pages. */
+.term {
+  background: var(--crust);
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  box-shadow: 0 0 0 1px rgba(203,166,247,0.08), 0 0 40px rgba(203,166,247,0.08), 0 20px 60px rgba(0,0,0,0.5);
+  overflow: hidden;
+  margin: 1.5rem 0;
+}
+.term-bar {
+  display: flex; align-items: center; gap: 0.5rem;
+  background: var(--bg-2); border-bottom: 1px solid var(--line-2);
+  padding: 0.4rem 0.8rem; font-size: 0.78rem; color: var(--dim);
+}
+.term-bar .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--line-2); }
+.term-bar .dot.r { background: var(--red); } .term-bar .dot.y { background: var(--yellow); } .term-bar .dot.g { background: var(--green); }
+.term-bar .title { margin-left: 0.6rem; }
+.term-body { padding: 1rem 1.1rem; font-size: 0.86rem; line-height: 1.55; min-height: 8rem; white-space: pre-wrap; overflow-x: auto; }
+.term-body .prompt { color: var(--green); }
+.term-body .cmt { color: var(--faint); font-style: italic; }
+.term-body .sql { color: var(--cyan); }
+.term-body .kw { color: var(--magenta); }
+.term-body .num { color: var(--amber); }
+.term-body .rule { color: var(--line-2); }
+.term-body .ok { color: var(--green); }
+
+.footer { border-top: 1px solid var(--line); margin-top: 4rem; padding: 1.5rem 0 2.5rem; color: var(--dim); font-size: 0.82rem; }
+.footer .wrap { display: flex; flex-wrap: wrap; gap: 1rem 2rem; }
+.footer .made { margin-left: auto; }
+.footer .heart { color: var(--red); text-shadow: 0 0 8px rgba(243, 139, 168, 0.6); animation: beat 2.4s ease-in-out infinite; display: inline-block; }
+@keyframes beat { 0%, 100% { transform: scale(1); } 14% { transform: scale(1.25); } 28% { transform: scale(1); } 42% { transform: scale(1.18); } }
+@media (prefers-reduced-motion: reduce) { .footer .heart { animation: none; } }
+
+/* Mermaid diagrams rendered from ```mermaid fences in the docs. */
+.mermaid { background: var(--panel); border: 1px solid var(--line); padding: 1rem; margin: 0 0 1.1em; overflow-x: auto; }
+.mermaid svg { max-width: 100%; }
+.mermaid-failed { white-space: pre; color: var(--red); font-size: 0.8rem; }
+
+/* TypedTerminal: lines are slotted from the page, so these rules live here, not scoped. */
+.typed [data-line] { display: block; visibility: hidden; }
+  .typed.done [data-line], .typed [data-line].shown { visibility: visible; }
+  .typed [data-line].typing { visibility: visible; }
+  .typed [data-line].typing::after { content: "█"; color: var(--mauve); animation: blink 0.8s steps(1) infinite; }
+  .replay { margin-left: auto; background: none; border: 1px solid var(--line); color: var(--dim); font: inherit; font-size: 0.72rem; padding: 0 0.4rem; cursor: pointer; border-radius: 3px; }
+  .replay:hover { color: var(--mauve); border-color: var(--mauve); }
+.typed .term-body { white-space: normal; }
+.typed [data-line] { white-space: pre-wrap; }

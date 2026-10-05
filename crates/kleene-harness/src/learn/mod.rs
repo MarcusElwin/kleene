@@ -16,6 +16,7 @@ pub mod packs;
 pub mod plain;
 pub mod plots;
 pub mod ratings;
+pub mod results;
 pub mod verify;
 
 use crate::session::{Harness, HarnessConfig, RunReport};

@@ -1,0 +1,70 @@
+---
+/**
+ * A terminal window whose lines appear one at a time. Each child of the slot
+ * must be an element with `data-line`; lines marked `data-type` are typed out
+ * character by character (prompts), the others are printed after `data-wait`
+ * milliseconds (default 120). Honours prefers-reduced-motion by showing all at once.
+ */
+interface Props { title?: string; id?: string }
+const { title = "kleene", id = "typed" } = Astro.props;
+---
+<div class="term typed" id={id} data-typed>
+  <div class="term-bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="title">{title}</span>
+    <button class="replay" type="button" title="replay">↻ replay</button></div>
+  <div class="term-body"><slot /></div>
+</div>
+
+<script>
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  async function play(root: HTMLElement) {
+    const lines = Array.from(root.querySelectorAll<HTMLElement>("[data-line]"));
+    root.classList.remove("done");
+    for (const l of lines) l.classList.remove("shown", "typing");
+    if (reduced) { root.classList.add("done"); return; }
+    const token = String(Date.now());
+    root.dataset.run = token;
+    for (const line of lines) {
+      if (root.dataset.run !== token) return;
+      if (line.hasAttribute("data-type")) {
+        const target = line.querySelector<HTMLElement>("[data-text]") ?? line;
+        const full = target.textContent ?? "";
+        target.textContent = "";
+        line.classList.add("typing");
+        for (const ch of full) {
+          if (root.dataset.run !== token) { target.textContent = full; return; }
+          target.textContent += ch;
+          await sleep(ch === " " ? 40 : 22 + Math.random() * 30);
+        }
+        await sleep(300);
+        line.classList.remove("typing");
+        line.classList.add("shown");
+      } else {
+        await sleep(Number(line.dataset.wait ?? 120));
+        line.classList.add("shown");
+      }
+    }
+    root.classList.add("done");
+  }
+
+  for (const root of document.querySelectorAll<HTMLElement>("[data-typed]")) {
+    // Keep the original text so a replay can retype it.
+    root.querySelectorAll<HTMLElement>("[data-type]").forEach((l) => {
+      const t = l.querySelector<HTMLElement>("[data-text]") ?? l;
+      t.dataset.full = t.textContent ?? "";
+    });
+    const start = () => {
+      root.querySelectorAll<HTMLElement>("[data-type]").forEach((l) => {
+        const t = l.querySelector<HTMLElement>("[data-text]") ?? l;
+        t.textContent = t.dataset.full ?? "";
+      });
+      void play(root);
+    };
+    root.querySelector(".replay")?.addEventListener("click", start);
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) { io.disconnect(); start(); }
+    }, { threshold: 0.2 });
+    io.observe(root);
+  }
+</script>
