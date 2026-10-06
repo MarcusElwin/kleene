@@ -618,7 +618,8 @@ kleene bench run tasks/oolong-like --mode learning --replay fixtures/oolong
 kleene bench run tasks/terminal --mode plain
 kleene bench report && kleene bench csv > evals.csv
 kleene bench results plots/evals.csv plots/haiku-2026-10-01/evals.csv \
-  plots/haiku-2026-10-06/evals.csv plots/luna-2026-10-05/evals.csv --readme README.md \
+  plots/haiku-2026-10-06/evals.csv plots/luna-2026-10-05/evals.csv \
+  plots/opus-2026-10-06/evals.csv --readme README.md \
   --plot coding --plot memo-rubric --plot logbook-hard
 ```
 

@@ -50,6 +50,13 @@ impl Default for ModelSettings {
     }
 }
 
+/// Items per call for a prompt-defined function that does not say `BATCH n`.
+///
+/// One call per row was the default before 6 October 2026; on the hard
+/// packs that made tens of thousands of 40-token calls per task, because
+/// models rarely write `BATCH`. `BATCH 1` turns batching off.
+pub const DEFAULT_BATCH: usize = 20;
+
 /// A prompt-, SQL- or shell-defined function.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DefinedFunction {
@@ -98,10 +105,13 @@ impl DefinedFunction {
         ))
     }
 
-    /// Tuples per call for a batchable prompt body (`BATCH n`).
+    /// Tuples per call for a prompt body: `BATCH n` when declared, otherwise
+    /// [`DEFAULT_BATCH`]; `None` for `BATCH 1` and for every other body.
     pub fn batch(&self) -> Option<usize> {
         match &self.body {
-            FunctionBody::Prompt { batch, .. } => batch.filter(|b| *b > 1),
+            FunctionBody::Prompt { batch, .. } => {
+                Some(batch.unwrap_or(DEFAULT_BATCH)).filter(|b| *b > 1)
+            }
             _ => None,
         }
     }
@@ -985,17 +995,62 @@ impl LiveSink {
 impl LiveSink {
     /// Answer `tuples` of a batchable prompt-defined function in one call:
     /// the template is shown once, the items are numbered, and the model
-    /// returns a JSON array with one answer per item. Anything that does not
-    /// come back as exactly that many answers falls back to one call per
-    /// tuple, so a batch can never change a result, only its cost.
+    /// returns one `{"item": i, "answer": ...}` per item. Items the answer
+    /// leaves out, misnumbers or fills with a value of the wrong type are
+    /// asked again in one more batched call (unless it answered none of
+    /// them, when the memo would only repeat it), and whatever is still missing
+    /// after that costs one call per tuple, so a batch can never change a
+    /// result, only its cost.
     async fn run_defined_batch(
         &self,
         name: &str,
         def: &DefinedFunction,
         tuples: &[Vec<Value>],
     ) -> Result<Vec<Value>, ExecError> {
-        let FunctionBody::Prompt { template, .. } = &def.body else {
+        if !matches!(def.body, FunctionBody::Prompt { .. }) {
             return Err(ExecError::Call(format!("{name} is not a prompt function")));
+        }
+        let mut out: Vec<Option<Value>> = vec![None; tuples.len()];
+        for round in 0..2 {
+            let missing: Vec<usize> = (0..tuples.len()).filter(|i| out[*i].is_none()).collect();
+            // One tuple is a plain call; a batch that answered nothing would
+            // only be served again from the memo.
+            if missing.len() < 2 || (round > 0 && missing.len() == tuples.len()) {
+                break;
+            }
+            if round > 0 {
+                tracing::warn!(
+                    function = name,
+                    items = tuples.len(),
+                    missing = missing.len(),
+                    "batched answer did not cover every item; asking again for the rest"
+                );
+            }
+            let subset: Vec<Vec<Value>> = missing.iter().map(|i| tuples[*i].clone()).collect();
+            let answers = self.batch_call(def, &subset).await?;
+            for (i, v) in missing.into_iter().zip(answers) {
+                out[i] = v;
+            }
+        }
+        let mut done = Vec::with_capacity(tuples.len());
+        for (slot, t) in out.into_iter().zip(tuples) {
+            done.push(match slot {
+                Some(v) => v,
+                None => self.run_defined(name, def.clone(), t).await?,
+            });
+        }
+        Ok(done)
+    }
+
+    /// One batched call over `tuples`: the answer for each tuple that came
+    /// back well-formed, `None` where it did not.
+    async fn batch_call(
+        &self,
+        def: &DefinedFunction,
+        tuples: &[Vec<Value>],
+    ) -> Result<Vec<Option<Value>>, ExecError> {
+        let FunctionBody::Prompt { template, .. } = &def.body else {
+            return Ok(vec![None; tuples.len()]);
         };
         let n = tuples.len();
         let (kind, item_type) = match def.returns {
@@ -1018,53 +1073,84 @@ impl LiveSink {
             prompt.push_str(&format!("{}. {}\n", i + 1, fields.join("; ")));
         }
         prompt.push_str(&format!(
-            "\nReturn a JSON array with exactly {n} elements and nothing else: element i is the answer for item i, as {kind}."
+            "\nReturn JSON only: {{\"answers\": [{{\"item\": 1, \"answer\": ...}}, ...]}} with exactly {n} elements, one per item in order, each answer as {kind}."
         ));
         let schema = serde_json::json!({
-            "type": "array",
-            "items": {"type": item_type},
-            "minItems": n,
-            "maxItems": n
+            "type": "object",
+            "properties": {
+                "answers": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "item": {"type": "integer"},
+                            "answer": {"type": item_type}
+                        },
+                        "required": ["item", "answer"]
+                    },
+                    "minItems": n,
+                    "maxItems": n
+                }
+            },
+            "required": ["answers"]
         });
         let alias = def
             .alias
             .clone()
             .unwrap_or(self.settings().await.default_alias);
         let text = self.model_call(alias, prompt, Some(schema), None).await?;
-        let parsed = serde_json::from_str::<serde_json::Value>(&text).ok();
-        let items: Option<Vec<serde_json::Value>> = match parsed {
-            Some(serde_json::Value::Array(a)) => Some(a),
-            Some(serde_json::Value::Object(o)) => o.into_iter().find_map(|(_, v)| match v {
-                serde_json::Value::Array(a) => Some(a),
-                _ => None,
-            }),
-            _ => None,
-        };
-        let items = match items {
-            Some(a) if a.len() == n => a,
-            _ => {
-                tracing::warn!(
-                    function = name,
-                    items = n,
-                    "batched answer did not have one element per item; retrying one call per tuple"
-                );
-                let mut out = Vec::with_capacity(n);
-                for t in tuples {
-                    out.push(self.run_defined(name, def.clone(), t).await?);
-                }
-                return Ok(out);
-            }
-        };
-        let mut out = Vec::with_capacity(n);
-        for (item, t) in items.into_iter().zip(tuples) {
-            let v = match coerce_json(item, def.returns) {
-                Ok(v) => v,
-                Err(_) => self.run_defined(name, def.clone(), t).await?,
-            };
-            out.push(v);
-        }
-        Ok(out)
+        Ok(place_answers(&text, n, def.returns))
     }
+}
+
+/// Match a batched answer to its items. Elements shaped
+/// `{"item": i, "answer": v}` go to item `i` (1-based); bare elements go by
+/// position when the array has exactly `n` of them. An element whose answer
+/// does not coerce to the return type, a repeated item number and anything
+/// unparseable leave the slot empty.
+fn place_answers(text: &str, n: usize, to: DataType) -> Vec<Option<Value>> {
+    use serde_json::Value as J;
+    let mut out: Vec<Option<Value>> = vec![None; n];
+    let parsed = serde_json::from_str::<J>(text).ok();
+    let items: Vec<J> = match parsed {
+        Some(J::Array(a)) => a,
+        Some(J::Object(o)) => match o.get("answers") {
+            Some(J::Array(a)) => a.clone(),
+            _ => o
+                .into_iter()
+                .find_map(|(_, v)| match v {
+                    J::Array(a) => Some(a),
+                    _ => None,
+                })
+                .unwrap_or_default(),
+        },
+        _ => return out,
+    };
+    let positional = items.len() == n;
+    for (pos, item) in items.into_iter().enumerate() {
+        let (slot, answer) = match item {
+            J::Object(mut o) if o.contains_key("answer") => {
+                let idx = o
+                    .get("item")
+                    .and_then(J::as_u64)
+                    .map(|i| i as usize)
+                    .filter(|i| (1..=n).contains(i))
+                    .map(|i| i - 1)
+                    .or(positional.then_some(pos));
+                let Some(answer) = o.remove("answer") else {
+                    continue;
+                };
+                (idx, answer)
+            }
+            other => (positional.then_some(pos), other),
+        };
+        let Some(slot) = slot else { continue };
+        if out[slot].is_some() {
+            continue;
+        }
+        out[slot] = coerce_json(answer, to).ok();
+    }
+    out
 }
 
 /// One element of a batched answer as a value of the function's return type.
@@ -1392,4 +1478,64 @@ pub fn tool_catalog_entries(tools: &ToolRegistry) -> Vec<FunctionDef> {
 /// Whether a function definition is a side effect that only `CALL` may run.
 pub fn is_side_effect(def: &FunctionDef) -> bool {
     def.volatility == Volatility::Volatile
+}
+
+#[cfg(test)]
+mod batch_tests {
+    use super::*;
+
+    fn texts(v: Vec<Option<Value>>) -> Vec<Option<String>> {
+        v.into_iter().map(|o| o.map(|v| v.render())).collect()
+    }
+
+    #[test]
+    fn indexed_answers_land_on_their_items() {
+        let got = place_answers(
+            r#"{"answers": [{"item": 2, "answer": "b"}, {"item": 1, "answer": "a"}]}"#,
+            3,
+            DataType::Text,
+        );
+        assert_eq!(texts(got), vec![Some("a".into()), Some("b".into()), None]);
+    }
+
+    #[test]
+    fn a_bare_array_of_the_right_length_is_positional() {
+        let got = place_answers(r#"["x", "y"]"#, 2, DataType::Text);
+        assert_eq!(texts(got), vec![Some("x".into()), Some("y".into())]);
+        // The wrong length cannot be matched to items.
+        let got = place_answers(r#"["x"]"#, 2, DataType::Text);
+        assert_eq!(texts(got), vec![None, None]);
+    }
+
+    #[test]
+    fn mistyped_repeated_and_out_of_range_answers_are_left_empty() {
+        let got = place_answers(
+            r#"{"answers": [{"item": 1, "answer": true}, {"item": 1, "answer": false}, {"item": 9, "answer": true}, {"item": 2, "answer": "maybe"}]}"#,
+            2,
+            DataType::Bool,
+        );
+        assert_eq!(got, vec![Some(Value::Bool(true)), None]);
+        assert_eq!(
+            place_answers("not json", 2, DataType::Int),
+            vec![None, None]
+        );
+    }
+
+    #[test]
+    fn prompt_functions_batch_twenty_unless_told_otherwise() {
+        let def = |batch| DefinedFunction {
+            arg_names: vec!["x".into()],
+            arg_types: vec![DataType::Text],
+            returns: DataType::Text,
+            body: FunctionBody::Prompt {
+                template: "{x}".into(),
+                batch,
+            },
+            volatility: Volatility::Immutable,
+            alias: None,
+        };
+        assert_eq!(def(None).batch(), Some(DEFAULT_BATCH));
+        assert_eq!(def(Some(5)).batch(), Some(5));
+        assert_eq!(def(Some(1)).batch(), None);
+    }
 }

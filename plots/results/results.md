@@ -1,12 +1,12 @@
 | Pack | Mode | Model | Tasks | Pass | $/task | Total $ | Calls/task | Tokens/task | Seconds/task |
 |---|---|---|---:|---:|---:|---:|---:|---:|---:|
-| `coding` | learning | Claude Opus 5.5 | | | | | | | |
+| `coding` | learning | Claude Opus 5.5 | 12 | 12/12 (100%) | $0.142 | $1.70 | 8.0 | 88,984 | 35.2 |
 | `coding` | learning | Claude Haiku 4.5 | 12 | 2/12 (17%) | $0.039 | $0.473 | 2.7 | 29,910 | 26.5 |
 | `coding` | learning | GPT-6 Luna | 12 | 10/12 (83%) | $0.002 | $0.020 | 8.2 | 42,094 | 26.2 |
-| `coding` | frozen | Claude Opus 5.5 | | | | | | | |
+| `coding` | frozen | Claude Opus 5.5 | 12 | 12/12 (100%) | $0.109 | $1.31 | 8.6 | 76,533 | 36.9 |
 | `coding` | frozen | Claude Haiku 4.5 | 12 | 2/12 (17%) | $0.072 | $0.868 | 4.6 | 48,375 | 43.9 |
 | `coding` | frozen | GPT-6 Luna | 12 | 11/12 (92%) | $0.002 | $0.023 | 12.1 | 55,286 | 32.6 |
-| `coding` | plain | Claude Opus 5.5 | | | | | | | |
+| `coding` | plain | Claude Opus 5.5 | 12 | 12/12 (100%) | $0.110 | $1.32 | 9.4 | 68,156 | 32.9 |
 | `coding` | plain | Claude Haiku 4.5 | 12 | 4/12 (33%) | $0.065 | $0.776 | 28.6 | 218,019 | 52.6 |
 | `coding` | plain | GPT-6 Luna | 12 | 9/12 (75%) | $0.002 | $0.028 | 10.2 | 27,860 | 51.7 |
 | `finance-synthetic` | learning | Claude Opus 5.5 | 20 | 20/20 (100%) | $0.031 | $0.628 | 2.4 | 29,999 | 10.2 |
@@ -36,13 +36,13 @@
 | `logbook-hard` | plain | Claude Opus 5.5 | | | | | | | |
 | `logbook-hard` | plain | Claude Haiku 4.5 | 10 | 2/10 (20%) | $0.458 | $4.58 | 22.2 | 1,365,343 | 287.1 |
 | `logbook-hard` | plain | GPT-6 Luna | 10 | 3/10 (30%) | $0.007 | $0.074 | 2.3 | 97,000 | 64.2 |
-| `memo-rubric` | learning | Claude Opus 5.5 | | | | | | | |
+| `memo-rubric` | learning | Claude Opus 5.5 | 20 | 4/20 (20%) | $0.062 | $1.24 | 5.3 | 44,064 | 19.2 |
 | `memo-rubric` | learning | Claude Haiku 4.5 | 20 | 11/20 (55%) | $0.018 | $0.365 | 3.8 | 23,041 | 11.9 |
 | `memo-rubric` | learning | GPT-6 Luna | 20 | 18/20 (90%) | $0.001 | $0.019 | 6.1 | 27,683 | 14.5 |
-| `memo-rubric` | frozen | Claude Opus 5.5 | | | | | | | |
+| `memo-rubric` | frozen | Claude Opus 5.5 | 20 | 10/20 (50%) | $0.063 | $1.26 | 5.3 | 40,086 | 21.6 |
 | `memo-rubric` | frozen | Claude Haiku 4.5 | 20 | 8/20 (40%) | $0.065 | $1.30 | 19.9 | 49,043 | 32.2 |
 | `memo-rubric` | frozen | GPT-6 Luna | 20 | 8/20 (40%) | $0.001 | $0.030 | 13.6 | 36,571 | 23.8 |
-| `memo-rubric` | plain | Claude Opus 5.5 | | | | | | | |
+| `memo-rubric` | plain | Claude Opus 5.5 | 20 | 10/20 (50%) | $0.028 | $0.554 | 1.0 | 5,763 | 9.5 |
 | `memo-rubric` | plain | Claude Haiku 4.5 | 20 | 8/20 (40%) | $0.018 | $0.354 | 3.1 | 10,764 | 13.0 |
 | `memo-rubric` | plain | GPT-6 Luna | 20 | 11/20 (55%) | $0.000 | $0.006 | 1.0 | 1,978 | 4.4 |
 | `oolong-like` | learning | Claude Opus 5.5 | 20 | 20/20 (100%) | $0.096 | $1.92 | 3.9 | 41,991 | 16.8 |

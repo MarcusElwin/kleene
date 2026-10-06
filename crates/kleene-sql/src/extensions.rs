@@ -346,8 +346,11 @@ pub fn plan_create_function(text: &str) -> Result<Statement, SqlError> {
                 .ident()
                 .and_then(|t| t.parse::<usize>().ok())
                 .ok_or_else(|| parse_err("BATCH expects a number of items per call", BHINT))?;
-            if n < 2 {
-                return Err(parse_err("BATCH must be at least 2", BHINT));
+            if n < 1 {
+                return Err(parse_err(
+                    "BATCH expects at least 1 item per call (1 turns batching off)",
+                    BHINT,
+                ));
             }
             if !matches!(body, FunctionBody::Prompt { .. }) {
                 return Err(parse_err(
@@ -638,10 +641,20 @@ mod tests {
                 ..
             }
         ));
-        let e =
+        let s =
             plan_create_function("CREATE FUNCTION f(x TEXT) RETURNS TEXT AS PROMPT '{x}' BATCH 1")
+                .unwrap();
+        assert!(matches!(
+            s.kind,
+            StatementKind::CreateFunction {
+                body: FunctionBody::Prompt { batch: Some(1), .. },
+                ..
+            }
+        ));
+        let e =
+            plan_create_function("CREATE FUNCTION f(x TEXT) RETURNS TEXT AS PROMPT '{x}' BATCH 0")
                 .unwrap_err();
-        assert!(e.to_string().contains("at least 2"), "{e}");
+        assert!(e.to_string().contains("at least 1"), "{e}");
         let e = plan_create_function(
             "CREATE FUNCTION f(x TEXT) RETURNS TEXT AS SHELL 'echo {x}' BATCH 4",
         )

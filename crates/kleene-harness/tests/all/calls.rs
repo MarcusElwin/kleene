@@ -65,11 +65,11 @@ async fn verify_and_refute_pitch_query_with_explain_analyze() {
         .await;
     assert!(out.iter().all(|o| !o.is_error), "{}", text(&out));
     let out = r
-        .submit("CREATE FUNCTION verify(c TEXT) RETURNS BOOLEAN AS PROMPT 'Is candidate ''{c}'' a good idea?'")
+        .submit("CREATE FUNCTION verify(c TEXT) RETURNS BOOLEAN AS PROMPT 'Is candidate ''{c}'' a good idea?' BATCH 1")
         .await;
     assert!(!out[0].is_error, "{}", out[0].text);
     let out = r
-        .submit("CREATE FUNCTION refute(c TEXT, ce TEXT) RETURNS BOOLEAN AS PROMPT 'Is it refuted by ''{ce}'' -- candidate ''{c}''?'")
+        .submit("CREATE FUNCTION refute(c TEXT, ce TEXT) RETURNS BOOLEAN AS PROMPT 'Is it refuted by ''{ce}'' -- candidate ''{c}''?' BATCH 1")
         .await;
     assert!(!out[0].is_error, "{}", out[0].text);
     let sql = "SELECT candidate FROM possibilities WHERE verify(candidate) AND NOT EXISTS (SELECT 1 FROM counterexamples ce WHERE refute(candidate, ce.text)) ORDER BY candidate";
@@ -265,9 +265,9 @@ async fn planner_cascade_refusal_and_sampled_selectivity_in_the_repl() {
     let out = r
         .submit(
             "CREATE TABLE t AS SELECT 'row ' || generate_series AS x FROM generate_series(1, 4); \
-             CREATE FUNCTION score(t TEXT) RETURNS DOUBLE AS PROMPT 'Score {t} from 0 to 1' MODEL 'proxy'; \
-             CREATE FUNCTION rel(t TEXT) RETURNS BOOLEAN AS PROMPT 'Is {t} relevant?' PROXY score THRESHOLDS (0.2, 0.8); \
-             CREATE FUNCTION ok(t TEXT) RETURNS BOOLEAN AS PROMPT 'Is {t} ok?'",
+             CREATE FUNCTION score(t TEXT) RETURNS DOUBLE AS PROMPT 'Score {t} from 0 to 1' MODEL 'proxy' BATCH 1; \
+             CREATE FUNCTION rel(t TEXT) RETURNS BOOLEAN AS PROMPT 'Is {t} relevant?' BATCH 1 PROXY score THRESHOLDS (0.2, 0.8); \
+             CREATE FUNCTION ok(t TEXT) RETURNS BOOLEAN AS PROMPT 'Is {t} ok?' BATCH 1",
         )
         .await;
     assert!(out.iter().all(|o| !o.is_error), "{}", text(&out));
@@ -337,7 +337,8 @@ async fn batch_functions_answer_many_rows_in_one_call() {
     assert!(!out[0].is_error, "{}", out[0].text);
     assert!(out[0].text.contains("vegetable"), "{}", out[0].text);
     assert_eq!(p.calls(), 1, "one batched call for three distinct rows");
-    // A malformed batch answer falls back to one call per tuple.
+    // A batch answer that covers nothing falls back to one call per tuple
+    // (asking the same batch again would only hit the memo).
     let p2 = Arc::new(ScriptedProvider::new(vec![("Classify", "fruit")], "[]"));
     let f2 = repl(p2.clone()).await;
     let out = f2
@@ -350,6 +351,16 @@ async fn batch_functions_answer_many_rows_in_one_call() {
         .await;
     assert!(out.iter().all(|o| !o.is_error), "{}", text(&out));
     assert_eq!(p2.calls(), 3, "one failed batch, then one call per tuple");
+    // Without BATCH a prompt function batches 20 per call.
+    let out = f2
+        .repl
+        .submit(
+            "CREATE FUNCTION kind2(x TEXT) RETURNS TEXT AS PROMPT 'Sort {x}.'; \
+             EXPLAIN SELECT kind2(x) FROM t",
+        )
+        .await;
+    assert!(out.iter().all(|o| !o.is_error), "{}", text(&out));
+    assert!(out[1].text.contains("×20"), "{}", out[1].text);
     drop(f.dir);
     drop(f2.dir);
 }
