@@ -10,7 +10,7 @@ const totalTasks = rows.length;
 const totalDollars = rows.reduce((a, r) => a + r.dollars, 0);
 const totalCalls = rows.reduce((a, r) => a + r.calls, 0);
 
-const MODELS = RUNS.map((r) => ({ id: r.model, label: r.label, date: r.date, plots: r.plots, csv: r.csv, note: r.note }));
+const MODELS = RUNS.map((r) => ({ id: r.model, label: r.label, date: r.date, plots: r.plots, csv: r.csv, csvs: [r.csv, ...(r.csvs ?? [])], note: r.note }));
 const DATA = JSON.stringify({ cells, packs, modes: MODES, models: MODELS });
 const PLOTS = [
   ["learning_curve.svg", "Learning curve", "task number against rolling-5 accuracy, one line per run; a learning line that rises while frozen stays flat is the playbook working"],
@@ -80,7 +80,7 @@ const PLOTS = [
     <p>What <code>bench plot</code> wrote beside each run's rows, for the models selected above.</p>
     {MODELS.map((r) => (
       <section class="run" data-model={r.id}>
-        <p class="dim"><b>{r.label}, {r.date}.</b> {r.note}. Rows: <a href={`https://github.com/MarcusElwin/kleene/blob/main/${r.csv}`}><code>{r.csv}</code></a>.</p>
+        <p class="dim"><b>{r.label}, {r.date}.</b> {r.note}. Rows: {r.csvs.map((c, i) => (<>{i > 0 ? ", " : ""}<a href={`https://github.com/MarcusElwin/kleene/blob/main/${c}`}><code>{c}</code></a></>))}.</p>
         <div class="plots">
           {PLOTS.map(([file, title, what]) => (
             <figure>
@@ -94,7 +94,7 @@ const PLOTS = [
 
     <h2>Reproduce</h2>
     <Terminal title="sh">
-<span class="cmt"># a pack, one mode, with a fresh store per mode</span>&#10;<span class="prompt">$</span> kleene bench run tasks/oolong-like --mode frozen&#10;<span class="prompt">$</span> kleene bench run tasks/oolong-like --mode learning&#10;<span class="prompt">$</span> kleene bench run tasks/oolong-like --mode plain&#10;&#10;<span class="cmt"># the table, the rows and the plots</span>&#10;<span class="prompt">$</span> kleene bench report&#10;<span class="prompt">$</span> kleene bench csv > plots/&lt;model-date&gt;/evals.csv&#10;<span class="prompt">$</span> kleene bench plot plots/&lt;model-date&gt;&#10;&#10;<span class="cmt"># the README's results table and Pareto plots from every committed CSV</span>&#10;<span class="prompt">$</span> kleene bench results plots/evals.csv plots/haiku-2026-10-01/evals.csv --out plots/results --readme README.md</Terminal>
+<span class="cmt"># a pack, one mode, with a fresh store per mode</span>&#10;<span class="prompt">$</span> kleene bench run tasks/oolong-like --mode frozen&#10;<span class="prompt">$</span> kleene bench run tasks/oolong-like --mode learning&#10;<span class="prompt">$</span> kleene bench run tasks/oolong-like --mode plain&#10;&#10;<span class="cmt"># the table, the rows and the plots</span>&#10;<span class="prompt">$</span> kleene bench report&#10;<span class="prompt">$</span> kleene bench csv > plots/&lt;model-date&gt;/evals.csv&#10;<span class="prompt">$</span> kleene bench plot plots/&lt;model-date&gt;&#10;&#10;<span class="cmt"># the README's results table and Pareto plots from every committed CSV</span>&#10;<span class="prompt">$</span> kleene bench results plots/*/evals.csv plots/evals.csv --out plots/results --readme README.md</Terminal>
     <p>A learning run replays candidates against earlier tasks, so budget about $45 for a full sweep of the first four packs at <code>replay_sample 3</code>, and use <code>bench run --resume &lt;run-id&gt;</code> after an interruption. Every model call is memoised, so a second run of the same pack in the same store is free, which is also why a clean comparison wants a fresh store per mode.</p>
     <div class="tip" id="tip" hidden></div>
   </div>

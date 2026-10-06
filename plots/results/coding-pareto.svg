@@ -23,6 +23,7 @@
 <polyline fill="none" stroke="#999" stroke-width="1.5" stroke-dasharray="5 4" points="77.1,94.7 78.8,67.3"/>
 <circle cx="371.1" cy="313.3" r="3" fill="#1f77b4"/>
 <circle cx="628.3" cy="313.3" r="3" fill="#1f77b4"/>
+<circle cx="568.5" cy="258.7" r="3" fill="#1f77b4"/>
 <rect x="496" y="46" width="10" height="10" fill="#1f77b4"/>
 <text x="510" y="55" fill="#222">Claude Haiku 4.5</text>
 <circle cx="77.1" cy="94.7" r="3" fill="#d62728"/>
@@ -32,6 +33,7 @@
 <text x="510" y="71" fill="#222">GPT-6 Luna</text>
 <text x="377.1" y="307.3" text-anchor="start" font-size="11" fill="#333">learning</text>
 <text x="622.3" y="307.3" text-anchor="end" font-size="11" fill="#333">frozen</text>
+<text x="574.5" y="252.7" text-anchor="start" font-size="11" fill="#333">plain</text>
 <text x="83.1" y="88.7" text-anchor="start" font-size="11" fill="#333">learning</text>
 <text x="84.8" y="61.3" text-anchor="start" font-size="11" fill="#333">frozen</text>
 <text x="88.3" y="116.0" text-anchor="start" font-size="11" fill="#333">plain</text>
