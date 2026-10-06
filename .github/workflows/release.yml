@@ -9,9 +9,17 @@ name: Release
 #     no tag `v<version>` exists yet, the release job creates it on the merge
 #     commit and publishes. Bumping the version in a PR is the release button.
 #   * a pushed tag `v*`, for releasing a commit by hand.
-#   * "Run workflow" with an existing tag, to rebuild a release.
+#   * "Run workflow": with a tag, rebuilds that release; with the tag left
+#     empty, releases the version main is at, if it has no tag yet.
 # A merge that does not change the version runs only the short `version`
 # job and stops.
+#
+# The release itself is created with the `RELEASE_TOKEN` secret when it is
+# set: a fine-grained personal access token for this repository with
+# Contents: read and write. GitHub refuses release creation from the
+# workflow's own GITHUB_TOKEN here (403 "Resource not accessible by
+# integration" on the first run, 6 October 2026), so the secret is what
+# makes the publish job work; without it the job falls back to GITHUB_TOKEN.
 #
 # DuckDB is compiled from source inside the build, so each target takes ten
 # to fifteen minutes; the cargo cache keeps re-runs on the same toolchain fast.
@@ -24,8 +32,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing tag to build and publish (e.g. v0.1.0)"
-        required: true
+        description: "Existing tag to rebuild and publish (e.g. v0.1.0); empty releases the version in Cargo.toml on main"
+        required: false
+        default: ""
 
 env:
   CARGO_TERM_COLOR: always
@@ -48,6 +57,8 @@ jobs:
       - name: Pick the tag
         id: pick
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           publish=true
@@ -55,7 +66,14 @@ jobs:
             tag="${{ github.event.inputs.tag }}"
           elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
             tag="$GITHUB_REF_NAME"
+            # The tag a release run itself creates arrives here as a push;
+            # its release already exists, so there is nothing to do.
+            if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "::notice::$tag already has a release; nothing to do"
+              publish=false
+            fi
           else
+            # A push to main, or a dispatch with the tag left empty.
             version="$(cargo metadata --no-deps --format-version 1 \
               | jq -r '.packages[] | select(.name == "kleene") | .version')"
             tag="v$version"
@@ -156,6 +174,7 @@ jobs:
         with:
           # Creates the tag on this commit when it does not exist yet (a
           # version bump merged to main); reuses it otherwise.
+          token: ${{ secrets.RELEASE_TOKEN || github.token }}
           tag_name: ${{ needs.version.outputs.tag }}
           target_commitish: ${{ github.sha }}
           generate_release_notes: true
