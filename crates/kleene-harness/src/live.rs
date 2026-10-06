@@ -997,7 +997,8 @@ impl LiveSink {
     /// the template is shown once, the items are numbered, and the model
     /// returns one `{"item": i, "answer": ...}` per item. Items the answer
     /// leaves out, misnumbers or fills with a value of the wrong type are
-    /// asked again in one more batched call, and whatever is still missing
+    /// asked again in one more batched call (unless it answered none of
+    /// them, when the memo would only repeat it), and whatever is still missing
     /// after that costs one call per tuple, so a batch can never change a
     /// result, only its cost.
     async fn run_defined_batch(
@@ -1012,7 +1013,9 @@ impl LiveSink {
         let mut out: Vec<Option<Value>> = vec![None; tuples.len()];
         for round in 0..2 {
             let missing: Vec<usize> = (0..tuples.len()).filter(|i| out[*i].is_none()).collect();
-            if missing.len() < 2 {
+            // One tuple is a plain call; a batch that answered nothing would
+            // only be served again from the memo.
+            if missing.len() < 2 || (round > 0 && missing.len() == tuples.len()) {
                 break;
             }
             if round > 0 {
