@@ -16,7 +16,9 @@ on:
       - "LICENSE"
       - "Formula/**"
       - "install.sh"
-      - "ci/**"
+      - "site/**"
+      - "wiki/**"
+      - "paper/**"
   pull_request:
     paths-ignore:
       - "**.md"
@@ -24,12 +26,18 @@ on:
       - "LICENSE"
       - "Formula/**"
       - "install.sh"
-      - "ci/**"
+      - "site/**"
+      - "wiki/**"
+      - "paper/**"
 
-# A new push supersedes the run it replaces. At ~30 min a job that matters.
+# On a PR a new push supersedes the run it replaces; at ~30 min a job that
+# matters. On main the runs queue instead: two merges 35 s apart once left
+# the newer head with its test job cancelled, and re-running the older run
+# from the Actions page cancelled the newer one's test a second time (the
+# re-run joins the same group), so main's head had no test result at all.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -52,12 +60,15 @@ env:
   SCCACHE_GHA_ENABLED: "true"
 
 jobs:
+  # ubuntu-latest moves to Ubuntu 26 on 2026-10-19 (actions/runner-images
+  # #14748); pinned so the image, and with it sccache's hit rate on the
+  # DuckDB objects, only changes when we say so.
   fmt:
     name: fmt
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -65,15 +76,15 @@ jobs:
 
   clippy:
     name: clippy, doc
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Cold, clippy alone is ~15 min (bundled DuckDB under the check profile).
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # DuckDB builds at ~4 GB per profile variant and every test binary
       # that links the store carries it. Without this, lld dies with SIGBUS
-      # part-way through linking callgebra-difftest.
+      # part-way through linking the kleene-difftest test binary.
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
@@ -84,7 +95,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: mozilla-actions/sccache-action@v0.0.11
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: clippy
@@ -98,18 +109,21 @@ jobs:
         run: cargo doc --workspace --no-deps
         env:
           RUSTDOCFLAGS: "-D warnings"
+      # Not `always()`: a job cancelled before sccache was installed (the
+      # concurrency group cancelling it during "Free disk space") then ran
+      # this step and failed it with "sccache: command not found".
       - name: Cache stats
-        if: always()
+        if: ${{ !cancelled() }}
         run: |
-          sccache --show-stats
+          command -v sccache >/dev/null && sccache --show-stats
           df -h /
 
   test:
     name: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Free disk space
         run: |
@@ -119,7 +133,7 @@ jobs:
           df -h /
 
       - uses: dtolnay/rust-toolchain@stable
-      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: mozilla-actions/sccache-action@v0.0.11
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: test
@@ -127,8 +141,11 @@ jobs:
 
       - name: Test
         run: cargo test --workspace --all-features
+      # Not `always()`: a job cancelled before sccache was installed (the
+      # concurrency group cancelling it during "Free disk space") then ran
+      # this step and failed it with "sccache: command not found".
       - name: Cache stats
-        if: always()
+        if: ${{ !cancelled() }}
         run: |
-          sccache --show-stats
+          command -v sccache >/dev/null && sccache --show-stats
           df -h /
