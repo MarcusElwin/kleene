@@ -21,12 +21,140 @@ use std::time::Duration;
 /// Default API base (OpenAI itself).
 pub const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 
+/// The key a non-object output schema is wrapped under; see [`strict_schema`].
+pub const WRAP_KEY: &str = "output";
+
+/// The schema as OpenAI's strict structured outputs accept it, and whether
+/// the model's answer arrives wrapped.
+///
+/// Strict mode wants the root to be an object with every property required
+/// and `additionalProperties: false`; the same rewrite the Anthropic adapter
+/// applies ([`super::anthropic::normalize_schema`]) supplies those. A root
+/// that is not an object (`{"type": "array", ...}`, a bare string or number
+/// schema) is wrapped as the single required property [`WRAP_KEY`] of an
+/// object, and [`unwrap_output`] takes it back out of the reply, so the
+/// caller sees the JSON shape it asked for.
+pub fn strict_schema(schema: &Value) -> (Value, bool) {
+    let mut normalized = strictify(&super::anthropic::normalize_schema(schema));
+    // The Anthropic rewrite lowers `minItems` to 1 (that API takes no
+    // more); OpenAI's strict mode enforces the exact count, so an array
+    // root keeps the bound it asked for.
+    if let (Some(min), Value::Object(map)) = (schema.get("minItems"), &mut normalized) {
+        map.insert("minItems".into(), min.clone());
+    }
+    let is_object = normalized.get("type").and_then(Value::as_str) == Some("object");
+    if is_object {
+        (normalized, false)
+    } else {
+        (
+            json!({
+                "type": "object",
+                "properties": { WRAP_KEY: normalized },
+                "required": [WRAP_KEY],
+                "additionalProperties": false
+            }),
+            true,
+        )
+    }
+}
+
+/// What strict mode insists on beyond the shared rewrite, applied at every
+/// level: a schema with neither a `type` nor a combinator is a string, and
+/// an object's `required` lists every property (a model-written schema
+/// often names only some, which strict mode rejects outright).
+fn strictify(schema: &Value) -> Value {
+    let Value::Object(map) = schema else {
+        return schema.clone();
+    };
+    let mut map = map.clone();
+    let combinator = ["anyOf", "oneOf", "allOf", "enum", "const", "$ref"]
+        .iter()
+        .any(|k| map.contains_key(*k));
+    if !map.contains_key("type") && !combinator {
+        map.insert("type".into(), json!("string"));
+    }
+    for key in ["anyOf", "oneOf", "allOf"] {
+        if let Some(Value::Array(items)) = map.get(key).cloned() {
+            map.insert(
+                key.into(),
+                Value::Array(items.iter().map(strictify).collect()),
+            );
+        }
+    }
+    let is_object = map.get("type").and_then(Value::as_str) == Some("object");
+    let props = match map.get("properties").cloned() {
+        Some(Value::Object(props)) => Some(props),
+        // An object with no properties at all (a model wrote only
+        // `required`): strict mode still wants the two lists, matching.
+        _ if is_object => Some(Map::new()),
+        _ => None,
+    };
+    if let Some(props) = props {
+        let keys: Vec<Value> = props.keys().map(|k| json!(k)).collect();
+        let props: Map<String, Value> =
+            props.into_iter().map(|(k, v)| (k, strictify(&v))).collect();
+        map.insert("properties".into(), Value::Object(props));
+        map.insert("required".into(), Value::Array(keys));
+        map.insert("additionalProperties".into(), json!(false));
+    }
+    if let Some(items) = map.get("items").cloned() {
+        map.insert("items".into(), strictify(&items));
+    }
+    Value::Object(map)
+}
+
+/// Undo [`strict_schema`]'s wrapping on a reply: the text content, parsed
+/// as JSON, is replaced by its [`WRAP_KEY`] member. Text that is not an
+/// object with that member is left alone.
+pub fn unwrap_output(resp: &mut CompletionResponse) {
+    let text = resp.text();
+    let Ok(Value::Object(mut map)) = serde_json::from_str::<Value>(&text) else {
+        return;
+    };
+    let Some(inner) = map.remove(WRAP_KEY) else {
+        return;
+    };
+    resp.content
+        .retain(|b| !matches!(b, ContentBlock::Text { .. }));
+    resp.content.insert(
+        0,
+        ContentBlock::Text {
+            text: inner.to_string(),
+        },
+    );
+}
+
 /// Chat-completions backend.
 pub struct OpenAiCompatProvider {
     client: reqwest::Client,
     api_key: Option<String>,
     base_url: String,
     backoff: Vec<Duration>,
+    /// The request field that carries the output token limit: see
+    /// [`completion_limit_field`].
+    limit_field: &'static str,
+}
+
+/// The name of the output token limit field for a server at `base_url`.
+///
+/// OpenAI's own endpoint (`api.openai.com`) rejects `max_tokens` for every
+/// GPT-5 and GPT-6 model (`Unsupported parameter: 'max_tokens' is not
+/// supported with this model. Use 'max_completion_tokens' instead.`), so
+/// first-party requests send `max_completion_tokens`. Every other
+/// compatible server (local servers, gateways, older proxies) still gets
+/// `max_tokens`, which all of them accept.
+pub fn completion_limit_field(base_url: &str) -> &'static str {
+    let host = base_url
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .split('/')
+        .next()
+        .unwrap_or("");
+    if host == "api.openai.com" || host.ends_with(".api.openai.com") {
+        "max_completion_tokens"
+    } else {
+        "max_tokens"
+    }
 }
 
 impl std::fmt::Debug for OpenAiCompatProvider {
@@ -48,6 +176,7 @@ impl OpenAiCompatProvider {
                 .build()
                 .unwrap_or_default(),
             api_key,
+            limit_field: completion_limit_field(&base_url),
             base_url: base_url.trim_end_matches('/').to_string(),
             backoff: DEFAULT_BACKOFF.to_vec(),
         }
@@ -85,9 +214,17 @@ impl OpenAiCompatProvider {
     /// mapping is testable and can be logged by the trace.
     ///
     /// `max_tokens` is sent as `max_tokens`, which every compatible server
-    /// accepts; a server that insists on `max_completion_tokens` can be given
-    /// it through `options.extra` (extra keys override defaults).
+    /// accepts, except to OpenAI itself, where the adapter sends
+    /// `max_completion_tokens` (see [`completion_limit_field`]); a server
+    /// that insists on another name can be given it through `options.extra`
+    /// (extra keys override defaults).
     pub fn build_body(req: &CompletionRequest) -> Value {
+        Self::build_body_with_limit(req, "max_tokens")
+    }
+
+    /// [`build_body`](Self::build_body) with the output token limit under
+    /// `limit_field`.
+    pub fn build_body_with_limit(req: &CompletionRequest, limit_field: &str) -> Value {
         let mut messages = Vec::new();
         if !req.system.is_empty() {
             messages.push(json!({"role": "system", "content": req.system}));
@@ -98,7 +235,7 @@ impl OpenAiCompatProvider {
         let mut body = Map::new();
         body.insert("model".into(), json!(req.model));
         body.insert("messages".into(), Value::Array(messages));
-        body.insert("max_tokens".into(), json!(req.max_tokens));
+        body.insert(limit_field.to_string(), json!(req.max_tokens));
         if !req.tools.is_empty() {
             let tools = req
                 .tools
@@ -117,6 +254,7 @@ impl OpenAiCompatProvider {
             body.insert("tools".into(), Value::Array(tools));
         }
         if let Some(schema) = &req.output_schema {
+            let (schema, _) = strict_schema(schema);
             body.insert(
                 "response_format".into(),
                 json!({
@@ -535,20 +673,41 @@ impl Provider for OpenAiCompatProvider {
     }
 
     async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse, ProviderError> {
-        let body = Self::build_body(&req);
+        let wrapped = req
+            .output_schema
+            .as_ref()
+            .is_some_and(|s| strict_schema(s).1);
+        let body = Self::build_body_with_limit(&req, self.limit_field);
         let resp = http::send(&self.backoff, || self.request(&body)).await?;
         let text = resp
             .text()
             .await
             .map_err(|e| ProviderError::Network(http::describe(&e)))?;
-        Self::parse_response(&text)
+        let mut parsed = Self::parse_response(&text)?;
+        if wrapped {
+            unwrap_output(&mut parsed);
+        }
+        Ok(parsed)
     }
 
     async fn stream(
         &self,
         req: CompletionRequest,
     ) -> Result<BoxStream<'static, Result<StreamEvent, ProviderError>>, ProviderError> {
-        let mut body = Self::build_body(&req);
+        if req
+            .output_schema
+            .as_ref()
+            .is_some_and(|s| strict_schema(s).1)
+        {
+            // A wrapped schema's reply has to be unwrapped whole, so the
+            // call is made unstreamed and replayed as one delta.
+            let resp = self.complete(req).await?;
+            return Ok(Box::pin(futures::stream::iter(vec![
+                Ok(StreamEvent::TextDelta { text: resp.text() }),
+                Ok(StreamEvent::Done(resp)),
+            ])));
+        }
+        let mut body = Self::build_body_with_limit(&req, self.limit_field);
         body["stream"] = json!(true);
         body["stream_options"] = json!({"include_usage": true});
         let resp = http::send(&self.backoff, || self.request(&body)).await?;
@@ -617,6 +776,97 @@ mod tests {
     }
 
     #[test]
+    fn openai_itself_gets_max_completion_tokens() {
+        assert_eq!(
+            completion_limit_field("https://api.openai.com/v1"),
+            "max_completion_tokens"
+        );
+        assert_eq!(
+            completion_limit_field("http://localhost:11434/v1"),
+            "max_tokens"
+        );
+        assert_eq!(
+            completion_limit_field("https://gateway.example.com/openai/v1"),
+            "max_tokens"
+        );
+        let p = OpenAiCompatProvider::new(Some("k".into()), DEFAULT_BASE_URL.into());
+        let body = OpenAiCompatProvider::build_body_with_limit(&req(), p.limit_field);
+        assert_eq!(body["max_completion_tokens"], 256);
+        assert!(body.get("max_tokens").is_none());
+        let local = OpenAiCompatProvider::new(None, "http://localhost:11434/v1".into());
+        assert_eq!(local.limit_field, "max_tokens");
+    }
+
+    #[test]
+    fn non_object_schemas_are_wrapped_and_unwrapped() {
+        let (array, wrapped) = strict_schema(
+            &json!({"type": "array", "items": {"type": "string"}, "minItems": 20, "maxItems": 20}),
+        );
+        assert!(wrapped);
+        assert_eq!(array["type"], "object");
+        assert_eq!(array["properties"]["output"]["minItems"], 20);
+        assert_eq!(array["properties"]["output"]["maxItems"], 20);
+        assert_eq!(array["required"], json!(["output"]));
+        assert_eq!(array["additionalProperties"], false);
+        assert_eq!(array["properties"]["output"]["type"], "array");
+
+        let (object, wrapped) =
+            strict_schema(&json!({"type": "object", "properties": {"ok": {"type": "boolean"}}}));
+        assert!(!wrapped);
+        assert_eq!(object["required"], json!(["ok"]));
+        assert_eq!(object["additionalProperties"], false);
+
+        // Model-written schemas: a property without a type, a partial
+        // `required`, nested objects.
+        let (loose, wrapped) = strict_schema(&json!({
+            "type": "object",
+            "properties": {
+                "name": {"description": "who"},
+                "hours": {"type": "integer"},
+                "tags": {"type": "array", "items": {"properties": {"k": {"type": "string"}}}}
+            },
+            "required": ["name"]
+        }));
+        assert!(!wrapped);
+        assert_eq!(loose["properties"]["name"]["type"], "string");
+        assert_eq!(loose["required"], json!(["hours", "name", "tags"]));
+        let inner = &loose["properties"]["tags"]["items"];
+        assert_eq!(inner["type"], "object");
+        assert_eq!(inner["required"], json!(["k"]));
+        assert_eq!(inner["additionalProperties"], false);
+
+        let (bare, _) = strict_schema(&json!({"type": "object", "required": ["output"]}));
+        assert_eq!(bare["properties"], json!({}));
+        assert_eq!(bare["required"], json!([]));
+
+        let mut r = req();
+        r.output_schema = Some(json!({"type": "array", "items": {"type": "integer"}}));
+        let body = OpenAiCompatProvider::build_body(&r);
+        assert_eq!(
+            body["response_format"]["json_schema"]["schema"]["type"],
+            "object"
+        );
+
+        let mut resp = CompletionResponse {
+            model: "m".into(),
+            content: vec![ContentBlock::Text {
+                text: r#"{"output":[1,2,3]}"#.into(),
+            }],
+            stop_reason: StopReason::EndTurn,
+            usage: Usage::default(),
+        };
+        unwrap_output(&mut resp);
+        assert_eq!(resp.text(), "[1,2,3]");
+
+        let mut plain = resp.clone();
+        plain.content = vec![ContentBlock::Text {
+            text: r#"{"ok":true}"#.into(),
+        }];
+        unwrap_output(&mut plain);
+        assert_eq!(plain.text(), r#"{"ok":true}"#);
+    }
+
+    #[test]
     fn body_maps_every_field() {
         let body = OpenAiCompatProvider::build_body(&req());
         assert_eq!(body["model"], "gpt-5.4-mini");
@@ -643,7 +893,8 @@ mod tests {
             body["response_format"],
             json!({"type": "json_schema", "json_schema": {
                 "name": "output", "strict": true,
-                "schema": {"type": "object", "properties": {"ok": {"type": "boolean"}}}}})
+                "schema": {"type": "object", "properties": {"ok": {"type": "boolean"}},
+                           "required": ["ok"], "additionalProperties": false}}})
         );
         assert_eq!(body["reasoning_effort"], "low");
         assert_eq!(body["temperature"], json!(0.0));

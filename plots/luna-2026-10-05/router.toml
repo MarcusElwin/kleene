@@ -1,0 +1,27 @@
+# GPT-6 Luna sweep: every solver alias on gpt-6-luna (OpenAI, chat
+# completions); the judge is Sonnet 5.5 so the memo-rubric verdicts are not
+# self-graded. Prices are the standard-tier rate cards as of October 2026.
+[aliases.root]
+candidates = [{ provider = "openai_compat", model = "gpt-6-luna" }]
+
+[aliases.worker]
+candidates = [{ provider = "openai_compat", model = "gpt-6-luna" }]
+
+[aliases.proxy]
+candidates = [{ provider = "openai_compat", model = "gpt-6-luna" }]
+
+[aliases.judge]
+candidates = [{ provider = "anthropic", model = "claude-sonnet-5-5" }]
+options = { effort = "medium", cache_prefix = true }
+
+[pricing."gpt-6-luna"]
+input_per_mtok = 0.10
+output_per_mtok = 0.50
+cache_read_per_mtok = 0.01
+cache_write_per_mtok = 0.125
+
+[pricing."claude-sonnet-5-5"]
+input_per_mtok = 2.0
+output_per_mtok = 10.0
+cache_read_per_mtok = 0.2
+cache_write_per_mtok = 2.5

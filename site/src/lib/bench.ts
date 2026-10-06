@@ -13,6 +13,7 @@ const repo = dirname(dirname(dirname(dirname(fileURLToPath(import.meta.url)))));
 export const RUNS = [
   { csv: "plots/evals.csv", model: "claude-opus-5-5", label: "Claude Opus 5.5", date: "27 Sep 2026", plots: "plots", note: "root on Opus 5.5 at high effort, worker and judge on Sonnet 5, proxy on Haiku 4.5" },
   { csv: "plots/haiku-2026-10-01/evals.csv", model: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5", date: "1 Oct 2026", plots: "plots/haiku-2026-10-01", note: "every solver alias on Haiku 4.5, judge on Sonnet 5.5; the sweep was stopped before logbook-hard finished" },
+  { csv: "plots/luna-2026-10-05/evals.csv", model: "gpt-6-luna", label: "GPT-6 Luna", date: "5 Oct 2026", plots: "plots/luna-2026-10-05", note: "every solver alias on GPT-6 Luna over OpenAI chat completions, judge on Sonnet 5.5, all seven packs; logbook-hard capped at ten tasks and its learning run stopped after three" },
 ];
 
 export const MODES = ["learning", "frozen", "plain"] as const;

@@ -1,0 +1,23 @@
+pack              | mode     | model      | tasks | accuracy | calls_per_task | dollars | tokens_per_task | depth
+------------------+----------+------------+-------+----------+----------------+---------+-----------------+------
+coding            | frozen   | gpt-6-luna | 12    | 0.917    | 12.08          | 0.0227  | 55286           | 0    
+coding            | learning | gpt-6-luna | 12    | 0.833    | 8.17           | 0.0201  | 42094           | 0    
+coding            | plain    | gpt-6-luna | 12    | 0.75     | 10.25          | 0.0282  | 27860           | 0    
+finance-synthetic | frozen   | gpt-6-luna | 20    | 0.7      | 4.15           | 0.009   | 11789           | 0    
+finance-synthetic | learning | gpt-6-luna | 20    | 0.75     | 3.45           | 0.0078  | 12081           | 0    
+finance-synthetic | plain    | gpt-6-luna | 20    | 1        | 1              | 0.0026  | 950             | 0    
+legal-synthetic   | frozen   | gpt-6-luna | 20    | 0.9      | 15.65          | 0.0326  | 23973           | 0    
+legal-synthetic   | learning | gpt-6-luna | 20    | 0.75     | 4.25           | 0.0144  | 15893           | 0    
+legal-synthetic   | plain    | gpt-6-luna | 20    | 1        | 1              | 0.0027  | 1004            | 0    
+logbook-hard      | frozen   | gpt-6-luna | 10    | 0.7      | 247.3          | 0.235   | 180736          | 0    
+logbook-hard      | learning | gpt-6-luna | 3     | 0.333    | 686.67         | 0.1873  | 746259          | 0.67 
+logbook-hard      | plain    | gpt-6-luna | 10    | 0.3      | 2.3            | 0.0738  | 97000           | 0    
+memo-rubric       | frozen   | gpt-6-luna | 20    | 0.4      | 13.6           | 0.0295  | 36571           | 0.05 
+memo-rubric       | learning | gpt-6-luna | 20    | 0.9      | 6.1            | 0.0193  | 27683           | 0    
+memo-rubric       | plain    | gpt-6-luna | 20    | 0.55     | 1              | 0.0058  | 1978            | 0    
+oolong-like       | frozen   | gpt-6-luna | 20    | 0.75     | 33.95          | 0.0375  | 19230           | 0    
+oolong-like       | learning | gpt-6-luna | 20    | 1        | 1.3            | 0.0049  | 4516            | 0    
+oolong-like       | plain    | gpt-6-luna | 20    | 0.7      | 1              | 0.0071  | 2031            | 0    
+terminal          | frozen   | gpt-6-luna | 6     | 1        | 1.5            | 0.001   | 4128            | 0    
+terminal          | learning | gpt-6-luna | 6     | 0.833    | 1.5            | 0.0014  | 4219            | 0    
+terminal          | plain    | gpt-6-luna | 6     | 1        | 2.33           | 0.0012  | 1584            | 0    
