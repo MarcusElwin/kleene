@@ -1,8 +1,10 @@
 ---
 import "../styles/global.css";
+import Analytics from "@vercel/analytics/astro";
 interface Props { title: string; description?: string; mermaid?: boolean }
 const { title, description = "Kleene: relational algebra for recursive model calls. Write SQL, compile it into a planned, budgeted graph of language-model calls.", mermaid = false } = Astro.props;
 const path = Astro.url.pathname;
+const canonical = new URL(path, Astro.site ?? "https://kleene.sh").href;
 const current = (p: string) => (p === "/" ? path === "/" : path.startsWith(p)) ? "page" : undefined;
 ---
 <!doctype html>
@@ -12,10 +14,16 @@ const current = (p: string) => (p === "/" ? path === "/" : path.startsWith(p)) ?
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
     <meta name="description" content={description} />
+    <link rel="canonical" href={canonical} />
+    <link rel="sitemap" href="/sitemap-index.xml" />
     <meta property="og:title" content={title} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Kleene" />
     <meta property="og:description" content={description} />
     <meta name="theme-color" content="#1e1e2e" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="alternate" type="text/plain" href="/llms.txt" title="llms.txt" />
   </head>
   <body>
     <header class="topbar">
@@ -69,10 +77,17 @@ const current = (p: string) => (p === "/" ? path === "/" : path.startsWith(p)) ?
           pre.replaceWith(div);
         }
         for (const node of document.querySelectorAll(".mermaid")) {
-          try { await mermaid.run({ nodes: [node] }); }
+          try {
+            await mermaid.run({ nodes: [node] });
+            node.dispatchEvent(new CustomEvent("mermaid:rendered", { bubbles: true }));
+          }
           catch (e) { console.error("mermaid:", e); node.classList.add("mermaid-failed"); }
         }
       </script>
     )}
+    <script>
+      import "../scripts/ui";
+    </script>
+    <Analytics />
   </body>
 </html>
