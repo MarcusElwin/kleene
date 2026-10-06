@@ -35,8 +35,9 @@ factor), ρ_d (`rlm` / `spawn`, the child's whole plan), and σ_llm / ⋈_llm
 selectivity comes from observed pass rates once a predicate has been seen.
 
 The eight rewrite rules of the plan are implemented: cheap-first over filters
-and join conditions, memo dedupe, batching (`BATCH n` on a prompt function:
-one call answers up to n distinct tuples, priced as `ceil(rows / n)` calls),
+and join conditions, memo dedupe, batching (a prompt function answers up to n
+distinct tuples per call, 20 unless `BATCH n` says otherwise, priced as
+`ceil(rows / n)` calls),
 cascade, semi-join, beam-limited recursion, join ordering with
 branch-and-bound over relation subsets, and volatility fences. Estimates mirror the executor's left-to-right
 short-circuit evaluation, so cheap-first is visible in the numbers rather

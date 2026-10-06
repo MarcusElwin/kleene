@@ -75,11 +75,13 @@ CREATE FUNCTION name(...) RETURNS BOOLEAN AS SHELL 'command {arg}';
 ```
 
 `MODEL` picks the tier (`root`, `worker`, `proxy`, `judge`, or any alias the
-router knows). `BATCH n` marks the prompt batchable: the executor answers up
-to `n` distinct argument tuples per call (the template shown once, the items
-numbered, a JSON array of answers back) and `EXPLAIN` prices `ceil(rows / n)`
-calls; an answer without exactly one element per item falls back to one call
-per tuple. `PROXY` declares a cheap scorer (`RETURNS DOUBLE` in `[0, 1]`)
+router knows). A prompt function is batched: the executor answers up to `n`
+distinct argument tuples per call (the template shown once, the items
+numbered, one `{"item": i, "answer": ...}` back per item) and `EXPLAIN`
+prices `ceil(rows / n)` calls. `n` is 20 unless `BATCH n` says otherwise;
+`BATCH 1` turns batching off for long or dependent items. Items an answer
+leaves out or mistypes are asked again in one more batched call, then one
+call each, so a batch changes cost, never a result. `PROXY` declares a cheap scorer (`RETURNS DOUBLE` in `[0, 1]`)
 the planner may cascade the predicate through. Volatility defaults: prompt
 functions `IMMUTABLE`, SQL bodies `STABLE`, shell bodies `VOLATILE`.
 
@@ -139,7 +141,8 @@ up into the parent.
 1. Cheap first: pure conjuncts before call conjuncts, in filters and join
    conditions.
 2. Dedupe then map: identical prompts cost one call (memo).
-3. Batch: not yet.
+3. Batch: a prompt function over n distinct tuples costs `ceil(n / batch)`
+   calls, batch 20 by default.
 4. Cascade: `σ oracle(x)` with a declared proxy becomes `score >= high OR
    (score >= low AND oracle(x))`, applied when the priced cascade is cheaper.
 5. Semi-join: `[NOT] EXISTS` with a call predicate becomes a semi/anti join

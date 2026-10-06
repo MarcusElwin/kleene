@@ -21,7 +21,7 @@ import Terminal from "../components/Terminal.astro";
         <tr><td>σ<sub>llm</sub>, ⋈<sub>llm</sub></td><td>a predicate or join condition containing calls</td><td>calls × selectivity, observed once the predicate has been seen</td></tr>
       </tbody>
     </table>
-    <p>Cost is calls × per-alias tokens and dollars. Eight rewrite rules work on it: cheap-first over filters and join conditions, memo dedupe, batching (<code>BATCH n</code> on a prompt function prices <code>ceil(rows / n)</code> calls), cascade through a cheap proxy, semi-join for <code>EXISTS</code>, beam-limited recursion, join ordering over call predicates, and budget refusal.</p>
+    <p>Cost is calls × per-alias tokens and dollars. Eight rewrite rules work on it: cheap-first over filters and join conditions, memo dedupe, batching (a prompt function answers up to <code>n</code> tuples per call, 20 unless <code>BATCH n</code> says otherwise, priced <code>ceil(rows / n)</code> calls), cascade through a cheap proxy, semi-join for <code>EXISTS</code>, beam-limited recursion, join ordering over call predicates, and budget refusal.</p>
 
     <Terminal title="kleene explain">
 <span class="prompt">$</span> kleene explain "SELECT c FROM candidates WHERE llm_bool('Is ' || c || ' a real place?')"

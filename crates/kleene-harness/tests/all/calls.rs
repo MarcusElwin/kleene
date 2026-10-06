@@ -337,7 +337,8 @@ async fn batch_functions_answer_many_rows_in_one_call() {
     assert!(!out[0].is_error, "{}", out[0].text);
     assert!(out[0].text.contains("vegetable"), "{}", out[0].text);
     assert_eq!(p.calls(), 1, "one batched call for three distinct rows");
-    // A malformed batch answer falls back to one call per tuple.
+    // A malformed batch answer is asked once more as a batch, then one
+    // call per tuple.
     let p2 = Arc::new(ScriptedProvider::new(vec![("Classify", "fruit")], "[]"));
     let f2 = repl(p2.clone()).await;
     let out = f2
@@ -349,7 +350,7 @@ async fn batch_functions_answer_many_rows_in_one_call() {
         )
         .await;
     assert!(out.iter().all(|o| !o.is_error), "{}", text(&out));
-    assert_eq!(p2.calls(), 3, "one failed batch, then one call per tuple");
+    assert_eq!(p2.calls(), 4, "two failed batches, then one call per tuple");
     drop(f.dir);
     drop(f2.dir);
 }
