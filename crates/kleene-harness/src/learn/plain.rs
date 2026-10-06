@@ -436,7 +436,10 @@ async fn run_json(
             tools: vec![],
             output_schema: None,
             max_tokens: cfg.max_tokens,
-            options: ProviderOptions::default(),
+            options: ProviderOptions {
+                cache_prefix: true,
+                ..ProviderOptions::default()
+            },
         };
         let resp = match cfg.provider.complete(req).await {
             Ok(r) => r,

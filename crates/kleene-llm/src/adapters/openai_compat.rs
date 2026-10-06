@@ -36,11 +36,13 @@ pub const WRAP_KEY: &str = "output";
 /// caller sees the JSON shape it asked for.
 pub fn strict_schema(schema: &Value) -> (Value, bool) {
     let mut normalized = strictify(&super::anthropic::normalize_schema(schema));
-    // The Anthropic rewrite lowers `minItems` to 1 (that API takes no
-    // more); OpenAI's strict mode enforces the exact count, so an array
-    // root keeps the bound it asked for.
-    if let (Some(min), Value::Object(map)) = (schema.get("minItems"), &mut normalized) {
-        map.insert("minItems".into(), min.clone());
+    // The Anthropic rewrite lowers `minItems` to 1 and drops `maxItems`
+    // (that API takes neither); OpenAI's strict mode enforces the exact
+    // count, so an array root keeps the bounds it asked for.
+    for key in ["minItems", "maxItems"] {
+        if let (Some(bound), Value::Object(map)) = (schema.get(key), &mut normalized) {
+            map.insert(key.into(), bound.clone());
+        }
     }
     let is_object = normalized.get("type").and_then(Value::as_str) == Some("object");
     if is_object {

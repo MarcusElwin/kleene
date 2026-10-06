@@ -130,10 +130,23 @@ impl AnthropicProvider {
             }
             body.insert("system".into(), Value::Array(vec![block]));
         }
-        body.insert(
-            "messages".into(),
-            Value::Array(req.messages.iter().map(message_to_wire).collect()),
-        );
+        let mut messages: Vec<Value> = req.messages.iter().map(message_to_wire).collect();
+        // Caching the system prefix alone leaves every earlier turn
+        // re-billed at full price: the API caches a prefix only up to a
+        // breakpoint, so a conversation needs one on its last message, and
+        // that breakpoint moves forward turn by turn. A single-message
+        // request gets none: its content is unique, and a write that is
+        // never read costs a quarter more than no cache at all.
+        if req.options.cache_prefix && req.messages.len() > 1 {
+            if let Some(Value::Array(blocks)) =
+                messages.last_mut().and_then(|m| m.get_mut("content"))
+            {
+                if let Some(last) = blocks.last_mut() {
+                    last["cache_control"] = json!({"type": "ephemeral"});
+                }
+            }
+        }
+        body.insert("messages".into(), Value::Array(messages));
         if !req.tools.is_empty() {
             let tools = req
                 .tools
@@ -235,9 +248,13 @@ fn message_to_wire(m: &Message) -> Value {
         Role::User => "user",
         Role::Assistant => "assistant",
     };
-    let content: Vec<Value> = m
+    // The API rejects an empty text block ("text content blocks must be
+    // non-empty"); a model's empty reply echoed back is dropped, and a
+    // message left with nothing gets a placeholder so the turn survives.
+    let mut content: Vec<Value> = m
         .content
         .iter()
+        .filter(|b| !matches!(b, ContentBlock::Text { text } if text.is_empty()))
         .map(|b| match b {
             ContentBlock::Text { text } => json!({"type": "text", "text": text}),
             ContentBlock::ToolUse { id, name, input } => {
@@ -255,6 +272,9 @@ fn message_to_wire(m: &Message) -> Value {
             }),
         })
         .collect();
+    if content.is_empty() {
+        content.push(json!({"type": "text", "text": "(empty)"}));
+    }
     json!({"role": role, "content": content})
 }
 
@@ -559,8 +579,9 @@ impl Provider for AnthropicProvider {
 /// rewrite: a bare type name becomes `{"type": name}`; a map of fields
 /// without a type becomes an object with those properties; an object gets
 /// `additionalProperties: false` and, when `required` is absent, every
-/// property required; an array's `minItems` is clamped to 1. Everything
-/// else is left as written.
+/// property required; an array's `minItems` is clamped to 1 and its
+/// `maxItems` dropped (the API supports neither). Everything else is left
+/// as written.
 pub fn normalize_schema(schema: &Value) -> Value {
     const TYPES: [&str; 7] = [
         "string", "number", "integer", "boolean", "array", "object", "null",
@@ -610,6 +631,8 @@ pub fn normalize_schema(schema: &Value) -> Value {
                 if map.get("minItems").and_then(|m| m.as_u64()).unwrap_or(0) > 1 {
                     map.insert("minItems".into(), json!(1));
                 }
+                // "For 'array' type, property 'maxItems' is not supported".
+                map.remove("maxItems");
             }
             Value::Object(map)
         }
@@ -621,6 +644,50 @@ pub fn normalize_schema(schema: &Value) -> Value {
 mod tests {
     use super::*;
     use crate::types::{ProviderOptions, ToolDef};
+
+    #[test]
+    fn multi_turn_requests_cache_the_last_message() {
+        let mut r = req();
+        r.options.cache_prefix = true;
+        r.messages = vec![Message::user("one")];
+        let body = AnthropicProvider::build_body(&r);
+        assert!(body["messages"][0]["content"][0]
+            .get("cache_control")
+            .is_none());
+        r.messages = vec![
+            Message::user("one"),
+            Message::assistant("two"),
+            Message::user("three"),
+        ];
+        let body = AnthropicProvider::build_body(&r);
+        assert!(body["messages"][0]["content"][0]
+            .get("cache_control")
+            .is_none());
+        assert_eq!(
+            body["messages"][2]["content"][0]["cache_control"],
+            json!({"type": "ephemeral"})
+        );
+        r.options.cache_prefix = false;
+        let body = AnthropicProvider::build_body(&r);
+        assert!(body["messages"][2]["content"][0]
+            .get("cache_control")
+            .is_none());
+    }
+
+    #[test]
+    fn empty_text_blocks_are_dropped_from_the_wire() {
+        let wire = message_to_wire(&Message::assistant(""));
+        assert_eq!(
+            wire["content"],
+            json!([{"type": "text", "text": "(empty)"}])
+        );
+        let mut m = Message::assistant("ok");
+        m.content.push(ContentBlock::Text {
+            text: String::new(),
+        });
+        let wire = message_to_wire(&m);
+        assert_eq!(wire["content"].as_array().unwrap().len(), 1);
+    }
     use futures::StreamExt;
     use kleene_core::ModelAlias;
     use std::convert::Infallible;
@@ -690,7 +757,8 @@ mod tests {
                     {"type": "tool_use", "id": "toolu_1", "name": "ls", "input": {"path": "."}}
                 ]},
                 {"role": "user", "content": [
-                    {"type": "tool_result", "tool_use_id": "toolu_1", "content": "permission denied", "is_error": true}
+                    {"type": "tool_result", "tool_use_id": "toolu_1", "content": "permission denied", "is_error": true,
+                     "cache_control": {"type": "ephemeral"}}
                 ]}
             ])
         );
@@ -781,6 +849,11 @@ mod tests {
         assert_eq!(got["additionalProperties"], false);
         assert_eq!(got["required"], json!(["rows"]));
         assert_eq!(got["properties"]["rows"]["minItems"], 1);
+        let batch = normalize_schema(
+            &json!({"type": "array", "items": {"type": "string"}, "minItems": 20, "maxItems": 20}),
+        );
+        assert_eq!(batch["minItems"], 1);
+        assert!(batch.get("maxItems").is_none());
         assert_eq!(got["properties"]["rows"]["items"]["type"], "object");
         assert_eq!(
             got["properties"]["rows"]["items"]["properties"]["id"]["type"],

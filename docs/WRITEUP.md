@@ -227,6 +227,60 @@ What the numbers say:
   adapter learned to omit it. And `claude-sonnet-5-5` is served now (it
   was not on 27 September).
 
+#### 4.1.1 Haiku 4.5, the remaining cells (6 October 2026)
+
+The cells the October 1 sweep left empty ran on 6 October 2026 with the
+same routing (`plots/haiku-2026-10-06/router.toml`), one fresh store per
+pack and mode, after two adapter changes: the conversation is now cached
+turn by turn (a breakpoint on the last message, not only the system
+prefix), and the structured-output schema drops `maxItems`, which the API
+rejects and every batched `LLM_JSON` call used to set. Rows and report
+are `plots/haiku-2026-10-06/evals.csv` and `report.txt`.
+
+| pack | mode | solved | calls / task | tokens / task | dollars |
+|---|---|---|---|---|---|
+| oolong-like (20) | frozen | 14/20 | 50.40 | 53,217 | 0.75 |
+| oolong-like (20) | learning | 19/20 | 1.95 | 9,115 | 0.20 |
+| oolong-like (20) | plain | 20/20 | 4.15 | 24,932 | 0.49 |
+| finance-synthetic (20) | frozen | 20/20 | 7.25 | 30,274 | 0.43 |
+| finance-synthetic (20) | learning | 19/20 | 7.60 | 18,963 | 0.29 |
+| finance-synthetic (20) | plain | 20/20 | 1.65 | 5,375 | 0.13 |
+| legal-synthetic (20) | frozen | 14/20 | 43.50 | 48,594 | 0.72 |
+| legal-synthetic (20) | learning | 17/20 | 9.95 | 16,541 | 0.29 |
+| legal-synthetic (20) | plain | 15/20 | 1.85 | 6,227 | 0.16 |
+| terminal (6) | frozen | 6/6 | 3.00 | 11,190 | 0.07 |
+| terminal (6) | learning | 6/6 | 2.17 | 8,159 | 0.05 |
+| terminal (6) | plain | 6/6 | 2.50 | 7,286 | 0.05 |
+| coding (12) | plain | 4/12 | 28.58 | 218,019 | 0.78 |
+| logbook-hard (10) | frozen | 1/10 | 1,702.10 | 476,213 | 5.13 |
+| logbook-hard (10) | learning | 1/10 | 1,694.40 | 591,443 | 5.95 |
+| logbook-hard (10) | plain | 2/10 | 22.20 | 1,365,343 | 4.58 |
+
+The counted runs cost $20.07, of which `logbook-hard` took $15.66; the
+gate replays (62 candidates, 22 adopted) cost another $5.64. What the
+numbers say:
+
+- **On the original packs Haiku is close to Luna, at ten times the
+  price.** Learning beats frozen on oolong-like (19 against 14 at 2
+  calls a task against 50) and legal (17 against 14 at 10 against 44),
+  as it did for Luna; the one-call plain agent is perfect on finance and
+  oolong-like.
+- **Logbook-hard is a worker-call storm.** The frozen run made 79,324
+  `worker` calls of about 37 tokens each, $4.30 of its $5.13: Haiku
+  writes a scalar `llm()` per row over the 30k-token log, and when it
+  does batch, it answers with the wrong number of elements two times in
+  three, so the harness falls back to one call per row. Two tasks took
+  5,000 and 8,500 calls. The root session itself was cheap (121 calls,
+  $0.83, 1.2M tokens read from cache against 36k billed in full). This
+  is the fallback the Luna run flagged, now with a price on it: fixing
+  it (a stricter batch prompt, or re-batching the misses instead of one
+  call per row) is the next harness change, before any Opus run on this
+  pack.
+- **Caching works where the prompt is long enough.** Haiku's minimum
+  cacheable prompt is 4,096 tokens, so terminal and the per-row worker
+  calls never cache; everywhere else the root session reads its history
+  from cache from the third turn on.
+
 ### 4.2 GPT-6 Luna on the harder packs
 
 All seven packs ran on 5 October 2026 with every solver alias on

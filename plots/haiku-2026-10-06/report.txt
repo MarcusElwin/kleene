@@ -1,0 +1,18 @@
+pack              | mode     | model                     | tasks | accuracy | calls_per_task | dollars | tokens_per_task | depth
+------------------+----------+---------------------------+-------+----------+----------------+---------+-----------------+------
+coding            | plain    | claude-haiku-4-5-20251001 | 12    | 0.333    | 28.58          | 0.7763  | 218019          | 0    
+finance-synthetic | frozen   | claude-haiku-4-5-20251001 | 20    | 1        | 7.25           | 0.4307  | 30274           | 0    
+finance-synthetic | learning | claude-haiku-4-5-20251001 | 20    | 0.95     | 7.6            | 0.2946  | 18963           | 0    
+finance-synthetic | plain    | claude-haiku-4-5-20251001 | 20    | 1        | 1.65           | 0.1284  | 5375            | 0    
+legal-synthetic   | frozen   | claude-haiku-4-5-20251001 | 20    | 0.7      | 43.5           | 0.7173  | 48594           | 0.05 
+legal-synthetic   | learning | claude-haiku-4-5-20251001 | 20    | 0.85     | 9.95           | 0.2936  | 16541           | 0    
+legal-synthetic   | plain    | claude-haiku-4-5-20251001 | 20    | 0.75     | 1.85           | 0.1609  | 6227            | 0    
+logbook-hard      | frozen   | claude-haiku-4-5-20251001 | 10    | 0.1      | 1702.1         | 5.1315  | 476213          | 0    
+logbook-hard      | learning | claude-haiku-4-5-20251001 | 10    | 0.1      | 1694.4         | 5.9483  | 591443          | 0    
+logbook-hard      | plain    | claude-haiku-4-5-20251001 | 10    | 0.2      | 22.2           | 4.5771  | 1365343         | 0    
+oolong-like       | frozen   | claude-haiku-4-5-20251001 | 20    | 0.7      | 50.4           | 0.7531  | 53217           | 0    
+oolong-like       | learning | claude-haiku-4-5-20251001 | 20    | 0.95     | 1.95           | 0.2001  | 9115            | 0    
+oolong-like       | plain    | claude-haiku-4-5-20251001 | 20    | 1        | 4.15           | 0.4907  | 24932           | 0    
+terminal          | frozen   | claude-haiku-4-5-20251001 | 6     | 1        | 3              | 0.0704  | 11190           | 0    
+terminal          | learning | claude-haiku-4-5-20251001 | 6     | 1        | 2.17           | 0.052   | 8159            | 0    
+terminal          | plain    | claude-haiku-4-5-20251001 | 6     | 1        | 2.5            | 0.0495  | 7286            | 0    
