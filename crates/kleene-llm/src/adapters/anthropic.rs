@@ -130,10 +130,23 @@ impl AnthropicProvider {
             }
             body.insert("system".into(), Value::Array(vec![block]));
         }
-        body.insert(
-            "messages".into(),
-            Value::Array(req.messages.iter().map(message_to_wire).collect()),
-        );
+        let mut messages: Vec<Value> = req.messages.iter().map(message_to_wire).collect();
+        // Caching the system prefix alone leaves every earlier turn
+        // re-billed at full price: the API caches a prefix only up to a
+        // breakpoint, so a conversation needs one on its last message, and
+        // that breakpoint moves forward turn by turn. A single-message
+        // request gets none: its content is unique, and a write that is
+        // never read costs a quarter more than no cache at all.
+        if req.options.cache_prefix && req.messages.len() > 1 {
+            if let Some(Value::Array(blocks)) =
+                messages.last_mut().and_then(|m| m.get_mut("content"))
+            {
+                if let Some(last) = blocks.last_mut() {
+                    last["cache_control"] = json!({"type": "ephemeral"});
+                }
+            }
+        }
+        body.insert("messages".into(), Value::Array(messages));
         if !req.tools.is_empty() {
             let tools = req
                 .tools
@@ -633,6 +646,35 @@ mod tests {
     use crate::types::{ProviderOptions, ToolDef};
 
     #[test]
+    fn multi_turn_requests_cache_the_last_message() {
+        let mut r = req();
+        r.options.cache_prefix = true;
+        r.messages = vec![Message::user("one")];
+        let body = AnthropicProvider::build_body(&r);
+        assert!(body["messages"][0]["content"][0]
+            .get("cache_control")
+            .is_none());
+        r.messages = vec![
+            Message::user("one"),
+            Message::assistant("two"),
+            Message::user("three"),
+        ];
+        let body = AnthropicProvider::build_body(&r);
+        assert!(body["messages"][0]["content"][0]
+            .get("cache_control")
+            .is_none());
+        assert_eq!(
+            body["messages"][2]["content"][0]["cache_control"],
+            json!({"type": "ephemeral"})
+        );
+        r.options.cache_prefix = false;
+        let body = AnthropicProvider::build_body(&r);
+        assert!(body["messages"][2]["content"][0]
+            .get("cache_control")
+            .is_none());
+    }
+
+    #[test]
     fn empty_text_blocks_are_dropped_from_the_wire() {
         let wire = message_to_wire(&Message::assistant(""));
         assert_eq!(
@@ -715,7 +757,8 @@ mod tests {
                     {"type": "tool_use", "id": "toolu_1", "name": "ls", "input": {"path": "."}}
                 ]},
                 {"role": "user", "content": [
-                    {"type": "tool_result", "tool_use_id": "toolu_1", "content": "permission denied", "is_error": true}
+                    {"type": "tool_result", "tool_use_id": "toolu_1", "content": "permission denied", "is_error": true,
+                     "cache_control": {"type": "ephemeral"}}
                 ]}
             ])
         );
