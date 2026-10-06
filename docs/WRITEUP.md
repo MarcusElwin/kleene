@@ -273,10 +273,10 @@ numbers say:
   three, so the harness falls back to one call per row. Two tasks took
   5,000 and 8,500 calls. The root session itself was cheap (121 calls,
   $0.83, 1.2M tokens read from cache against 36k billed in full). This
-  is the fallback the Luna run flagged, now with a price on it: fixing
-  it (a stricter batch prompt, or re-batching the misses instead of one
-  call per row) is the next harness change, before any Opus run on this
-  pack.
+  is the fallback the Luna run flagged, now with a price on it. The fix
+  landed the same day (section 4.3): prompt functions batch 20 rows per
+  call unless told otherwise, and a short batch answer is re-asked by
+  item instead of one call per row.
 - **Caching works where the prompt is long enough.** Haiku's minimum
   cacheable prompt is 4,096 tokens, so terminal and the per-row worker
   calls never cache; everywhere else the root session reads its history
@@ -366,6 +366,46 @@ calls are not traced, roughly a dollar at the most. What the numbers say:
   partial `required` list is rejected outright, so the adapter completes
   it. Before those fixes a Luna run could not make a single `LLM_JSON`
   call.
+
+### 4.3 Opus 5.5 on coding and memo-rubric (6 October 2026)
+
+The two hard packs Opus 5.5 had not run yet, in all three modes, with
+the routing of the 27 September run (`root` on Opus 5.5 at high effort,
+`worker` and `judge` on Sonnet 5.5, `proxy` on Haiku 4.5;
+`plots/opus-2026-10-06/router.toml`), one fresh store per pack and mode,
+the conversation cached and prompt functions batched by default. Rows
+and report are `plots/opus-2026-10-06/evals.csv` and `report.txt`.
+`logbook-hard` has not run on Opus yet.
+
+| pack | mode | solved | calls / task | tokens / task | dollars |
+|---|---|---|---|---|---|
+| coding (12) | frozen | 12/12 | 8.58 | 76,533 | 1.31 |
+| coding (12) | learning | 12/12 | 8.00 | 88,984 | 1.70 |
+| coding (12) | plain | 12/12 | 9.42 | 68,156 | 1.32 |
+| memo-rubric (20) | frozen | 10/20 | 5.30 | 40,086 | 1.26 |
+| memo-rubric (20) | learning | 4/20 | 5.35 | 44,064 | 1.24 |
+| memo-rubric (20) | plain | 10/20 | 1.00 | 5,763 | 0.55 |
+
+The counted runs cost $7.38; the gate replays (16 candidates, 8
+adopted) cost another $9.22, $7.67 of it on coding alone, so a learning
+run of coding costs five times what its rows show. What the numbers
+say:
+
+- **Coding is saturated for Opus, as the original packs were.** Every
+  task in every mode, where Luna solved 11, 10 and 9 and Haiku 2, 2
+  and 4. The three modes cost the same within a few cents, so the pack
+  no longer separates modes at this model size.
+- **Memo-rubric is the one pack where Opus is behind Luna.** Half the
+  tasks in frozen and plain against Luna's 8 and 11, and learning mode
+  made it worse: the adopted playbook entries pulled Opus from 10 to 4
+  solved at the same cost. Luna's learning run on the same pack went
+  the other way (8 to 18). The rubric judge is Sonnet 5.5 in both
+  runs, so the difference is in what the models write, not in how it is
+  scored.
+- **The caching and batching changes hold at Opus prices.** Learning
+  coding read 5.0M tokens from cache against 30k billed in full; the
+  batched prompt functions kept the worker side to a few hundred calls
+  per run, where the Haiku logbook-hard runs made tens of thousands.
 
 ## 5. Honest gaps
 

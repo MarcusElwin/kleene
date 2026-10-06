@@ -281,7 +281,8 @@ starts from their `bench csv` exports rather than from a merged database:
 
 ```bash
 kleene bench results plots/evals.csv plots/haiku-2026-10-01/evals.csv \
-  plots/haiku-2026-10-06/evals.csv plots/luna-2026-10-05/evals.csv --out plots/results --readme README.md \
+  plots/haiku-2026-10-06/evals.csv plots/luna-2026-10-05/evals.csv \
+  plots/opus-2026-10-06/evals.csv --out plots/results --readme README.md \
   --plot coding --plot memo-rubric --plot logbook-hard
 ```
 

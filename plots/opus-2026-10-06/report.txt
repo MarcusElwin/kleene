@@ -1,0 +1,8 @@
+pack        | mode     | model           | tasks | accuracy | calls_per_task | dollars | tokens_per_task | depth
+------------+----------+-----------------+-------+----------+----------------+---------+-----------------+------
+coding      | frozen   | claude-opus-5-5 | 12    | 1        | 8.58           | 1.3109  | 76533           | 0    
+coding      | learning | claude-opus-5-5 | 12    | 1        | 8              | 1.7021  | 88984           | 0    
+coding      | plain    | claude-opus-5-5 | 12    | 1        | 9.42           | 1.3221  | 68156           | 0    
+memo-rubric | frozen   | claude-opus-5-5 | 20    | 0.5      | 5.3            | 1.2626  | 40086           | 0    
+memo-rubric | learning | claude-opus-5-5 | 20    | 0.2      | 5.35           | 1.2388  | 44064           | 0    
+memo-rubric | plain    | claude-opus-5-5 | 20    | 0.5      | 1              | 0.5542  | 5763            | 0    

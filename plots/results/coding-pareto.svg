@@ -4,37 +4,45 @@
 <text x="64" y="384" text-anchor="middle" fill="#444">0</text>
 <text x="58" y="372" text-anchor="end" fill="#444">0%</text>
 <line x1="64" y1="368" x2="696" y2="368" stroke="#eee"/>
-<text x="222" y="384" text-anchor="middle" fill="#444">0.02</text>
+<text x="222" y="384" text-anchor="middle" fill="#444">0.04</text>
 <text x="58" y="290" text-anchor="end" fill="#444">25%</text>
 <line x1="64" y1="286" x2="696" y2="286" stroke="#eee"/>
-<text x="380" y="384" text-anchor="middle" fill="#444">0.04</text>
+<text x="380" y="384" text-anchor="middle" fill="#444">0.08</text>
 <text x="58" y="208" text-anchor="end" fill="#444">50%</text>
 <line x1="64" y1="204" x2="696" y2="204" stroke="#eee"/>
-<text x="538" y="384" text-anchor="middle" fill="#444">0.06</text>
+<text x="538" y="384" text-anchor="middle" fill="#444">0.12</text>
 <text x="58" y="126" text-anchor="end" fill="#444">75%</text>
 <line x1="64" y1="122" x2="696" y2="122" stroke="#eee"/>
-<text x="696" y="384" text-anchor="middle" fill="#444">0.08</text>
+<text x="696" y="384" text-anchor="middle" fill="#444">0.16</text>
 <text x="58" y="44" text-anchor="end" fill="#444">100%</text>
 <line x1="64" y1="40" x2="696" y2="40" stroke="#eee"/>
 <line x1="64" y1="368" x2="696" y2="368" stroke="#444"/>
 <line x1="64" y1="40" x2="64" y2="368" stroke="#444"/>
 <text x="380" y="408" text-anchor="middle" fill="#222">dollars per task</text>
 <text transform="translate(14 204) rotate(-90)" text-anchor="middle" fill="#222">pass rate</text>
-<polyline fill="none" stroke="#999" stroke-width="1.5" stroke-dasharray="5 4" points="77.1,94.7 78.8,67.3"/>
-<circle cx="371.1" cy="313.3" r="3" fill="#1f77b4"/>
-<circle cx="628.3" cy="313.3" r="3" fill="#1f77b4"/>
-<circle cx="568.5" cy="258.7" r="3" fill="#1f77b4"/>
+<polyline fill="none" stroke="#999" stroke-width="1.5" stroke-dasharray="5 4" points="70.7,94.7 71.5,67.3 498.6,40.0"/>
+<circle cx="628.3" cy="40.0" r="3" fill="#1f77b4"/>
+<circle cx="498.6" cy="40.0" r="3" fill="#1f77b4"/>
+<circle cx="502.3" cy="40.0" r="3" fill="#1f77b4"/>
 <rect x="496" y="46" width="10" height="10" fill="#1f77b4"/>
-<text x="510" y="55" fill="#222">Claude Haiku 4.5</text>
-<circle cx="77.1" cy="94.7" r="3" fill="#d62728"/>
-<circle cx="78.8" cy="67.3" r="3" fill="#d62728"/>
-<circle cx="82.3" cy="122.0" r="3" fill="#d62728"/>
+<text x="510" y="55" fill="#222">Claude Opus 5.5</text>
+<circle cx="220.7" cy="313.3" r="3" fill="#d62728"/>
+<circle cx="351.9" cy="313.3" r="3" fill="#d62728"/>
+<circle cx="321.4" cy="258.7" r="3" fill="#d62728"/>
 <rect x="496" y="62" width="10" height="10" fill="#d62728"/>
-<text x="510" y="71" fill="#222">GPT-6 Luna</text>
-<text x="377.1" y="307.3" text-anchor="start" font-size="11" fill="#333">learning</text>
-<text x="622.3" y="307.3" text-anchor="end" font-size="11" fill="#333">frozen</text>
-<text x="574.5" y="252.7" text-anchor="start" font-size="11" fill="#333">plain</text>
-<text x="83.1" y="88.7" text-anchor="start" font-size="11" fill="#333">learning</text>
-<text x="84.8" y="61.3" text-anchor="start" font-size="11" fill="#333">frozen</text>
-<text x="88.3" y="116.0" text-anchor="start" font-size="11" fill="#333">plain</text>
+<text x="510" y="71" fill="#222">Claude Haiku 4.5</text>
+<circle cx="70.7" cy="94.7" r="3" fill="#2ca02c"/>
+<circle cx="71.5" cy="67.3" r="3" fill="#2ca02c"/>
+<circle cx="73.3" cy="122.0" r="3" fill="#2ca02c"/>
+<rect x="496" y="78" width="10" height="10" fill="#2ca02c"/>
+<text x="510" y="87" fill="#222">GPT-6 Luna</text>
+<text x="622.3" y="34.0" text-anchor="end" font-size="11" fill="#333">learning</text>
+<text x="504.6" y="34.0" text-anchor="start" font-size="11" fill="#333">frozen</text>
+<text x="508.3" y="34.0" text-anchor="start" font-size="11" fill="#333">plain</text>
+<text x="226.7" y="307.3" text-anchor="start" font-size="11" fill="#333">learning</text>
+<text x="357.9" y="307.3" text-anchor="start" font-size="11" fill="#333">frozen</text>
+<text x="327.4" y="252.7" text-anchor="start" font-size="11" fill="#333">plain</text>
+<text x="76.7" y="88.7" text-anchor="start" font-size="11" fill="#333">learning</text>
+<text x="77.5" y="61.3" text-anchor="start" font-size="11" fill="#333">frozen</text>
+<text x="79.3" y="116.0" text-anchor="start" font-size="11" fill="#333">plain</text>
 </svg>
