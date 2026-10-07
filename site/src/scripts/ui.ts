@@ -6,7 +6,7 @@ const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 // ---- reveal on scroll ------------------------------------------------------
 
-const REVEAL = "main :is(h1, h2, h3, p, ul, ol, table, pre, blockquote, figure, img, .card, .term, .mermaid, .plots > a, #tiles, #panels, #bars, #table, .toc)";
+const REVEAL = "main :is(h1, h2, h3, p, ul, ol, table, pre, blockquote, figure, img, .card, .term, .mermaid, .plots > a, #tiles, #pareto, #bars, #table, .toc)";
 
 function setupReveal() {
   if (reduced || !("IntersectionObserver" in window)) return;
