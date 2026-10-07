@@ -77,10 +77,18 @@ const PLOTS = [
     </details>
 
     <details class="section" id="sec-pareto" open>
-      <summary><b>Pass rate against cost</b> <span class="dim">one panel per pack</span></summary>
-      <p class="dim small">Colour is the mode and the shape is the model: {MODELS.map((m, i) => `${["a circle", "a diamond", "a triangle", "a square"][i] ?? "a square"} is ${m.label}`).join(", ")}. Up and to the left is better. Hover or tap a mark for its numbers; click to pin.</p>
-      <div class="legend" id="legend"></div>
-      <div class="panels" id="panels"></div>
+      <summary><b>Pass rate against cost</b> <span class="dim">every visible cell on one chart</span></summary>
+      <p class="dim small">One mark per pack, mode and model: colour is the mode, shape is the model ({MODELS.map((m, i) => `${["circle", "diamond", "triangle", "square"][i] ?? "square"} is ${m.label}`).join(", ")}). Up and to the left is better; the dashed line joins the marks nothing visible beats on both axes. The chart follows the filters above, so narrow them to read it. Hover a mark for its numbers, click to pin, or expand it.</p>
+      <div class="chart-bar">
+        <div class="legend" id="legend"></div>
+        <span class="seg small" role="radiogroup" aria-label="Cost axis" data-xscale>
+          <button type="button" role="radio" data-x="log">log $</button>
+          <button type="button" role="radio" data-x="linear">linear $</button>
+        </span>
+        <button type="button" class="chip" id="labels" aria-pressed="false">labels</button>
+        <button type="button" class="chip" id="expand">⤢ expand</button>
+      </div>
+      <figure class="pareto" id="pareto"></figure>
     </details>
 
     <details class="section" id="sec-bars">
@@ -154,6 +162,7 @@ const PLOTS = [
 </Base>
 
 <script>
+  import { openLightbox } from "../scripts/ui";
   // Everything below the toolbar is drawn from the cells embedded in
   // data-bench and redrawn whenever a filter, preset or metric changes.
   // The selection round-trips through the URL hash so a view can be linked.
@@ -254,6 +263,20 @@ const PLOTS = [
     else sel[key].add(id);
     draw();
   });
+  root.addEventListener("click", (e) => {
+    const x = (e.target as HTMLElement).closest<HTMLElement>("[data-x]");
+    if (x) { xscale = x.dataset.x as "log" | "linear"; draw(); }
+  });
+  document.getElementById("labels")!.addEventListener("click", () => { labels = !(labels ?? visible().length <= 24); draw(); });
+  document.getElementById("expand")!.addEventListener("click", () => {
+    const svg = document.querySelector<SVGElement>("#pareto svg");
+    if (!svg) return;
+    // The lightbox sizes its content from the element's own width and height,
+    // which the responsive chart leaves to CSS; give the copy explicit ones.
+    const copy = svg.cloneNode(true) as SVGElement;
+    copy.setAttribute("width", "1290"); copy.setAttribute("height", "660");
+    openLightbox(copy, "pass rate against dollars per task");
+  });
   document.getElementById("reset")!.addEventListener("click", () => { sel = all(); metric = "pass"; draw(); });
   document.querySelector("#table thead")!.addEventListener("click", (e) => {
     const th = (e.target as HTMLElement).closest<HTMLElement>("th[data-sort]");
@@ -310,22 +333,52 @@ const PLOTS = [
     document.getElementById("matrix-note")!.textContent = `${M.label[0].toUpperCase()}${M.label.slice(1)} per pack and model, one bar per mode${M.absolute ? "" : ", scaled to the pack's largest value"}. ${better[0].toUpperCase()}${better.slice(1)} is better; the best mode for each model is outlined. Hover a bar for every number of that cell.`;
   }
 
-  function pareto(pack: string, pts: any[]) {
-    const W = 320, H = 220, L = 44, R = 16, T = 28, B = 36;
-    const xmax = Math.max(0.02, ...pts.map((p) => p.dollarsPerTask)) * 1.25;
-    const xs = (v: number) => L + (v / xmax) * (W - L - R);
+  // One scatter for every visible cell: dollars per task (log by default, the
+  // models span three orders of magnitude) against pass rate, with the Pareto
+  // frontier of the visible marks dashed through the points nothing beats.
+  let xscale: "log" | "linear" = "log";
+  let labels: boolean | null = null; // null = automatic: on when few marks
+  const PACK_SHORT: Record<string, string> = { "finance-synthetic": "finance", "legal-synthetic": "legal", "oolong-like": "oolong", "logbook-hard": "logbook", "memo-rubric": "memo" };
+  function pareto(pts: any[]) {
+    const W = 860, H = 440, L = 54, R = 24, T = 20, B = 44;
+    if (!pts.length) return `<p class="dim">Nothing matches these filters.</p>`;
+    const xsv = pts.map((p) => Math.max(p.dollarsPerTask, 1e-5));
+    let xs: (v: number) => number, ticks: number[];
+    if (xscale === "log") {
+      const lo = Math.floor(Math.log10(Math.min(...xsv))), hi = Math.ceil(Math.log10(Math.max(...xsv) * 1.3));
+      const span = Math.max(hi - lo, 1);
+      xs = (v: number) => L + ((Math.log10(Math.max(v, 1e-5)) - lo) / span) * (W - L - R);
+      ticks = Array.from({ length: span + 1 }, (_, i) => 10 ** (lo + i));
+    } else {
+      const xmax = Math.max(0.02, ...xsv) * 1.15;
+      xs = (v: number) => L + (v / xmax) * (W - L - R);
+      ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => f * xmax);
+    }
     const ys = (v: number) => T + (1 - v) * (H - T - B);
-    const out: string[] = [`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(pack)}: pass rate against dollars per task" font-family="IBM Plex Mono, monospace" font-size="10">`];
-    for (const v of [0, 0.5, 1]) out.push(`<line x1="${L}" x2="${W - R}" y1="${ys(v)}" y2="${ys(v)}" stroke="#313244"/><text x="${L - 6}" y="${ys(v) + 3}" text-anchor="end" fill="#a6adc8">${v * 100}%</text>`);
-    for (const v of [0, xmax / 2, xmax]) out.push(`<text x="${xs(v)}" y="${H - B + 14}" text-anchor="middle" fill="#a6adc8">$${v.toFixed(2)}</text>`);
-    out.push(`<line x1="${L}" x2="${W - R}" y1="${ys(0)}" y2="${ys(0)}" stroke="#45475a"/><text x="${(L + W - R) / 2}" y="${H - 4}" text-anchor="middle" fill="#6c7086">dollars per task</text>`);
+    const tick = (v: number) => (v === 0 ? "$0" : v >= 1 ? `$${v.toFixed(v >= 10 ? 0 : 2)}` : v >= 0.01 ? `$${v.toFixed(xscale === "log" ? 2 : 3)}` : `$${v.toFixed(xscale === "log" ? (v >= 0.001 ? 3 : 4) : 4)}`);
+    const out: string[] = [`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="pass rate against dollars per task, every visible pack, mode and model" font-family="IBM Plex Mono, monospace" font-size="11">`];
+    out.push(`<rect x="${L}" y="${T}" width="${W - L - R}" height="${H - T - B}" fill="#181825"/>`);
+    for (const v of [0, 0.25, 0.5, 0.75, 1]) out.push(`<line x1="${L}" x2="${W - R}" y1="${ys(v)}" y2="${ys(v)}" stroke="#313244"/><text x="${L - 8}" y="${ys(v) + 4}" text-anchor="end" fill="#a6adc8">${v * 100}%</text>`);
+    for (const v of ticks) out.push(`<line x1="${xs(v)}" x2="${xs(v)}" y1="${T}" y2="${H - B}" stroke="#313244"/><text x="${xs(v)}" y="${H - B + 16}" text-anchor="middle" fill="#a6adc8">${tick(v)}</text>`);
+    out.push(`<text x="${(L + W - R) / 2}" y="${H - 6}" text-anchor="middle" fill="#6c7086">dollars per task${xscale === "log" ? " (log)" : ""}</text>`);
+    out.push(`<text transform="translate(14 ${(T + H - B) / 2}) rotate(-90)" text-anchor="middle" fill="#6c7086">pass rate</text>`);
+    // Frontier: sort by cost, keep the marks whose pass rate beats everything cheaper.
+    const front = [...pts].sort((a, b) => a.dollarsPerTask - b.dollarsPerTask || b.pass - a.pass).filter((p, i, arr) => arr.slice(0, i).every((q) => q.pass < p.pass));
+    if (front.length > 1) out.push(`<polyline points="${front.map((p) => `${xs(p.dollarsPerTask)},${ys(p.pass)}`).join(" ")}" fill="none" stroke="#a6adc8" stroke-dasharray="4 4" stroke-width="1"/>`);
+    const showLabels = labels ?? pts.length <= 24;
     const placed: { x: number; y: number }[] = [];
-    pts.forEach((p) => {
+    [...pts].sort((a, b) => a.dollarsPerTask - b.dollarsPerTask).forEach((p) => {
       const x = xs(p.dollarsPerTask), y = ys(p.pass);
-      let dy = -9;
-      for (const q of placed) if (Math.abs(q.x - x) < 40 && Math.abs(q.y - y) < 14) dy = 16;
-      placed.push({ x, y });
-      out.push(`<g class="mk" data-cell="${cells.indexOf(p)}" tabindex="0"><circle cx="${x}" cy="${y}" r="12" fill="transparent"/>${mark(shapeOf(p.model), x, y, MODE_COLOR[p.mode])}<text x="${x}" y="${y + dy}" text-anchor="middle" fill="#cdd6f4">${p.mode}</text></g>`);
+      // Label below or above the mark, at the first offset that keeps clear
+      // of every label already placed; marks sit on the same spots often.
+      let dy = -10;
+      if (showLabels) {
+        const free = (d: number) => placed.every((q) => Math.abs(q.x - x) >= 64 || Math.abs(q.y - (y + d)) >= 13);
+        dy = [-10, 19, -22, 31, -34, 43, -46, 55].find(free) ?? 67;
+        placed.push({ x, y: y + dy });
+      }
+      const onFront = front.includes(p);
+      out.push(`<g class="mk" data-cell="${cells.indexOf(p)}" tabindex="0"><circle cx="${x}" cy="${y}" r="12" fill="transparent"/>${mark(shapeOf(p.model), x, y, MODE_COLOR[p.mode], onFront ? 6 : 5)}${showLabels ? `<text x="${x}" y="${y + dy}" text-anchor="middle" fill="#cdd6f4">${esc(PACK_SHORT[p.pack] ?? p.pack)}</text>` : ""}</g>`);
     });
     out.push(`</svg>`);
     return out.join("");
@@ -380,11 +433,10 @@ const PLOTS = [
     ].map(([b, s]) => `<div class="tile"><b>${b}</b><span>${s}</span></div>`).join("");
     matrix(vis);
     document.getElementById("legend")!.innerHTML = vmodes().map((m) => `<span><i style="background:${MODE_COLOR[m]}"></i>${m}</span>`).join("") + `<span class="dim">${vmodels().map((m) => `${SHAPE_GLYPH[shapeOf(m.id)]} ${esc(m.label)}`).join(" &nbsp; ")}</span>`;
-    document.getElementById("panels")!.innerHTML = vpacks().map((p) => {
-      const pts = vis.filter((c) => c.pack === p);
-      if (!pts.length) return "";
-      return `<figure class="panel"><figcaption><b>${esc(p)}</b> <span class="dim">${Math.max(...pts.map((c) => c.tasks))} tasks</span></figcaption>${pareto(p, pts)}</figure>`;
-    }).join("") || `<p class="dim">Nothing matches these filters.</p>`;
+    document.getElementById("pareto")!.innerHTML = pareto(vis);
+    root.querySelectorAll<HTMLElement>("[data-x]").forEach((b) => { b.classList.toggle("on", b.dataset.x === xscale); b.setAttribute("aria-checked", String(b.dataset.x === xscale)); });
+    const lb = document.getElementById("labels")!;
+    lb.classList.toggle("on", labels ?? vis.length <= 24); lb.setAttribute("aria-pressed", String(labels ?? vis.length <= 24));
     document.getElementById("bars")!.innerHTML = vmodels().map((m) => bars(m.id, vis)).join("");
     table(vis);
     root.querySelectorAll<HTMLElement>(".run").forEach((r) => { r.hidden = !sel.model.has(r.dataset.model!); });
@@ -505,10 +557,11 @@ const PLOTS = [
   #bench svg .mk:hover text, #bench svg .mk:focus text { fill: #fff; }
   #bench .legend { display: flex; flex-wrap: wrap; gap: 1.2rem; font-size: 0.85rem; margin-bottom: 0.6rem; }
   #bench .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 0.4rem; vertical-align: -1px; }
-  #bench .panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 0.8rem; margin-bottom: 1rem; }
-  #bench .panel { margin: 0; border: 1px solid var(--line); background: var(--panel); padding: 0.5rem 0.6rem 0.2rem; min-width: 0; }
-  #bench .panel figcaption { font-size: 0.85rem; margin-bottom: 0.2rem; }
-  #bench .panel svg { width: 100%; height: auto; display: block; }
+  #bench .chart-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem 1rem; margin-bottom: 0.5rem; }
+  #bench .chart-bar .legend { margin: 0; margin-right: auto; }
+  #bench .seg.small button { font-size: 0.75rem; padding: 0.05rem 0.5rem; }
+  #bench .pareto { margin: 0 0 1rem; border: 1px solid var(--line); background: var(--panel); padding: 0.5rem 0.6rem 0.2rem; min-width: 0; }
+  #bench .pareto svg { width: 100%; height: auto; display: block; }
   #bench .bars { margin: 0 0 1.2rem; border: 1px solid var(--line); background: var(--panel); padding: 0.5rem 0.8rem; max-width: 760px; min-width: 0; }
   #bench .bars figcaption { font-size: 0.85rem; color: var(--dim); margin-bottom: 0.3rem; }
   #bench .bars svg { width: 100%; height: auto; display: block; }
