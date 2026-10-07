@@ -2,15 +2,13 @@
 
 Prebuilt binaries cover macOS (Apple silicon and Intel) and Linux (x86_64 and aarch64) and are attached to every tagged release. Pick one of the three.
 
-> Until the first tagged release exists, the curl and Homebrew lines below have nothing to download. Build from source (the third option) in the meantime.
-
 ## curl
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/MarcusElwin/kleene/main/install.sh | sh
 ```
 
-The script detects your OS and architecture, downloads the latest release tarball and its `.sha256`, verifies the checksum and installs to `~/.local/bin` (or `/usr/local/bin` when run as root). It tells you if the destination is not on your `PATH`.
+The script detects your OS and architecture, downloads the latest release tarball and the release's `SHA256SUMS`, verifies the checksum and installs to `~/.local/bin` (or `/usr/local/bin` when run as root). It tells you if the destination is not on your `PATH`.
 
 | Variable | Effect | Default |
 |---|---|---|
@@ -24,10 +22,12 @@ The script detects your OS and architecture, downloads the latest release tarbal
 ## Homebrew
 
 ```bash
-brew install MarcusElwin/kleene/kleene
+brew tap MarcusElwin/kleene https://github.com/MarcusElwin/kleene
+brew trust MarcusElwin/kleene   # Homebrew 7 asks once for third-party taps
+brew install kleene
 ```
 
-The formula lives in the `homebrew-kleene` tap and pins the release tarballs by SHA-256. [`Formula/kleene.rb`](https://github.com/MarcusElwin/kleene/blob/main/Formula/kleene.rb) in the main repository is its source.
+The repository is its own tap: `brew tap` with the URL clones it and finds [`Formula/kleene.rb`](https://github.com/MarcusElwin/kleene/blob/main/Formula/kleene.rb), which pins the release tarballs by SHA-256. `brew install --HEAD kleene` builds `main` from source instead (about ten minutes, DuckDB included).
 
 ## From source
 

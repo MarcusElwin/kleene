@@ -25,7 +25,7 @@ curl -fsSL https://raw.githubusercontent.com/MarcusElwin/kleene/main/install.sh 
 ```
 
 The script detects your OS and architecture, downloads the latest release
-tarball and its `.sha256`, verifies the checksum, and installs to
+tarball and the release's `SHA256SUMS`, verifies the checksum, and installs to
 `~/.local/bin` (or `/usr/local/bin` when run as root). It tells you if the
 destination is not on your `PATH`. Environment variables it honours:
 
@@ -62,35 +62,29 @@ gh api -H "Accept: application/vnd.github.raw" repos/MarcusElwin/kleene/contents
 The script downloads release assets through the GitHub API with the same
 token, which works for private and public repositories alike.
 
-**Until the first release exists** there is nothing for the installer to
-download and it says so. Publishing one is `git tag v0.1.0 && git push origin
-v0.1.0`. The workflow builds the four targets, attaches the tarballs and
-checksums, and prints the values the Homebrew formula needs. Meanwhile,
-build from a checkout: `cargo install --path crates/kleene`.
+Releases come from the workflow in `.github/workflows/release.yml`: a merge
+to `main` that bumps the workspace version (or a pushed `v*` tag) builds the
+four targets, attaches the tarballs and `SHA256SUMS`, and prints the values
+the Homebrew formula needs.
 
 ### Homebrew
 
 ```bash
-brew install MarcusElwin/kleene/kleene
+brew tap MarcusElwin/kleene https://github.com/MarcusElwin/kleene
+brew trust MarcusElwin/kleene   # Homebrew 7 asks once for third-party taps
+brew install kleene
 ```
 
-This installs from the tap `MarcusElwin/homebrew-kleene`, whose formula is
-the template in [`Formula/kleene.rb`](../Formula/kleene.rb). Homebrew
-refuses a formula given by path (`Homebrew requires formulae to be in a tap`),
-so until that tap exists, make a local one from a checkout:
-
-```bash
-brew tap-new marcuselwin/kleene
-cp Formula/kleene.rb "$(brew --repository marcuselwin/kleene)/Formula/"
-brew install --HEAD marcuselwin/kleene/kleene
-```
-
-`--HEAD` clones `main` and builds with cargo (about ten minutes, DuckDB
-included), so it works before the first release and while the repository is
-private, as long as git can authenticate to GitHub (`gh auth setup-git`, or
-an SSH remote). Without `--HEAD` the formula downloads release binaries, which
-needs a published release with its checksums pasted into the formula, and a
-public repository.
+Homebrew refuses a formula given by path (`Homebrew requires formulae to be
+in a tap`), and `brew install MarcusElwin/kleene/kleene` would look for a
+repository named `homebrew-kleene`; so the repository is its own tap. `brew
+tap` with the URL clones it and reads [`Formula/kleene.rb`](../Formula/kleene.rb),
+whose stable stanzas download the release binaries and verify their SHA-256.
+Homebrew 7 refuses formulae from an untrusted third-party tap, so `brew trust`
+is needed once per machine (older Homebrew has no such command and no such check).
+`brew install --HEAD kleene` clones `main` and builds with cargo instead
+(about ten minutes, DuckDB included). After each release the sha256 values
+in the formula are updated from the release's `SHA256SUMS`.
 
 ### cargo
 

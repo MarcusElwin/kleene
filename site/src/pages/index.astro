@@ -136,7 +136,7 @@ import TypedTerminal from "../components/TypedTerminal.astro";
     <Terminal title="sh">
 <span class="cmt"># curl: detects OS and architecture, verifies the SHA-256, installs to ~/.local/bin</span>&#10;<span class="prompt">$</span> curl -fsSL https://raw.githubusercontent.com/MarcusElwin/kleene/main/install.sh | sh
 
-<span class="cmt"># Homebrew</span>&#10;<span class="prompt">$</span> brew install MarcusElwin/kleene/kleene
+<span class="cmt"># Homebrew: the repository is its own tap</span>&#10;<span class="prompt">$</span> brew tap MarcusElwin/kleene https://github.com/MarcusElwin/kleene&#10;<span class="prompt">$</span> brew trust MarcusElwin/kleene&#10;<span class="prompt">$</span> brew install kleene
 
 <span class="cmt"># From source (compiles DuckDB the first time, about ten minutes)</span>&#10;<span class="prompt">$</span> cargo install --git https://github.com/MarcusElwin/kleene kleene
 
