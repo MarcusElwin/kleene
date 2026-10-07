@@ -176,6 +176,30 @@ impl Cell {
 /// The modes in the order the tables and plots show them.
 pub const MODES: [&str; 3] = ["learning", "frozen", "plain"];
 
+/// What a glance table shows per mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Metric {
+    /// Pass rate as a whole percentage.
+    Pass,
+    /// Mean dollars per task.
+    Dollars,
+}
+
+impl Metric {
+    fn value(self, c: &Cell) -> f64 {
+        match self {
+            Metric::Pass => c.pass_rate(),
+            Metric::Dollars => c.dollars_per_task(),
+        }
+    }
+    fn format(self, c: &Cell) -> String {
+        match self {
+            Metric::Pass => format!("{:.0}%", c.pass_rate() * 100.0),
+            Metric::Dollars => money(c.dollars_per_task()),
+        }
+    }
+}
+
 /// Results grouped by pack, mode and model.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Results {
@@ -244,6 +268,66 @@ impl Results {
     pub fn cell(&self, pack: &str, mode: &str, model: &str) -> Option<&Cell> {
         self.cells
             .get(&(pack.to_string(), mode.to_string(), model.to_string()))
+    }
+
+    /// The at-a-glance table: one row per pack, one column per model, and
+    /// in each cell the metric for every mode the pack ran, separated by
+    /// ` / ` in `MODES` order (`learning / frozen / plain`). The best mode
+    /// of a cell is bold (highest pass rate, or lowest cost) when the
+    /// modes differ; a mode the model has not run shows `–`. This is the
+    /// table a reader scans first; the long form is `summary_markdown`.
+    pub fn glance_markdown(&self, metric: Metric) -> String {
+        let mut out = String::from("| Pack | Tasks |");
+        for m in &self.models {
+            let _ = write!(out, " {} |", display_name(m));
+        }
+        out.push_str("\n|---|---:|");
+        for _ in &self.models {
+            out.push_str("---:|");
+        }
+        out.push('\n');
+        for pack in self.packs() {
+            let modes = self.modes(&pack);
+            let tasks = self
+                .models
+                .iter()
+                .filter_map(|m| modes.iter().find_map(|mode| self.cell(&pack, mode, m)))
+                .map(|c| c.tasks)
+                .max()
+                .unwrap_or(0);
+            let _ = write!(out, "| `{pack}` | {tasks} |");
+            for m in &self.models {
+                let cells: Vec<Option<&Cell>> =
+                    modes.iter().map(|mode| self.cell(&pack, mode, m)).collect();
+                let values: Vec<f64> = cells.iter().flatten().map(|c| metric.value(c)).collect();
+                let best = match metric {
+                    Metric::Pass => values.iter().cloned().fold(f64::NAN, f64::max),
+                    Metric::Dollars => values.iter().cloned().fold(f64::NAN, f64::min),
+                };
+                let tie = values.iter().all(|v| (v - best).abs() < 1e-12);
+                let shown: Vec<String> = cells
+                    .iter()
+                    .map(|c| match c {
+                        None => "–".to_string(),
+                        Some(c) => {
+                            let text = metric.format(c);
+                            if !tie && (metric.value(c) - best).abs() < 1e-12 {
+                                format!("**{text}**")
+                            } else {
+                                text
+                            }
+                        }
+                    })
+                    .collect();
+                if cells.iter().all(Option::is_none) {
+                    out.push_str(" not run |");
+                } else {
+                    let _ = write!(out, " {} |", shown.join(" / "));
+                }
+            }
+            out.push('\n');
+        }
+        out
     }
 
     /// The summary table: one row per pack, mode and model, with the
@@ -326,16 +410,20 @@ impl Results {
             .collect()
     }
 
-    /// The whole results section as Markdown: the summary table, then one
-    /// collapsible block per plotted pack (every pack when `plotted` is
-    /// empty) holding its plot. `image_dir` is where the SVGs are,
-    /// relative to the document the Markdown goes in. Packs where every
-    /// mode scores the same (the four original packs on Opus 5.5) have
-    /// nothing to show on a Pareto plot, so the README plots the hard
-    /// packs only.
+    /// The whole results section as Markdown, shortest first: the pass-rate
+    /// glance table, then collapsed `<details>` blocks for cost per task,
+    /// the full table (one row per pack, mode and model) and one plot per
+    /// plotted pack (every pack when `plotted` is empty). `image_dir` is
+    /// where the SVGs are, relative to the document the Markdown goes in.
+    /// Packs where every mode scores the same (the four original packs on
+    /// Opus 5.5) have nothing to show on a Pareto plot, so the README plots
+    /// the hard packs only.
     pub fn markdown(&self, image_dir: &str, plotted: &[String]) -> String {
         let mut out = String::new();
-        out.push_str(&self.summary_markdown());
+        out.push_str(
+            "**Pass rate**, one column per model; each cell reads `learning / frozen / plain`, the best mode in bold, `–` where that mode has not run.\n\n",
+        );
+        out.push_str(&self.glance_markdown(Metric::Pass));
         out.push('\n');
         let _ = writeln!(
             out,
@@ -346,6 +434,12 @@ impl Results {
                 .collect::<Vec<_>>()
                 .join(", ")
         );
+        out.push_str("<details>\n<summary><b>Cost per task</b>, same layout: mean dollars of the solver's own calls, the cheapest mode in bold</summary>\n\n");
+        out.push_str(&self.glance_markdown(Metric::Dollars));
+        out.push_str("\n</details>\n\n");
+        out.push_str("<details>\n<summary><b>Every cell</b>: one row per pack, mode and model with tasks, pass, dollars, calls, tokens and seconds</summary>\n\n");
+        out.push_str(&self.summary_markdown());
+        out.push_str("\n</details>\n\n");
         let dir = image_dir.trim_end_matches('/');
         for pack in self.packs() {
             if !(plotted.is_empty() || plotted.contains(&pack)) {
@@ -464,11 +558,16 @@ fn pass(c: &Cell) -> String {
     format!("{}/{} ({:.0}%)", c.solved, c.tasks, c.pass_rate() * 100.0)
 }
 
+/// Dollars with as many decimals as the amount needs to read: two from a
+/// dollar up, three from a cent up, four below that (a GPT-6 Luna task
+/// costs a fraction of a cent, and `$0.000` says nothing).
 fn money(v: f64) -> String {
     if v >= 1.0 {
         format!("${v:.2}")
-    } else {
+    } else if v >= 0.01 {
         format!("${v:.3}")
+    } else {
+        format!("${v:.4}")
     }
 }
 
@@ -557,6 +656,38 @@ r4,terminal,plain,claude-opus-5-5,0,\"x,y\",terminal,true,1,100,0.01,0,1,500\n";
     }
 
     #[test]
+    fn glance_table_has_a_row_per_pack_and_bolds_the_best_mode() {
+        let r = Results::from_rows(&parse_csv(CSV, "t").unwrap());
+        let md = r.glance_markdown(Metric::Pass);
+        let lines: Vec<&str> = md.lines().collect();
+        assert_eq!(
+            lines[0],
+            "| Pack | Tasks | Claude Haiku 4.5 | Claude Opus 5.5 |"
+        );
+        assert_eq!(lines[1], "|---|---:|---:|---:|");
+        // Haiku ran frozen (1/2) and plain (1/1), not learning; plain is best.
+        assert_eq!(
+            lines[2],
+            "| `memo` | 2 | – / 50% / **100%** | 100% / – / – |"
+        );
+        // Opus alone ran terminal, so Haiku's cell says so instead of three dashes.
+        assert_eq!(lines[3], "| `terminal` | 1 | not run | 100% |");
+        assert_eq!(lines.len(), 4);
+        let cost = r.glance_markdown(Metric::Dollars);
+        assert!(
+            cost.contains("| `memo` | 2 | – / $0.200 / **$0.050** | $0.400 / – / – |"),
+            "{cost}"
+        );
+        // The section opens with the glance, then folds the rest away.
+        let md = r.markdown("plots/results", &[]);
+        let glance = md.find("| Pack | Tasks |").unwrap();
+        let cost = md.find("<summary><b>Cost per task</b>").unwrap();
+        let every = md.find("<summary><b>Every cell</b>").unwrap();
+        assert!(glance < cost && cost < every, "{md}");
+        assert!(md.contains("| Pack | Mode | Model | Tasks | Pass |"));
+    }
+
+    #[test]
     fn pareto_chart_has_a_series_per_model_and_a_label_per_point() {
         let r = Results::from_rows(&parse_csv(CSV, "t").unwrap());
         let chart = r.pareto_chart("memo");
@@ -616,6 +747,9 @@ r4,terminal,plain,claude-opus-5-5,0,\"x,y\",terminal,true,1,100,0.01,0,1,500\n";
         assert_eq!(display_name("gpt-6-luna"), "GPT-6 Luna");
         assert_eq!(display_name("llama"), "Llama");
         assert_eq!(thousands(1234567.0), "1,234,567");
+        assert_eq!(money(1.5), "$1.50");
+        assert_eq!(money(0.142), "$0.142");
+        assert_eq!(money(0.0004), "$0.0004");
         assert_eq!(thousands(999.0), "999");
     }
 }

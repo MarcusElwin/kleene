@@ -1,13 +1,43 @@
 # Benchmarks: what `kleene bench` runs and what it measures
 
-This is the one place that explains the benchmark harness end to end: the
-seven shipped task packs, the three modes every pack runs under, how a task
-is judged, what each number in `bench report` means, and what the five
-plots show. The commands themselves are listed in
-[`docs/CLI.md`](CLI.md#kleene-bench); the claims and the measurement
-rationale are in [`docs/WRITEUP.md`](WRITEUP.md); results against a real
-model land in the write-up and in the README's
-[status section](../README.md#status), not here.
+The benchmark harness end to end: the seven task packs, the three modes,
+how a task is judged, what the numbers mean and what the plots show.
+Commands are in [`docs/CLI.md`](CLI.md#kleene-bench), the claims and
+their reading in [`docs/WRITEUP.md`](WRITEUP.md), and the results
+themselves in the README's
+[results section](../README.md#benchmark-results) and on
+[kleene.sh/benchmarks](https://kleene.sh/benchmarks/).
+
+**Where to look**
+
+| You want to know | Read |
+|---|---|
+| what each pack asks and how it is graded | [Packs](#packs), [Oracles](#oracles) |
+| what `learning`, `frozen` and `plain` mean | [Modes](#modes) |
+| what a column in a table or CSV means | [What is recorded](#what-is-recorded), [What `bench report` shows](#what-bench-report-shows) |
+| how the README's cross-model table is built | [Results across models](#results-across-models) |
+| what a plot shows and which claim it backs | [The five plots](#the-five-plots) |
+| how to run a clean comparison | [Comparisons the design calls for](#comparisons-the-design-calls-for), [Reading results](#reading-results) |
+| how to run offline or resume | [Recording and replaying](#recording-and-replaying) |
+| how to add a pack | [Adding a pack](#adding-a-pack) |
+
+**In one screen**
+
+| Pack | Tasks | Input | Answer | Oracle | Stands in for |
+|---|---:|---|---|---|---|
+| `terminal` | 6 | a workspace and a shell-level instruction | files left behind and a `FINAL` row | `shell` | Terminal-Bench |
+| `oolong-like` | 20 | dated meeting notes with hours per project | hours per project | `exact` | OOLONG |
+| `finance-synthetic` | 20 | a multi-year income statement with distractors | one number | `number` | FinanceBench |
+| `legal-synthetic` | 20 | a contract with planted clause categories | the categories present | `exact` | CUAD, Harvey LAB |
+| `logbook-hard` | 30 | 1,650 log entries (30k tokens), four phrasings, corrections | one of five aggregates | `exact` | OOLONG at scale |
+| `memo-rubric` | 20 | a 40-section agreement with an amendment and a rejected proposal | a short memo | `judge` | Harvey LAB drafting |
+| `coding` | 12 | a small Python project with visible tests, in three-step episodes | files edited and a `FINAL` row | `shell`, hidden tests | SWE-bench |
+
+Every pack runs in three modes: **learning** (Kleene, playbook on),
+**frozen** (Kleene, playbook off: the control) and **plain** (a
+tool-calling agent, no SQL: the baseline). Every task records whether it
+was solved, how many model calls it took and what it cost; everything
+else is a query over those rows.
 
 ## The question the benchmarks answer
 
@@ -29,6 +59,9 @@ and a source directory for a fresh workspace, an oracle and a difficulty
 prior. The schema is `Pack` and `PackTask` in
 `crates/kleene-harness/src/learn/packs.rs`.
 
+<details>
+<summary>The full pack table: inputs, outputs, oracles with their tolerances, and what each pack stands in for</summary>
+
 | Pack | Tasks | What the model gets | What it must produce | Oracle | Stands in for |
 |---|---|---|---|---|---|
 | `tasks/terminal` | 6 | an empty or seeded workspace and an instruction (create a file, count lines, rename `.log` to `.txt`, count `TODO` lines, sum a CSV column, write a JSON file) | files left in the workspace and a one-row `FINAL` | `shell`: a command run in the workspace, exit 0 passes | [Terminal-Bench](https://github.com/laude-institute/terminal-bench): shell tasks graded by tests |
@@ -38,6 +71,15 @@ prior. The schema is `Pack` and `PackTask` in
 | `tasks/logbook-hard` | 30 | `ctx`: a work log of about 1,650 dated entries (about 118,000 characters, 30,000 tokens) in four phrasings, with entries about the same projects whose numbers are not hours, and `Correction:` entries that amend an earlier entry | `FINAL` answering one of five questions: hours per project, hours per person on one project, the top person, hours per project in one month, distinct people on a project | `exact` | OOLONG at a size that cannot be read once and answered: the context has to be filtered and aggregated |
 | `tasks/memo-rubric` | 20 | `ctx`: a synthetic services agreement of about 40 sections with six planted commercial terms, a rejected proposal in a schedule, and an amendment that supersedes one term | `FINAL` with one row holding a short written memo answering three questions about the terms | `judge`: a separate model grades the memo against a rubric naming each required fact and forbidding the superseded and rejected values, with a reference memo | Harvey LAB-style drafting graded by rubric |
 | `tasks/coding` | 12 | a small Python project in the workspace (four projects: a finance CSV library, word statistics, warehouse stock, day-interval scheduling), visible unit tests, and a task: implement a module, then extend it, then fix a bug report | files edited in place and a one-row `FINAL` | `shell`: the grader's own hidden unit tests for every step so far (visible tests plus edge cases the task text states) | SWE-bench-style code editing, in three-step episodes over one checkout |
+
+</details>
+
+The synthetic packs are frozen generator output, so two runs see the same
+tasks in the same order; the coding pack is hand-written and its three
+steps form an episode in one workspace. The mechanics:
+
+<details>
+<summary>How the synthetic packs are generated and frozen, and how a coding episode inherits its workspace</summary>
 
 The synthetic packs are frozen output of the continual loop's generators:
 `corpus`, `statements` and `contracts` at dial 0.5, seeds 1 to 20, and the
@@ -73,9 +115,15 @@ N, so editing `tests/` changes nothing; the visible tests under `tests/` are
 a subset, and the edge cases the hidden tests add are all stated in the task
 text.
 
+</details>
+
 The external datasets these packs imitate (OOLONG, Terminal-Bench,
 FinanceBench, CUAD, Harvey LAB) are not redistributed. Three import on
-demand:
+demand: `bench import-oolong`, `bench import-lab` and
+`bench import-redlining`.
+
+<details>
+<summary>How each import works: slices, sampling, document formats, scoring with LAB's own evaluator</summary>
 
 - **OOLONG** (Bertsch et al. 2025, MIT): `bench import-oolong <out-dir>`
   downloads questions from the Hugging Face dataset `oolongbench/oolong-synth`
@@ -141,6 +189,8 @@ demand:
   agreement with a GPT redline, not with a lawyer; it is the dataset's own
   framing and it is cheap enough to run the whole test split.
 
+</details>
+
 ## Modes
 
 Every pack runs under one of three modes, chosen with `--mode`. The point of
@@ -152,8 +202,8 @@ having three is that two comparisons fall out of them.
 | `frozen` | Kleene, same model, same tools, same budgets | no | no: no candidate is recorded, no rating moves | the control for learning: the same abstraction with the playbook off |
 | `plain` | a tool-calling agent on the same provider, tools and budgets, no SQL: the tools go to the model as native tool definitions, its `tool_use` blocks run and their results come back as `tool_result` blocks, and a `final` tool carries the answer | n/a | n/a | the baseline for cost parity: same model, same spend, only the abstraction differs |
 
-`learning` against `frozen` isolates the effect of the playbook.
-`frozen` against `plain` isolates the effect of the SQL abstraction. A
+**The two comparisons.** `learning` against `frozen` isolates the
+playbook. `frozen` against `plain` isolates the SQL abstraction. A
 `learning` run also moves the Bradley-Terry ratings of the tasks and the
 solver, so `bench plot`'s difficulty axis reflects what the loop has seen.
 
@@ -289,13 +339,16 @@ kleene bench results plots/evals.csv plots/haiku-2026-10-01/evals.csv \
 reads every CSV given, groups the rows by pack, mode and `model`, and
 writes to `--out`:
 
-- `results.md`: the summary table, one row per pack, mode and model with
-  the metrics as columns (tasks, pass rate as `solved/tasks (percent)`,
-  mean dollars per task, total dollars, mean calls, mean tokens and mean
-  seconds per task), followed by one collapsible `<details>` block per
-  plotted pack holding its plot. A model that has not been run on a pack
-  in a mode keeps its row with blank metrics, not zeros, so the table can
-  be published before every model has run every pack.
+- `results.md`: the results block, shortest first. A glance table with
+  one row per pack and one column per model, each cell the pass rate in
+  `learning / frozen / plain` order with the best mode in bold and `–`
+  where a mode has not run; then, folded in `<details>`, the same table
+  for mean dollars per task, the full table (one row per pack, mode and
+  model: tasks, pass as `solved/tasks (percent)`, dollars per task, total
+  dollars, calls, tokens and seconds per task), and one block per plotted
+  pack holding its plot. A model that has not run a pack in a mode keeps
+  its place with a blank, not a zero, so the block can be published
+  before every model has run every pack.
 - `<pack>-pareto.svg`: dollars per task against pass rate, one point per
   model and mode (one colour per model, the mode written at the point)
   and a dashed line through the Pareto frontier, the points no other point
@@ -392,8 +445,9 @@ run must be the same pack and mode.
 ## Reading results
 
 Results against a real model are reported in
-[`docs/WRITEUP.md`](WRITEUP.md) and summarised in the README's
-[status section](../README.md#status). When reading them:
+[`docs/WRITEUP.md`](WRITEUP.md), summarised in the README's
+[results section](../README.md#benchmark-results) and charted on
+[kleene.sh/benchmarks](https://kleene.sh/benchmarks/). When reading them:
 
 - Accuracy on twenty tasks moves in steps of five points; a difference of
   one task is not a result.

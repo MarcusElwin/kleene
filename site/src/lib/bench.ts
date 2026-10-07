@@ -62,7 +62,7 @@ export function aggregate(rows: Row[]): Cell[] {
 export const PACK_ORDER = ["terminal", "oolong-like", "finance-synthetic", "legal-synthetic", "coding", "memo-rubric", "logbook-hard"];
 
 export const fmt = {
-  money: (x: number) => (x >= 1 ? `$${x.toFixed(2)}` : `$${x.toFixed(3)}`),
+  money: (x: number) => (x >= 1 ? `$${x.toFixed(2)}` : x >= 0.01 ? `$${x.toFixed(3)}` : `$${x.toFixed(4)}`),
   num: (x: number, d = 1) => x.toFixed(d),
   int: (x: number) => Math.round(x).toLocaleString("en-US"),
   pct: (x: number) => `${Math.round(x * 100)}%`,
