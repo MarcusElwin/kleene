@@ -119,8 +119,12 @@ pub struct RunNode {
     pub root: Option<SessionId>,
     /// Outcome, once finished.
     pub outcome: Option<String>,
-    /// The answer rendered, if any.
+    /// The answer rendered as the model saw it, if any.
     pub answer: Option<String>,
+    /// The answer's column names, when the daemon sent them.
+    pub answer_columns: Vec<String>,
+    /// The answer's rows with cells in full, when the daemon sent them.
+    pub answer_rows: Vec<Vec<String>>,
 }
 
 /// Everything the TUI knows.
@@ -183,6 +187,8 @@ impl Model {
                     root: None,
                     outcome: None,
                     answer: None,
+                    answer_columns: vec![],
+                    answer_rows: vec![],
                 });
                 if !self.run_order.contains(&run) {
                     self.run_order.push(run);
@@ -192,6 +198,8 @@ impl Model {
                 run,
                 outcome,
                 answer,
+                answer_columns,
+                answer_rows,
             } => {
                 let node = self.runs.entry(run).or_insert_with(|| RunNode {
                     id: run,
@@ -199,9 +207,13 @@ impl Model {
                     root: None,
                     outcome: None,
                     answer: None,
+                    answer_columns: vec![],
+                    answer_rows: vec![],
                 });
                 node.outcome = Some(outcome);
                 node.answer = answer;
+                node.answer_columns = answer_columns;
+                node.answer_rows = answer_rows;
                 if !self.run_order.contains(&run) {
                     self.run_order.push(run);
                 }
@@ -256,6 +268,8 @@ impl Model {
                     root: None,
                     outcome: None,
                     answer: None,
+                    answer_columns: vec![],
+                    answer_rows: vec![],
                 });
                 node.task = task;
                 if !self.run_order.contains(&run) {
@@ -302,6 +316,8 @@ impl Model {
                             root: None,
                             outcome: None,
                             answer: None,
+                            answer_columns: vec![],
+                            answer_rows: vec![],
                         });
                         node.root = Some(session);
                         if !self.run_order.contains(&run) {

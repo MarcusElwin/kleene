@@ -399,6 +399,215 @@ fn app_mid_run(width: usize) -> App {
     app
 }
 
+/// A finished run whose answer is a relation of long text cells: the FINAL
+/// block lays it out as cards, and the turn's own copy folds to one line.
+fn app_final_cards(width: usize) -> App {
+    let rows: Vec<Vec<String>> = [
+        ("Answer questions over data", "Query session tables with SQL (joins, aggregates, recursive CTEs), and add yes/no, scoring or JSON judgements by calling a language model on each row"),
+        ("Read and search files", "List, grep, BM25-search and read workspace files, including .docx, .xlsx, .pptx, .pdf and .eml, and check git log, blame and diff"),
+        ("Write and fix code", "Create and patch files, run shell commands and tests, and repeat edit, run, fix until the tests pass, keeping a visible plan"),
+        ("Handle very large inputs", "Split long documents or many files into chunks, give each chunk to a child session, then combine the results"),
+        ("Plan and control cost", "Estimate calls, tokens and dollars with EXPLAIN before running anything expensive, and stay within a budget"),
+    ]
+    .iter()
+    .map(|(a, b)| vec![a.to_string(), b.to_string()])
+    .collect();
+    let columns = vec!["capability".to_string(), "how".to_string()];
+    app_finished(
+        width,
+        "what can you do?",
+        "FINAL FROM (SELECT * FROM (VALUES\n  ('Answer questions over data', 'Query session tables with SQL (joins, aggregates, recursive CTEs), and add yes/no, scoring or JSON judgements by calling a language model on each row'),\n  ('Read and search files', 'List, grep, BM25-search and read workspace files, including .docx, .xlsx, .pptx, .pdf and .eml, and check git log, blame and diff'),\n  ('Write and fix code', 'Create and patch files, run shell commands and tests, and repeat edit, run, fix until the tests pass, keeping a visible plan'),\n  ('Handle very large inputs', 'Split long documents or many files into chunks, give each chunk to a child session, then combine the results'),\n  ('Plan and control cost', 'Estimate calls, tokens and dollars with EXPLAIN before running anything expensive, and stay within a budget')\n) AS c(capability, how));",
+        columns,
+        rows,
+    )
+}
+
+/// A finished run whose answer is a small table of short cells: the FINAL
+/// block keeps the grid.
+fn app_final_grid(width: usize) -> App {
+    let rows: Vec<Vec<String>> = [
+        ("Osprey", "212.5", "9"),
+        ("Heron", "148.0", "7"),
+        ("Kestrel", "96.5", "4"),
+    ]
+    .iter()
+    .map(|(a, b, c)| vec![a.to_string(), b.to_string(), c.to_string()])
+    .collect();
+    app_finished(
+        width,
+        "Hours per project, most first",
+        "FINAL FROM (\n  SELECT project, SUM(hours) AS total_hours, COUNT(*) AS notes\n  FROM hours GROUP BY project ORDER BY total_hours DESC\n);",
+        vec!["project".into(), "total_hours".into(), "notes".into()],
+        rows,
+    )
+}
+
+/// One turn that ends in FINAL, then the run's outcome with the answer.
+fn app_finished(
+    width: usize,
+    task: &str,
+    sql: &str,
+    columns: Vec<String>,
+    rows: Vec<Vec<String>>,
+) -> App {
+    let mut app = App {
+        width,
+        ..App::default()
+    };
+    let run = RunId::new();
+    let root = SessionId::new();
+    app.entries.push(Entry::Input(task.into()));
+    let mut seq = 0;
+    let mut push = |app: &mut App, e: TraceEvent| {
+        app.apply(ev(seq, e));
+        seq += 1;
+    };
+    push(
+        &mut app,
+        TraceEvent::RunStarted {
+            run,
+            task: task.into(),
+        },
+    );
+    push(
+        &mut app,
+        TraceEvent::SessionStarted {
+            run,
+            session: root,
+            parent: None,
+            depth: 0,
+            role: "root".into(),
+            task: task.into(),
+        },
+    );
+    let t1 = StatementId::new();
+    push(
+        &mut app,
+        TraceEvent::StatementStarted {
+            session: root,
+            statement: t1,
+            sql: "-- turn 1".into(),
+        },
+    );
+    let c1 = CallId::new();
+    push(
+        &mut app,
+        TraceEvent::CallStarted {
+            statement: t1,
+            call: c1,
+            alias: "root".into(),
+            model: "claude-opus-5".into(),
+            fingerprint: "a".into(),
+        },
+    );
+    push(
+        &mut app,
+        TraceEvent::CallFinished {
+            call: c1,
+            input_tokens: 5200,
+            output_tokens: 640,
+            cache_read_tokens: 4900,
+            cost_usd: 0.0382,
+            elapsed: Duration::from_millis(3100),
+            memo_hit: false,
+            error: None,
+        },
+    );
+    push(
+        &mut app,
+        TraceEvent::StatementFinished {
+            statement: t1,
+            rows: 0,
+            usage: usage(1, 5840, 0.0382),
+            error: None,
+            elapsed: Duration::from_millis(3100),
+        },
+    );
+    let s1 = StatementId::new();
+    push(
+        &mut app,
+        TraceEvent::StatementStarted {
+            session: root,
+            statement: s1,
+            sql: sql.trim_end_matches(';').into(),
+        },
+    );
+    push(
+        &mut app,
+        TraceEvent::StatementFinished {
+            statement: s1,
+            rows: rows.len() as u64,
+            usage: usage(0, 0, 0.0),
+            error: None,
+            elapsed: Duration::from_millis(4),
+        },
+    );
+    // The table as the model saw it: cells cut at 60 characters.
+    let cut = |c: &str| -> String {
+        if c.chars().count() > 60 {
+            format!("{}...", c.chars().take(57).collect::<String>())
+        } else {
+            c.to_string()
+        }
+    };
+    let mut widths: Vec<usize> = columns.iter().map(|c| c.chars().count()).collect();
+    for r in &rows {
+        for (i, c) in r.iter().enumerate() {
+            widths[i] = widths[i].max(cut(c).chars().count());
+        }
+    }
+    let fmt = |cells: Vec<String>| -> String {
+        cells
+            .iter()
+            .enumerate()
+            .map(|(i, c)| format!("{:<w$}", c, w = widths[i]))
+            .collect::<Vec<_>>()
+            .join(" | ")
+    };
+    let mut text = format!("FINAL\n{}\n", fmt(columns.clone()));
+    text.push_str(
+        &widths
+            .iter()
+            .map(|w| "-".repeat(*w))
+            .collect::<Vec<_>>()
+            .join("-+-"),
+    );
+    text.push('\n');
+    for r in &rows {
+        text.push_str(&fmt(r.iter().map(|c| cut(c)).collect()));
+        text.push('\n');
+    }
+    app.apply(ServerMessage::TurnFinished {
+        session: root,
+        turn: 1,
+        reply: format!("```sql\n{sql}\n```"),
+        sql: Some(sql.into()),
+        results: vec![StatementOutput {
+            text: text.clone(),
+            is_error: false,
+            is_final: true,
+        }],
+        plan: vec![],
+    });
+    push(
+        &mut app,
+        TraceEvent::SessionFinished {
+            session: root,
+            outcome: "final".into(),
+            turns: 1,
+            usage: usage(1, 5840, 0.0382),
+        },
+    );
+    app.apply(ServerMessage::RunFinished {
+        run,
+        outcome: "final".into(),
+        answer: Some(text),
+        answer_columns: columns,
+        answer_rows: rows,
+    });
+    app
+}
+
 fn render(app: &App, w: u16, h: u16) -> String {
     let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
     terminal.draw(|f| ui::draw(f, app)).unwrap();
@@ -518,6 +727,15 @@ fn gallery() {
     app.theme = Theme::dark();
     app.entries.push(Entry::Help);
     shots.push(("help", render(&app, w, h)));
+
+    let cards = app_final_cards(w as usize - 2);
+    shots.push(("final-cards", render(&cards, w, h)));
+    let mut raw = cards.clone();
+    raw.show_plans = true;
+    raw.scroll = 0;
+    shots.push(("final-cards-raw", render(&raw, w, h)));
+    let grid = app_final_grid(w as usize - 2);
+    shots.push(("final-grid", render(&grid, w, 30)));
 
     for (name, html) in &shots {
         std::fs::write(dir.join(format!("{name}.html")), html).unwrap();

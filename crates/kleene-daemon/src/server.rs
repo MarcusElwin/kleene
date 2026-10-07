@@ -461,20 +461,27 @@ impl Daemon {
                 let me = self.clone();
                 let handle = tokio::spawn(async move {
                     let outcome = harness.run_as(run, &task, context).await;
-                    let (tag, answer) = match &outcome {
-                        Ok(report) => (
-                            report.root.outcome.tag().to_string(),
-                            match &report.root.outcome {
-                                Outcome::Final { answer } => Some(answer.render_table(50)),
-                                _ => None,
-                            },
-                        ),
-                        Err(e) => (format!("error: {e}"), None),
+                    let (tag, answer, answer_columns, answer_rows) = match &outcome {
+                        Ok(report) => match &report.root.outcome {
+                            Outcome::Final { answer } => {
+                                let (columns, rows) = answer_cells(answer, 200);
+                                (
+                                    report.root.outcome.tag().to_string(),
+                                    Some(answer.render_table(50)),
+                                    columns,
+                                    rows,
+                                )
+                            }
+                            other => (other.tag().to_string(), None, vec![], vec![]),
+                        },
+                        Err(e) => (format!("error: {e}"), None, vec![], vec![]),
                     };
                     me.log.push(ServerMessage::RunFinished {
                         run,
                         outcome: tag,
                         answer,
+                        answer_columns,
+                        answer_rows,
                     });
                     if let Ok(mut runs) = me.runs.lock() {
                         runs.remove(&run);
@@ -579,6 +586,8 @@ impl Daemon {
                             run,
                             outcome: "cancelled".into(),
                             answer: None,
+                            answer_columns: vec![],
+                            answer_rows: vec![],
                         });
                         ServerMessage::Ok {
                             message: format!("cancelled run {run}"),
@@ -662,6 +671,24 @@ impl Daemon {
             },
         }
     }
+}
+
+/// The answer relation's column names and its first `max_rows` rows with
+/// every cell rendered in full, for `RunFinished`.
+fn answer_cells(answer: &kleene_core::Batch, max_rows: usize) -> (Vec<String>, Vec<Vec<String>>) {
+    let columns = answer
+        .schema
+        .names()
+        .iter()
+        .map(|n| n.to_string())
+        .collect();
+    let rows = answer
+        .rows
+        .iter()
+        .take(max_rows)
+        .map(|r| r.iter().map(kleene_core::Value::render).collect())
+        .collect();
+    (columns, rows)
 }
 
 fn bind(socket: &Path) -> Result<UnixListener, DaemonError> {
