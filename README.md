@@ -51,19 +51,19 @@ and Linux (x86_64, aarch64).
 # curl: detects OS and architecture, verifies the SHA-256, installs to ~/.local/bin
 curl -fsSL https://raw.githubusercontent.com/MarcusElwin/kleene/main/install.sh | sh
 
-# Homebrew
-brew install MarcusElwin/kleene/kleene
+# Homebrew: the repository is its own tap
+brew tap MarcusElwin/kleene https://github.com/MarcusElwin/kleene
+brew trust MarcusElwin/kleene   # Homebrew 7 asks once for third-party taps
+brew install kleene
 
 # From source (compiles DuckDB the first time, about ten minutes)
 cargo install --git https://github.com/MarcusElwin/kleene kleene
 ```
 
 `KLEENE_VERSION=v0.1.0` pins the installer to a tag and
-`KLEENE_INSTALL=/usr/local/bin` changes the destination. While the
-repository is private, the raw URL is not served; set `GITHUB_TOKEN` and fetch
-the script through the API instead (see [`docs/CLI.md`](docs/CLI.md#curl)),
-and use one of the [`cargo` variants](docs/CLI.md#cargo) that let the git CLI
-authenticate.
+`KLEENE_INSTALL=/usr/local/bin` changes the destination; the Homebrew
+formula is [`Formula/kleene.rb`](Formula/kleene.rb). Details and the other
+`cargo` variants are in [`docs/CLI.md`](docs/CLI.md#install).
 
 Check that the engine works without a model:
 

@@ -1,20 +1,14 @@
 # Homebrew formula for kleene. Homebrew only installs formulae that live in
-# a tap, so this file is the template for the `homebrew-kleene` repository
-# (as `Formula/kleene.rb`), after which users run
+# a tap, and this repository is its own tap:
 #
-#   brew install MarcusElwin/kleene/kleene
-#
-# Until that tap exists, or to build the current main from source, put it in
-# a local tap:
-#
-#   brew tap-new marcuselwin/kleene
-#   cp Formula/kleene.rb "$(brew --repository marcuselwin/kleene)/Formula/"
-#   brew install --HEAD marcuselwin/kleene/kleene   # cargo build, ~10 min
+#   brew tap MarcusElwin/kleene https://github.com/MarcusElwin/kleene
+#   brew trust MarcusElwin/kleene   # Homebrew 7 asks once for third-party taps
+#   brew install kleene
+#   brew install --HEAD kleene   # build main with cargo instead, ~10 min
 #
 # The stable stanzas download release binaries; the release workflow
-# (.github/workflows/release.yml) prints the version and the four sha256 values to paste
-# below after every tagged release. `--HEAD` clones the repository and builds
-# with cargo.
+# (.github/workflows/release.yml) prints the version and the four sha256
+# values to paste below after every release.
 class Kleene < Formula
   desc "Relational algebra for recursive model calls: CallSQL engine, planner, harness and TUI"
   homepage "https://kleene.sh"
