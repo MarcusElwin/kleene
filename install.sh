@@ -80,9 +80,17 @@ asset_url() {
   '
 }
 tarball_url="$(asset_url "$name.tar.gz")"
-sum_url="$(asset_url "$name.tar.gz.sha256")"
 [ -n "$tarball_url" ] || die "release $tag has no asset $name.tar.gz (unsupported target, or the release build is still running)"
-[ -n "$sum_url" ] || die "release $tag has no checksum for $name.tar.gz"
+# The release workflow publishes one SHA256SUMS file covering every tarball
+# (sha256sum format: "<hex>  <name>"). A per-file "<name>.tar.gz.sha256" is
+# accepted too, for releases assembled by hand.
+sums_file="SHA256SUMS"
+sum_url="$(asset_url "$sums_file")"
+if [ -z "$sum_url" ]; then
+  sums_file="$name.tar.gz.sha256"
+  sum_url="$(asset_url "$sums_file")"
+fi
+[ -n "$sum_url" ] || die "release $tag has no checksum for $name.tar.gz (neither SHA256SUMS nor $name.tar.gz.sha256)"
 
 if [ -n "${KLEENE_INSTALL:-}" ]; then
   dest="$KLEENE_INSTALL"
@@ -97,9 +105,13 @@ trap 'rm -rf "$tmp"' EXIT
 
 say "downloading $name.tar.gz"
 fetch -H "Accept: application/octet-stream" -o "$tmp/$name.tar.gz" "$tarball_url"
-fetch -H "Accept: application/octet-stream" -o "$tmp/$name.tar.gz.sha256" "$sum_url"
+fetch -H "Accept: application/octet-stream" -o "$tmp/$sums_file" "$sum_url"
 
-expected="$(awk '{print $1}' "$tmp/$name.tar.gz.sha256")"
+# Pick the line for our tarball; "*name" is the binary-mode spelling.
+expected="$(awk -v want="$name.tar.gz" '
+  { f = $2; sub(/^\*/, "", f); if (f == want) { print $1; exit } }
+' "$tmp/$sums_file")"
+[ -n "$expected" ] || die "$sums_file in release $tag has no entry for $name.tar.gz"
 if command -v sha256sum >/dev/null 2>&1; then
   actual="$(sha256sum "$tmp/$name.tar.gz" | awk '{print $1}')"
 else

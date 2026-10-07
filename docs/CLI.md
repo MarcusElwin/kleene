@@ -25,7 +25,7 @@ curl -fsSL https://raw.githubusercontent.com/MarcusElwin/kleene/main/install.sh 
 ```
 
 The script detects your OS and architecture, downloads the latest release
-tarball and its `.sha256`, verifies the checksum, and installs to
+tarball and the release's `SHA256SUMS`, verifies the checksum, and installs to
 `~/.local/bin` (or `/usr/local/bin` when run as root). It tells you if the
 destination is not on your `PATH`. Environment variables it honours:
 
