@@ -1010,31 +1010,51 @@ pub fn final_lines(
     out
 }
 
-/// Word-wrap `text` to `width` columns, keeping its own line breaks; a word
-/// longer than the width is split. Always at least one line.
+/// Word-wrap `text` to `width` columns, keeping its own line breaks and
+/// the spacing between words (a cell may hold code); a word longer than
+/// the width is split. Always at least one line.
 fn wrap_words(text: &str, width: usize) -> Vec<String> {
     let width = width.max(1);
     let mut out = Vec::new();
     for para in text.split('\n') {
         let mut line = String::new();
         let mut used = 0usize;
-        for word in para.split_whitespace() {
-            let mut chars: Vec<char> = word.chars().collect();
-            while !chars.is_empty() {
-                let n = chars.len();
-                if used > 0 && used + 1 + n <= width {
-                    line.push(' ');
-                    line.extend(chars.drain(..));
-                    used += 1 + n;
+        let chars: Vec<char> = para.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            // The whitespace run before the next word, kept when the word
+            // continues the line and dropped at a line break.
+            let gap_start = i;
+            while i < chars.len() && chars[i].is_whitespace() {
+                i += 1;
+            }
+            let gap = chars.len().min(i) - gap_start;
+            let word_start = i;
+            while i < chars.len() && !chars[i].is_whitespace() {
+                i += 1;
+            }
+            let mut word = &chars[word_start..i];
+            if word.is_empty() {
+                continue;
+            }
+            while !word.is_empty() {
+                let n = word.len();
+                if used > 0 && used + gap + n <= width {
+                    line.extend(&chars[gap_start..word_start]);
+                    line.extend(word);
+                    used += gap + n;
+                    break;
                 } else if used == 0 && n <= width {
-                    line.extend(chars.drain(..));
+                    line.extend(word);
                     used = n;
+                    break;
                 } else if used > 0 {
                     out.push(std::mem::take(&mut line));
                     used = 0;
                 } else {
-                    line.extend(chars.drain(..width));
+                    line.extend(&word[..width]);
                     out.push(std::mem::take(&mut line));
+                    word = &word[width..];
                 }
             }
         }
@@ -1426,6 +1446,9 @@ mod tests {
         assert_eq!(wrap_words("one two three", 7), ["one two", "three"]);
         assert_eq!(wrap_words("abcdefghij", 4), ["abcd", "efgh", "ij"]);
         assert_eq!(wrap_words("a\n\nb", 10), ["a", "", "b"]);
+        assert_eq!(wrap_words("x = 1;  y = 2", 20), ["x = 1;  y = 2"]);
+        assert_eq!(wrap_words("  lead", 10), ["lead"]);
+        assert_eq!(wrap_words("ab  cd", 4), ["ab", "cd"]);
         assert_eq!(wrap_words("", 10), [""]);
         assert_eq!(total_rows("x\n-\n1\n... 3 more rows (53 total)\n", 50), 53);
         assert_eq!(total_rows("x\n-\n1\n", 1), 1);
