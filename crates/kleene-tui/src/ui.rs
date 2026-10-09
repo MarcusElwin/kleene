@@ -69,13 +69,22 @@ fn first_line(s: &str, max: usize) -> String {
     }
 }
 
+/// Frames of the spinner shown while something is being waited for, one
+/// per event-loop tick.
+const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/// The spinner's frame for this tick.
+pub fn spinner(tick: u64) -> &'static str {
+    SPINNER[(tick % SPINNER.len() as u64) as usize]
+}
+
 fn draw_header(f: &mut Frame<'_>, area: Rect, app: &App) {
     let t = app.theme;
     let m = &app.model;
     let (dot, status, color) = if !app.connected {
         ("✕", "disconnected", t.err)
-    } else if m.busy() {
-        ("●", "running", t.ok)
+    } else if m.busy() || app.awaiting_run {
+        (spinner(app.tick), "running", t.ok)
     } else {
         ("○", "idle", t.muted)
     };
@@ -395,7 +404,22 @@ pub fn stream_lines(app: &App, width: usize) -> Vec<Line<'static>> {
             }
         }
     }
+    if app.awaiting_run {
+        out.push(Line::from(""));
+        out.push(waiting(&t, app.tick, "  ", "starting the run"));
+    }
     out
+}
+
+/// One spinner line: `⠋ thinking…` in the accent colour.
+fn waiting(t: &Theme, tick: u64, pad: &str, what: &str) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(
+            format!("{pad}{} ", spinner(tick)),
+            Style::default().fg(t.accent).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(format!("{what}…"), Style::default().fg(t.accent)),
+    ])
 }
 
 fn chip(t: &Theme) -> Style {
@@ -585,8 +609,12 @@ fn run_lines(app: &App, run: RunId, out: &mut Vec<Line<'static>>) {
         Span::styled(format!(" run {} ", short(run)), chip(&t)),
         Span::styled(format!("  {}", first_line(&r.task, 120)), t.text()),
     ]));
-    if let Some(root) = r.root.and_then(|s| m.sessions.get(&s)) {
-        session_lines(app, root, 0, out);
+    match r.root.and_then(|s| m.sessions.get(&s)) {
+        Some(root) => session_lines(app, root, 0, out),
+        None if r.outcome.is_none() => {
+            out.push(waiting(&t, app.tick, "  ", "thinking"));
+        }
+        None => {}
     }
     match (&r.outcome, &r.answer) {
         (Some(o), Some(answer)) if o == "final" => {
@@ -779,20 +807,25 @@ fn session_lines(app: &App, s: &SessionNode, depth: usize, out: &mut Vec<Line<'s
             .filter_map(|id| m.statements.get(id))
             .filter(|st| !st.finished && !st.sql.starts_with("-- turn"))
             .collect();
+        if s.statement_ids.is_empty() && s.turns_done.is_empty() {
+            // Started, but the first call has not been made yet.
+            out.push(waiting(&t, app.tick, &format!("{pad_text}  "), "thinking"));
+        }
         if streaming.is_some() || !executing.is_empty() || live_turn.is_some_and(|st| !st.finished)
         {
             out.push(Line::from(""));
+            let spin = spinner(app.tick);
             let state = if let Some(c) = streaming {
                 if c.streaming.is_empty() {
-                    "◐ thinking".to_string()
+                    format!("{spin} thinking")
                 } else {
-                    "◐ writing".to_string()
+                    format!("{spin} writing")
                 }
             } else if !executing.is_empty() {
                 let calls: u64 = executing.iter().map(|st| st.calls).sum();
-                format!("◐ executing · λ {calls}")
+                format!("{spin} executing · λ {calls}")
             } else {
-                "◐".to_string()
+                spin.to_string()
             };
             out.push(rule(&t, &pad_text, format!("turn {n}"), state, app.width));
             if let Some(c) = streaming {
@@ -807,7 +840,8 @@ fn session_lines(app: &App, s: &SessionNode, depth: usize, out: &mut Vec<Line<'s
                 }
                 out.push(Line::from(Span::styled(
                     format!(
-                        "{pad_text}  ◐ running · {} call{} so far",
+                        "{pad_text}  {} running · {} call{} so far",
+                        spinner(app.tick),
                         st.calls,
                         if st.calls == 1 { "" } else { "s" }
                     ),
@@ -1414,6 +1448,81 @@ mod tests {
         assert!(crate::stale_daemon_notice(&app.model)
             .unwrap()
             .contains("older than"));
+    }
+
+    #[test]
+    fn spinner_shows_from_enter_until_the_first_call() {
+        let mut app = App {
+            input: "Find the bug".into(),
+            ..App::default()
+        };
+        assert!(matches!(app.submit(), crate::Action::Send(_)));
+        assert!(app.awaiting_run);
+        let text = |app: &App| {
+            stream_lines(app, 100)
+                .iter()
+                .map(|l| l.to_string())
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        assert!(text(&app).contains("⠋ starting the run…"), "{}", text(&app));
+        app.tick = 3;
+        assert!(text(&app).contains("⠸ starting the run…"), "{}", text(&app));
+        let mut terminal = Terminal::new(TestBackend::new(120, 30)).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+        let header = buffer_text(terminal.backend())
+            .lines()
+            .next()
+            .unwrap()
+            .to_string();
+        assert!(header.contains("⠸ running"), "{header}");
+        // The run starts: the spinner moves under the run until its root
+        // session makes a call.
+        let run = RunId::new();
+        let root = SessionId::new();
+        app.apply(ev(
+            0,
+            TraceEvent::RunStarted {
+                run,
+                task: "Find the bug".into(),
+            },
+        ));
+        assert!(!app.awaiting_run);
+        assert!(!text(&app).contains("starting the run"), "{}", text(&app));
+        assert!(text(&app).contains("⠸ thinking…"), "{}", text(&app));
+        app.apply(ev(
+            1,
+            TraceEvent::SessionStarted {
+                run,
+                session: root,
+                parent: None,
+                depth: 0,
+                role: "root".into(),
+                task: "Find the bug".into(),
+            },
+        ));
+        assert!(text(&app).contains("⠸ thinking…"), "{}", text(&app));
+        app.apply(ev(
+            2,
+            TraceEvent::StatementStarted {
+                session: root,
+                statement: StatementId::new(),
+                sql: "-- turn 1".into(),
+            },
+        ));
+        assert_eq!(text(&app).matches("thinking").count(), 0, "{}", text(&app));
+        assert!(text(&app).contains("turn 1"), "{}", text(&app));
+        assert_eq!(spinner(10), spinner(0));
+        // An error from the daemon clears the wait.
+        let mut app = App {
+            input: "x".into(),
+            ..App::default()
+        };
+        app.submit();
+        app.apply(ServerMessage::Error {
+            message: "no provider".into(),
+        });
+        assert!(!app.awaiting_run);
     }
 
     #[test]
