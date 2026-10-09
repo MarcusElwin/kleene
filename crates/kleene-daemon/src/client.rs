@@ -50,6 +50,9 @@ pub struct Client {
     writer: ClientWriter,
     /// The daemon's generation from its `Hello`.
     pub generation: u64,
+    /// The daemon's kleene version from its `Hello`, `None` from a daemon
+    /// too old to send one.
+    pub version: Option<String>,
 }
 
 impl Client {
@@ -61,10 +64,11 @@ impl Client {
             lines: BufReader::new(read).lines(),
         };
         let writer = ClientWriter { write };
-        let generation = match reader.recv().await? {
+        let (generation, version) = match reader.recv().await? {
             Some(ServerMessage::Hello {
                 protocol,
                 generation,
+                version,
             }) => {
                 if protocol != crate::PROTOCOL_VERSION {
                     return Err(DaemonError::Protocol(format!(
@@ -72,7 +76,7 @@ impl Client {
                         crate::PROTOCOL_VERSION
                     )));
                 }
-                generation
+                (generation, version)
             }
             Some(other) => {
                 return Err(DaemonError::Protocol(format!(
@@ -85,6 +89,7 @@ impl Client {
             reader,
             writer,
             generation,
+            version,
         })
     }
 

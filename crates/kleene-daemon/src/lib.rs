@@ -127,6 +127,10 @@ pub enum ServerMessage {
         protocol: u32,
         /// Current generation.
         generation: u64,
+        /// The daemon's kleene version (`CARGO_PKG_VERSION`); absent from
+        /// daemons built before it was sent.
+        #[serde(default)]
+        version: Option<String>,
     },
     /// A trace event with its cursor.
     Event {

@@ -413,6 +413,10 @@ impl Theme {
                 Style::default().fg(p.mauve).add_modifier(Modifier::BOLD),
             ),
             Span::styled(format!("  ·  {TAGLINE}"), self.dim()),
+            Span::styled(
+                format!("  ·  v{}", env!("CARGO_PKG_VERSION")),
+                Style::default().fg(self.faint),
+            ),
         ]));
         lines
     }

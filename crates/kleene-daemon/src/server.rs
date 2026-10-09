@@ -331,6 +331,7 @@ impl Daemon {
         let _ = tx.send(ServerMessage::Hello {
             protocol: PROTOCOL_VERSION,
             generation: self.log.generation(),
+            version: Some(env!("CARGO_PKG_VERSION").to_string()),
         });
         let mut lines = BufReader::new(read).lines();
         let mut forwarder: Option<tokio::task::JoinHandle<()>> = None;

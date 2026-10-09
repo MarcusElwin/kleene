@@ -146,6 +146,9 @@ pub struct Model {
     pub cursor: Option<Cursor>,
     /// Daemon generation.
     pub generation: Option<u64>,
+    /// The daemon's kleene version, once its `Hello` arrived; `None` also
+    /// for a daemon too old to say.
+    pub daemon_version: Option<String>,
     /// Totals over every finished call.
     pub total_calls: u64,
     /// Total memo hits.
@@ -170,7 +173,14 @@ impl Model {
     /// Fold one server message in.
     pub fn apply(&mut self, msg: ServerMessage) {
         match msg {
-            ServerMessage::Hello { generation, .. } => self.generation = Some(generation),
+            ServerMessage::Hello {
+                generation,
+                version,
+                ..
+            } => {
+                self.generation = Some(generation);
+                self.daemon_version = version;
+            }
             ServerMessage::Event { cursor, traced } => {
                 self.cursor = Some(cursor);
                 self.apply_event(traced.event);
