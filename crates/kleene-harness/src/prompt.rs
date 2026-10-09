@@ -7,7 +7,8 @@
 
 use crate::{AgentRole, Rendered};
 use kleene_core::{
-    Budget, BudgetUsage, CallKind, Catalog, FunctionDef, FunctionReturn, TableDef, Volatility,
+    Budget, BudgetUsage, CallKind, Catalog, ConversationId, FunctionDef, FunctionReturn, TableDef,
+    Volatility,
 };
 use kleene_tools::skills::Skill;
 use std::fmt::Write as _;
@@ -155,7 +156,8 @@ const RULES: &str = "## CallSQL rules
 - Results are truncated to the first rows: aggregate, filter and LIMIT deliberately; never page through a large relation row by row. Peek (COUNT, MIN, MAX, a LIMIT 3 sample), partition (chunks, files), locate (grep, lines), map (LATERAL rlm), then reduce.
 - Files and code: search(query) ranks files by the words of a query, grep(pattern) matches a regex, lines(path, from, to) reads a range; write_file(path, text) writes a file; patch(path, old, new) replaces one occurrence (exact, else ignoring whitespace and quotes) after you have read the file (read or lines) in this session and returns the diff; shell('cmd') runs a command in the workspace and returns stdout, stderr and exit_code. Put code, and any text with quotes or newlines, in dollar quotes: CALL write_file('fizz.py', $$print(\"hi\")$$) needs no escaping inside $$ ... $$. Write, run, read the failure, patch, run again. A failing test is the next thing to fix, not a reason to stop; FINAL only once the run is green.
 - For a task with several steps keep a plan the UI shows: CREATE TABLE plan AS SELECT * FROM (VALUES ('read the tests', 'doing'), ('implement', 'todo')) AS p(step, status); then INSERT INTO plan VALUES ('read the tests', 'done'), ('implement', 'doing') as steps change. The latest row per step counts; statuses are todo, doing, done.
-- Older turns are folded out of this transcript into the table turns(n, sql, result); query it rather than re-running a statement whose result scrolled away.
+- Older turns are folded out of this transcript into the table turns(run, n, sql, result); the stub left in their place names the row. Query it rather than re-running a statement whose result scrolled away.
+- memory(key, value) persists across runs: INSERT INTO memory VALUES ('key', 'what a later run should know') to keep a fact, and SELECT from it when a task refers to earlier work.
 - Errors come back as text with a hint; fix the statement and retry. A failed statement stops the rest of that reply.
 - End with FINAL(expr) or FINAL FROM (SELECT ...): its rows are your answer and the session ends. Make the answer a small, well-named relation.
 ";
@@ -331,13 +333,76 @@ pub fn render_budget(b: &Budget) -> String {
     }
 }
 
+/// Characters of one earlier message shown inline in a follow-up task;
+/// the rest is in the `conversations` table.
+pub const EXCHANGE_MAX_CHARS: usize = 1_500;
+
+/// One earlier message of a conversation, as the task message shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Exchange {
+    /// `user` (a task) or `assistant` (its answer).
+    pub role: String,
+    /// The text.
+    pub text: String,
+}
+
+/// What a follow-up run is told about the conversation it continues.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConversationHistory {
+    /// The conversation.
+    pub id: ConversationId,
+    /// Messages recorded before this run.
+    pub total: usize,
+    /// The most recent of them, in order, shown inline.
+    pub recent: Vec<Exchange>,
+}
+
+/// `text` cut to `max` characters with a note pointing at the table.
+fn clip(text: &str, max: usize) -> String {
+    let text = text.trim();
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let head: String = text.chars().take(max).collect();
+    format!("{head}… (cut; the full text is in conversations)")
+}
+
 /// The first user turn: the task, the context summary, the finish check
 /// if one is configured, the ask.
-pub fn task_message(task: &str, context: Option<&ContextSummary>, check: Option<&str>) -> String {
+pub fn task_message(
+    task: &str,
+    context: Option<&ContextSummary>,
+    check: Option<&str>,
+    history: Option<&ConversationHistory>,
+) -> String {
     let mut out = String::new();
     out.push_str("# Task\n");
     out.push_str(task.trim());
     out.push('\n');
+    if let Some(h) = history.filter(|h| h.total > 0) {
+        let shown = h.recent.len();
+        let _ = write!(
+            out,
+            "\nThis continues conversation {}: {} earlier message{}{}. Every earlier task and answer is in conversations(conversation, run, n, role, text, ts) WHERE conversation = '{}', in order of n; each earlier run's statements and results are in turns(run, n, sql, result) under its run.\n",
+            h.id,
+            h.total,
+            if h.total == 1 { "" } else { "s" },
+            if shown == 0 {
+                String::new()
+            } else if shown == h.total {
+                ", all shown below".to_string()
+            } else {
+                format!(", the last {shown} shown below")
+            },
+            h.id,
+        );
+        if shown > 0 {
+            out.push_str("\n## Earlier in this conversation\n");
+            for e in &h.recent {
+                let _ = writeln!(out, "[{}] {}", e.role, clip(&e.text, EXCHANGE_MAX_CHARS));
+            }
+        }
+    }
     if let Some(c) = context {
         let _ = write!(
             out,
@@ -539,7 +604,8 @@ mod tests {
             a.contains("## Project instructions\nRun cargo fmt before finishing."),
             "{a}"
         );
-        assert!(a.contains("turns(n, sql, result)"), "{a}");
+        assert!(a.contains("turns(run, n, sql, result)"), "{a}");
+        assert!(a.contains("memory(key, value) persists across runs"), "{a}");
         assert!(a.contains("CREATE TABLE plan AS"), "{a}");
         assert!(a.contains("depth 1 of 2"), "{a}");
         assert!(a.contains("- ctx(text TEXT)  -- the context"), "{a}");
@@ -638,6 +704,7 @@ mod tests {
                 digest: 0xabc,
             }),
             None,
+            None,
         );
         assert!(
             t.contains("ctx(ordinal, text): 12 rows, about 1000 tokens, digest 0000000000000abc"),
@@ -647,12 +714,65 @@ mod tests {
             ContextSummary::of("a", 1).digest,
             ContextSummary::of("b", 1).digest
         );
-        assert!(task_message("q", None, None).ends_with("Reply with CallSQL in a ```sql fence."));
-        let checked = task_message("q", None, Some("python3 -m unittest -q"));
+        assert!(
+            task_message("q", None, None, None).ends_with("Reply with CallSQL in a ```sql fence.")
+        );
+        let checked = task_message("q", None, Some("python3 -m unittest -q"), None);
         assert!(
             checked.contains("FINAL is accepted only when `python3 -m unittest -q` exits 0"),
             "{checked}"
         );
         assert!(nudge("No SQL found.").starts_with("No SQL found. Reply with CallSQL"));
+    }
+
+    #[test]
+    fn follow_up_task_shows_recent_exchanges_and_points_at_the_table() {
+        let id: ConversationId = "01920000-0000-7000-8000-000000000001".parse().unwrap();
+        let ex = |role: &str, text: &str| Exchange {
+            role: role.into(),
+            text: text.into(),
+        };
+        // An empty conversation reads like a first task.
+        let empty = ConversationHistory {
+            id,
+            total: 0,
+            recent: vec![],
+        };
+        assert_eq!(
+            task_message("q", None, None, Some(&empty)),
+            task_message("q", None, None, None)
+        );
+        let h = ConversationHistory {
+            id,
+            total: 4,
+            recent: vec![ex("user", "How many rows?"), ex("assistant", "n\n-\n4")],
+        };
+        let t = task_message("And the sum?", None, None, Some(&h));
+        assert!(
+            t.contains("This continues conversation 01920000-0000-7000-8000-000000000001: 4 earlier messages, the last 2 shown below."),
+            "{t}"
+        );
+        assert!(
+            t.contains("WHERE conversation = '01920000-0000-7000-8000-000000000001'"),
+            "{t}"
+        );
+        assert!(
+            t.contains(
+                "## Earlier in this conversation\n[user] How many rows?\n[assistant] n\n-\n4\n"
+            ),
+            "{t}"
+        );
+        assert!(t.ends_with("Reply with CallSQL in a ```sql fence."), "{t}");
+        let all = ConversationHistory {
+            id,
+            total: 1,
+            recent: vec![ex("user", "x".repeat(EXCHANGE_MAX_CHARS + 10).as_str())],
+        };
+        let t = task_message("q", None, None, Some(&all));
+        assert!(t.contains("1 earlier message, all shown below."), "{t}");
+        assert!(
+            t.contains("… (cut; the full text is in conversations)"),
+            "{t}"
+        );
     }
 }

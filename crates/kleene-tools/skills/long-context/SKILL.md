@@ -22,5 +22,5 @@ A child sees its chunk as `ctx(text)`, has a slice of the budget, and
 returns `answer` (its FINAL's first column) and `detail` (the FINAL row as
 JSON). Depth is capped; at the cap, answer in place.
 
-Earlier turns of this session are folded into `turns(n, sql, result)`;
+Earlier turns of this session are folded into `turns(run, n, sql, result)`;
 query it instead of re-running a statement whose result scrolled away.

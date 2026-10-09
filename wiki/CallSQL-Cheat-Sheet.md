@@ -65,7 +65,7 @@ CALL web_fetch(url);           CALL web_search(q [, n]);
 
 Tools of a connected MCP server appear as `<server>_<tool>`: read-only ones as table functions, the rest through `CALL`. Roles restrict which tools a session may use.
 
-Two tables mean something to the harness: `turns(n, sql, result)` holds earlier turns (old results fold out of the prompt after sixteen turns), and `plan(step, status)`, if the model creates it, is the task's plan with statuses `todo`, `doing`, `done`, rendered by the UI.
+Four tables mean something to the harness: `turns(run, n, sql, result)` holds every run's turns (old results fold out of the prompt after sixteen turns), `plan(step, status)`, if the model creates it, is the task's plan with statuses `todo`, `doing`, `done`, rendered by the UI, `conversations(conversation, run, n, role, text, ts)` holds the earlier tasks and answers of the TUI conversation a run continues, and `memory(key, value)` is a plain table that persists across runs for facts the model inserts.
 
 ## Delegation
 

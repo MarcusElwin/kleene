@@ -112,12 +112,17 @@ any other is `VOLATILE` and runs through `CALL`. Arguments are positional,
 required ones first in the server's order, then the optional ones by name;
 each result row is one text item the server returned.
 
-Two tables have a meaning to the harness. `turns(n, sql, result)` holds
-every earlier turn of the session: once more than sixteen turns have run,
-the results of all but the last eight are replaced in the transcript by a
-one-line stub and live only there. `plan(step, status)`, if the model
-creates it, is the task's plan: the latest row per step counts, statuses
-are `todo`, `doing` and `done`, and the UI renders it under the session.
+Four tables have a meaning to the harness. `turns(run, n, sql, result)`
+holds every turn of every run: once more than sixteen turns have run, the
+results of all but the last eight are replaced in the transcript by a
+one-line stub naming the row, and live only there. `plan(step, status)`, if
+the model creates it, is the task's plan: the latest row per step counts,
+statuses are `todo`, `doing` and `done`, and the UI renders it under the
+session. `conversations(conversation, run, n, role, text, ts)` holds the
+task and the answer of every run started in a conversation (the TUI's
+prompt; `/new` starts another), and a follow-up run is told to read it.
+`memory(key, value)` persists across runs and conversations for whatever
+the model chooses to `INSERT INTO` it.
 
 When a run has a finish check (`kleene run --check`, a pack task's `check`),
 a `FINAL` runs the command first; a non-zero exit refuses the `FINAL` with
