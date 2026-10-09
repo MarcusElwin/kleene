@@ -69,9 +69,10 @@ Prompt-defined functions:
 CREATE [OR REPLACE] FUNCTION name(arg TYPE, ...) RETURNS TYPE
   AS PROMPT 'template with {arg} placeholders'
   [MODEL 'alias'] [BATCH n] [IMMUTABLE | STABLE | VOLATILE]
-  [PROXY score_fn THRESHOLDS (low, high)];
+  [PROXY score_fn [THRESHOLDS (low, high)]];
 CREATE FUNCTION name(...) RETURNS TYPE AS SQL (SELECT ...);
 CREATE FUNCTION name(...) RETURNS BOOLEAN AS SHELL 'command {arg}';
+CALIBRATE name [SAMPLE n] [RECALL r] [PRECISION p] FROM query;
 ```
 
 `MODEL` picks the tier (`root`, `worker`, `proxy`, `judge`, or any alias the
@@ -84,6 +85,18 @@ leaves out or mistypes are asked again in one more batched call, then one
 call each, so a batch changes cost, never a result. `PROXY` declares a cheap scorer (`RETURNS DOUBLE` in `[0, 1]`)
 the planner may cascade the predicate through. Volatility defaults: prompt
 functions `IMMUTABLE`, SQL bodies `STABLE`, shell bodies `VOLATILE`.
+
+`CALIBRATE` sets a predicate's thresholds from a sample instead of a guess:
+the query's columns are the predicate's arguments, its first `n` rows (20
+by default) are scored by the proxy and the oracle, and the thresholds are
+the lowest `high` at which the rows the proxy accepts outright are right in
+`p` of cases and the highest `low` that still keeps `r` of the oracle's
+positives (0.9 each by default). The result names the thresholds and what
+the sample would have cost: how many rows the proxy decides alone, how many
+ask the oracle, how many are rejected. The thresholds are remembered per
+template and proxy in `calibrations`, so a later `CREATE FUNCTION` with
+`PROXY score_fn` and no `THRESHOLDS` starts from them; declared thresholds
+always win, and the defaults are `(0.2, 0.8)`.
 
 Identical prompts are served from the memo (`memo(model, fingerprint,
 response, input_tokens, output_tokens, cost_usd, created_at)`, keyed by
@@ -133,6 +146,16 @@ the output's tail, and the session continues.
   context])` runs it. The child's catalog is restricted to the role's tools;
   its budget is the parent's remaining slice intersected with the role budget.
 
+- `spawn_async('name', task [, context])` starts the agent and returns one
+  row `(handle, session)` at once; the child runs under the parent's
+  concurrency and budget slice while the parent carries on. `await(handle)`
+  in `FROM` (or `CROSS JOIN LATERAL`) waits for that child and returns its
+  `(answer, detail, session)` rows; a child nobody awaited is joined when the
+  parent ends, so its spending is always charged. `inbox()` is a table of
+  `(from_session, ts, text)`: the messages children posted with
+  `CALL send('parent', text)`; `CALL send(handle, text)` messages a child
+  (one delivery row). A handle belongs to the session that spawned it.
+
 Depth is bounded by the session's `budget.depth`; children's spending rolls
 up into the parent.
 
@@ -152,9 +175,16 @@ up into the parent.
    branch-and-bound, call predicates priced per surviving pair.
 8. Volatility fences: nothing moves across a `VOLATILE` operator.
 
-Estimates use the store's row counts, sampled selectivity (observed pass rates
-of boolean call predicates), per-alias cost factors and round-by-round
-recursion costing.
+Estimates use the store's row counts, learned and sampled selectivity, learned
+branching, per-alias cost factors and round-by-round recursion costing. Every
+statement records what it observed in the store's `estimates` table: the pass
+rate of each prompt-defined predicate (keyed by the hash of its template, so a
+refined prompt starts afresh) and the rows per call of each table function
+(`expand`, tools, `rlm`), weighted into earlier sessions' counts. The next
+session's planner reads them back for the functions it can see, and this
+session's own observations override them once there are a few. `EXPLAIN`
+lists the ones a plan relies on: `learned: relevant: selectivity 0.25 from 40
+rows; expand: 2.0 rows per call from 10 calls`.
 
 ## The continual loop
 

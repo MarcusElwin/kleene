@@ -145,6 +145,8 @@ kleene setup
 │   ○ OpenAI                       OPENAI_API_KEY                  │
 │   ○ OpenAI-compatible endpoint   OPENAI_BASE_URL                 │
 │       Ollama, vLLM, LM Studio, a gateway.                        │
+│   ○ Open Responses gateway       OPEN_RESPONSES_BASE_URL         │
+│       A gateway speaking the Open Responses API.                 │
 │   ○ Web search                   KLEENE_WEB_SEARCH_API_KEY       │
 │       Optional. Brave, Tavily, Exa or Linkup behind web_search.  │
 ╰──────────────────────────────────────────────────────────────────╯
@@ -154,8 +156,11 @@ kleene setup
 without a configured provider, and `/setup` at the TUI's prompt opens it
 again at any time to add or change keys; saving there asks the running
 daemon to reload, so the next run uses the new keys without a restart.
-Web search is the fourth row of the first step: tick it with space, and
-its own page asks for the service and the key.
+Web search is the last row of the first step: tick it with space, and
+its own page asks for the service and the key. The Open Responses gateway
+row (present when the binary is built with the `gateway` feature, the
+default) asks for the gateway's base URL, an optional key and the model to
+route to, and writes them as `[open_responses]`.
 
 ![The web search page of the setup wizard](screenshots/setup-web-search.png)
 Non-interactive forms for scripts:
@@ -179,6 +184,11 @@ api_key = "sk-ant-..."
 [openai_compat]
 base_url = "http://localhost:11434/v1"
 model = "llama3"
+
+[open_responses]
+base_url = "https://gateway.example.com/v1"
+api_key = "..."         # optional
+model = "gpt-6"
 
 [web_search]
 provider = "brave"      # or "tavily", "exa", "linkup"
@@ -500,6 +510,9 @@ Slash commands, with completion (type `/`, `Tab` completes, `↑`/`↓` pick):
 | `/mcp` | the configured MCP servers with their state and tools |
 | `/mcp add <name> <command> [args...]` | add a server to the user's `mcp.json` and reload; `/mcp remove <name>` drops it |
 | `/skills [name]` | the loaded skills with their source and description, or one skill in full |
+| `/refine` | the adopted prompt functions with their versions |
+| `/refine <name> [kind]` | ask the learner to refine one function's prompt from its judged runs and replay the candidate; shows before, after and the verdict |
+| `/refine revert <version>` | restore an earlier adopted version |
 | `/clear` | clear the stream |
 | `/quit` | detach; the daemon and its runs keep going |
 
