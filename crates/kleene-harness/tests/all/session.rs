@@ -620,3 +620,74 @@ async fn skills_are_listed_in_the_prompt_and_served_by_skill() {
     assert_eq!(rows[0][1].as_text(), Some("builtin"));
     assert!(f.harness.skills().iter().any(|s| s.name == "run-benchmark"));
 }
+
+#[tokio::test]
+async fn spawn_async_children_message_the_parent_and_are_awaited() {
+    let start = sql("CREATE AGENT helper MODEL 'worker' BUDGET (calls 6) PROMPT 'You count.';\nCREATE TABLE h AS SELECT handle FROM spawn_async('helper', 'Count the beans.', 'beans');\nSELECT handle FROM h");
+    let collect = sql("CREATE TABLE a AS SELECT r.answer FROM h CROSS JOIN LATERAL await(h.handle) r;\nSELECT answer FROM a");
+    let fin = sql("FINAL FROM (SELECT a.answer, m.text FROM a CROSS JOIN inbox() m)");
+    let child = sql("CALL send('parent', 'counting');\nFINAL(42)");
+    let f = fixture(
+        vec![
+            ("Count the beans", child.as_str()),
+            ("turn 2/", fin.as_str()),
+            ("turn 1/", collect.as_str()),
+            ("# Task", start.as_str()),
+        ],
+        |_| {},
+    )
+    .await;
+    let report = f.harness.run("Run the helper.", None).await.unwrap();
+    let rows = final_rows(&report);
+    assert_eq!(
+        rows,
+        vec![vec![
+            kleene_core::Value::Text("42".into()),
+            kleene_core::Value::Text("counting".into())
+        ]]
+    );
+    // The handle row came back at once, before the child answered.
+    let t = &report.root.transcript[0];
+    assert!(t.results[1].text.contains("1 row"), "{}", t.results[1].text);
+    // The child ran as its own session under the parent, and its calls
+    // were charged to the parent.
+    f.trace.flush().await;
+    let roles = f
+        .store
+        .query("SELECT role, outcome FROM trace_sessions WHERE depth = 1")
+        .await
+        .unwrap();
+    assert_eq!(roles.rows[0][0].as_text(), Some("helper"));
+    assert_eq!(roles.rows[0][1].as_text(), Some("final"));
+    assert_eq!(report.root.usage.calls, f.provider.calls());
+    assert!(report.root.usage.calls >= 4, "{}", report.root.usage.calls);
+
+    // Errors the model can act on: an unknown handle, and `send('parent')`
+    // from the root.
+    let bad = sql("SELECT * FROM await('nope')");
+    let bad_send = sql("CALL send('parent', 'hi')");
+    let fin = sql("FINAL(1)");
+    let f = fixture(
+        vec![
+            ("turn 2/", fin.as_str()),
+            ("turn 1/", bad_send.as_str()),
+            ("# Task", bad.as_str()),
+        ],
+        |_| {},
+    )
+    .await;
+    let report = f.harness.run("Misuse the handles.", None).await.unwrap();
+    let t = &report.root.transcript;
+    assert!(
+        t[0].results[0]
+            .text
+            .contains("no child with handle \"nope\""),
+        "{}",
+        t[0].results[0].text
+    );
+    assert!(
+        t[1].results[0].text.contains("no parent"),
+        "{}",
+        t[1].results[0].text
+    );
+}
