@@ -50,8 +50,19 @@ The GitHub Actions workflow lives in `.github/workflows/ci.yml`: `fmt`,
 `clippy, doc` and `test` run as three parallel jobs, each with rust-cache
 keyed on the lockfile and sccache behind it, and a change that only touches
 docs, the formula or the installer (`paths-ignore` in the workflow) runs
-none of them. `release.yml` next to it builds the four release targets on
-`v*` tags.
+none of them.
+
+## Releases
+
+`release.yml` publishes a GitHub release with the four binaries when a merge
+to `main` changes the workspace `version` in `Cargo.toml` to one that has no
+`v<version>` tag yet. Nothing else releases: a merge that leaves the version
+alone runs only the short `version` job and stops, so a feature PR that
+should ship bumps `version` in `Cargo.toml` (and runs `cargo update -w`, the
+release build is `--locked`), either in that PR or in a one-line PR right
+after. Check `git tag` against `Cargo.toml` before asking why a release did
+not run. After the release, a follow-up PR pastes the new version and the
+four sha256 values from the workflow's summary into `Formula/kleene.rb`.
 
 A coding agent's GitHub App token cannot push `.github/workflows/`, so an
 agent that changes the workflow must hand the push to a human. **Never
