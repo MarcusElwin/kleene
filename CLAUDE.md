@@ -69,9 +69,10 @@ how and `.release-please-manifest.json` records the released version. Nobody
 bumps the version by hand. Merging the release PR is the release button:
 release-please tags the merge commit `v<version>` and creates the release
 with the changelog as its notes, and that tag runs `release.yml`, which
-builds the four targets and attaches the binaries and `SHA256SUMS`. After
-the assets land, a follow-up PR pastes the new version and the four sha256
-values from the workflow's summary into `Formula/kleene.rb`.
+builds the four targets, attaches the binaries and `SHA256SUMS`, and runs
+`scripts/update-formula.sh` to commit the new version and checksums to
+`Formula/kleene.rb` on `main`, so the tap serves the release without a
+hand-made PR.
 
 The `Cargo.lock` jsonpath compares `@.name.value` because release-please
 parses TOML with a parser that wraps every scalar in a tagged object; plain
