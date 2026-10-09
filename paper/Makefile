@@ -13,8 +13,10 @@ LATEXMK ?= latexmk
 RSVG    ?= rsvg-convert
 PLOTS   ?= ../plots
 
-OPUS_FIGS  := cost_parity learning_curve calls_vs_difficulty
-HAIKU_FIGS := cost_parity learning_curve calls_vs_difficulty estimate_accuracy
+OPUS_FIGS   := cost_parity learning_curve calls_vs_difficulty
+HAIKU_FIGS  := cost_parity learning_curve calls_vs_difficulty estimate_accuracy
+LUNA_FIGS   := cost_parity learning_curve
+PARETO_FIGS := memo-rubric coding logbook-hard
 
 .PHONY: all figures clean distclean
 
@@ -23,13 +25,22 @@ all: main.pdf
 main.pdf: main.tex references.bib $(wildcard figures/*.pdf)
 	$(LATEXMK) -pdf -interaction=nonstopmode -halt-on-error main.tex
 
-figures: $(OPUS_FIGS:%=figures/opus_%.pdf) $(HAIKU_FIGS:%=figures/haiku_%.pdf)
+figures: $(OPUS_FIGS:%=figures/opus_%.pdf) $(HAIKU_FIGS:%=figures/haiku_%.pdf) \
+         $(LUNA_FIGS:%=figures/luna_%.pdf) $(PARETO_FIGS:%=figures/pareto_%.pdf)
 
 figures/opus_%.pdf: $(PLOTS)/%.svg
 	@mkdir -p figures
 	$(RSVG) -f pdf -o $@ $<
 
 figures/haiku_%.pdf: $(PLOTS)/haiku-2026-10-01/%.svg
+	@mkdir -p figures
+	$(RSVG) -f pdf -o $@ $<
+
+figures/luna_%.pdf: $(PLOTS)/luna-2026-10-05/%.svg
+	@mkdir -p figures
+	$(RSVG) -f pdf -o $@ $<
+
+figures/pareto_%.pdf: $(PLOTS)/results/%-pareto.svg
 	@mkdir -p figures
 	$(RSVG) -f pdf -o $@ $<
 
