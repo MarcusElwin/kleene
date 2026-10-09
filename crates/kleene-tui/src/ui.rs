@@ -97,8 +97,21 @@ fn draw_header(f: &mut Frame<'_>, area: Rect, app: &App) {
             Style::default().fg(t.money).add_modifier(Modifier::BOLD),
         ),
         Span::styled(format!("  {} ", t.name), t.dim()),
-    ])
-    .alignment(Alignment::Right);
+    ]);
+    let mut right_spans = right.spans;
+    // The build's version, and the daemon's when it is a different one.
+    right_spans.insert(0, Span::styled(format!("v{}  ", crate::VERSION), t.dim()));
+    if m.generation.is_some() && crate::stale_daemon_notice(m).is_some() {
+        let theirs = m.daemon_version.as_deref().unwrap_or("older");
+        right_spans.insert(
+            1,
+            Span::styled(
+                format!("daemon {theirs}  "),
+                Style::default().fg(t.warn).add_modifier(Modifier::BOLD),
+            ),
+        );
+    }
+    let right = Line::from(right_spans).alignment(Alignment::Right);
     // Room for the task: the width minus the brand, the status and the right
     // side, so the status never gets clipped.
     let right_width = right.width();
@@ -482,7 +495,13 @@ fn welcome(t: &Theme, width: usize, out: &mut Vec<Line<'static>>) {
         out.extend(t.wordmark());
     } else {
         out.push(Line::from(Span::styled(BRAND, t.accent_text())));
-        out.push(Line::from(Span::styled(TAGLINE, t.dim())));
+        out.push(Line::from(vec![
+            Span::styled(TAGLINE, t.dim()),
+            Span::styled(
+                format!("  ·  v{}", crate::VERSION),
+                Style::default().fg(t.faint),
+            ),
+        ]));
     }
     out.push(Line::from(""));
     out.push(Line::from(Span::styled(
@@ -1353,6 +1372,48 @@ mod tests {
         assert!(text.contains("count"), "{text}");
         assert!(!text.contains("```"), "fences are hidden: {text}");
         assert!(text.contains("kleene"), "brand in the header: {text}");
+    }
+
+    #[test]
+    fn header_and_welcome_show_the_version_and_a_stale_daemon() {
+        let mut app = App::default();
+        let mut terminal = Terminal::new(TestBackend::new(120, 34)).unwrap();
+        terminal.draw(|f| draw(f, &app)).unwrap();
+        let text = buffer_text(terminal.backend());
+        let v = format!("v{}", crate::VERSION);
+        assert!(text.lines().next().unwrap().contains(&v), "header: {text}");
+        assert!(
+            !text.lines().next().unwrap().contains("daemon "),
+            "no warning before a Hello: {text}"
+        );
+        assert!(text.contains(&format!("·  {v}")), "welcome: {text}");
+        app.apply(ServerMessage::Hello {
+            protocol: 4,
+            generation: 1,
+            version: Some("0.1.0".into()),
+        });
+        terminal.draw(|f| draw(f, &app)).unwrap();
+        let text = buffer_text(terminal.backend());
+        assert!(
+            text.lines().next().unwrap().contains("daemon 0.1.0"),
+            "{text}"
+        );
+        assert!(crate::stale_daemon_notice(&app.model)
+            .unwrap()
+            .contains("pkill"));
+        app.apply(ServerMessage::Hello {
+            protocol: 4,
+            generation: 1,
+            version: Some(crate::VERSION.into()),
+        });
+        assert_eq!(crate::stale_daemon_notice(&app.model), None);
+        terminal.draw(|f| draw(f, &app)).unwrap();
+        let text = buffer_text(terminal.backend());
+        assert!(!text.lines().next().unwrap().contains("daemon "), "{text}");
+        app.model.daemon_version = None;
+        assert!(crate::stale_daemon_notice(&app.model)
+            .unwrap()
+            .contains("older than"));
     }
 
     #[test]

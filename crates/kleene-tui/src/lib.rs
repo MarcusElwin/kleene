@@ -711,6 +711,7 @@ pub async fn run(
 ) -> Result<(), TuiError> {
     let client = Client::connect(socket).await?;
     let generation = client.generation;
+    let daemon_version = client.version.clone();
     let (reader, mut writer) = client.into_split();
     writer
         .send(&ClientRequest::Subscribe { after: None })
@@ -726,12 +727,33 @@ pub async fn run(
         writer.send(&req).await?;
     }
     app.model.generation = Some(generation);
+    app.model.daemon_version = daemon_version;
+    if let Some(notice) = stale_daemon_notice(&app.model) {
+        app.entries.push(Entry::Notice(notice));
+    }
 
     let mut terminal = ratatui::init();
     let result = event_loop(&mut terminal, &mut app, reader, &mut writer).await;
     ratatui::restore();
     let _ = writer.send(&ClientRequest::Detach).await;
     result
+}
+
+/// This build's kleene version.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// What to tell the user when the daemon on the socket was started by a
+/// different kleene than this one: it keeps serving the old code (an older
+/// install's daemon outlives `brew upgrade`), so runs look as they did
+/// before the upgrade until it is restarted.
+pub fn stale_daemon_notice(m: &Model) -> Option<String> {
+    let theirs = m.daemon_version.as_deref().unwrap_or("older than 0.2.0");
+    if m.daemon_version.as_deref() == Some(VERSION) {
+        return None;
+    }
+    Some(format!(
+        "this kleene is {VERSION} but the daemon it connected to is {theirs}; stop it with `pkill -f 'kleene.*daemon'` and open kleene again to run the new version"
+    ))
 }
 
 async fn event_loop(
