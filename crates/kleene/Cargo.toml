@@ -37,5 +37,10 @@ indicatif = "0.18"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots"] }
 parquet = { version = "60", default-features = false }
 
+[features]
+default = ["gateway"]
+# The Open Responses gateway adapter and its page in the setup wizard.
+gateway = ["kleene-llm/gateway", "kleene-tui/gateway"]
+
 [lints]
 workspace = true

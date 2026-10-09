@@ -6,6 +6,8 @@
 
 use crate::theme::{Theme, BRAND, TAGLINE};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+#[cfg(feature = "gateway")]
+use kleene_llm::OpenResponsesSettings;
 use kleene_llm::{AnthropicSettings, OpenAiCompatSettings, ProviderSettings, WebSearchSettings};
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -23,11 +25,19 @@ pub enum Choice {
     OpenAi,
     /// Any OpenAI-compatible endpoint: a local server, a gateway.
     Compatible,
+    /// An Open Responses gateway (`POST /responses`): Aura or another
+    /// gateway that reports cost itself (feature `gateway`).
+    #[cfg(feature = "gateway")]
+    Gateway,
     /// The service behind the `web_search` tool.
     WebSearch,
 }
 
 /// How many choices there are.
+#[cfg(feature = "gateway")]
+pub const CHOICES: usize = 5;
+/// How many choices there are.
+#[cfg(not(feature = "gateway"))]
 pub const CHOICES: usize = 4;
 
 impl Choice {
@@ -36,6 +46,8 @@ impl Choice {
         Choice::Anthropic,
         Choice::OpenAi,
         Choice::Compatible,
+        #[cfg(feature = "gateway")]
+        Choice::Gateway,
         Choice::WebSearch,
     ];
 
@@ -44,6 +56,8 @@ impl Choice {
             Choice::Anthropic => "Anthropic",
             Choice::OpenAi => "OpenAI",
             Choice::Compatible => "OpenAI-compatible endpoint",
+            #[cfg(feature = "gateway")]
+            Choice::Gateway => "Open Responses gateway",
             Choice::WebSearch => "Web search",
         }
     }
@@ -57,6 +71,10 @@ impl Choice {
             Choice::Compatible => {
                 "Ollama, vLLM, LM Studio, a gateway: anything speaking the chat-completions API."
             }
+            #[cfg(feature = "gateway")]
+            Choice::Gateway => {
+                "Aura or any gateway speaking the Open Responses API (POST /responses); the gateway reports the cost of every call."
+            }
             Choice::WebSearch => {
                 "Optional. Brave, Tavily, Exa or Linkup behind the web_search tool; without it searches fail."
             }
@@ -69,6 +87,8 @@ impl Choice {
             Choice::OpenAi => "OPENAI_API_KEY",
             Choice::WebSearch => "KLEENE_WEB_SEARCH_API_KEY",
             Choice::Compatible => "OPENAI_BASE_URL",
+            #[cfg(feature = "gateway")]
+            Choice::Gateway => "OPEN_RESPONSES_BASE_URL",
         }
     }
 
@@ -193,7 +213,9 @@ impl SetupApp {
             .as_deref()
             .map(|u| u.contains("api.openai.com"))
             .unwrap_or(o.api_key.is_some());
-        let fields = [
+        #[cfg(feature = "gateway")]
+        let g = existing.open_responses.clone().unwrap_or_default();
+        let mut fields: Vec<Vec<Field>> = vec![
             vec![
                 Field::new(
                     "API key",
@@ -288,12 +310,42 @@ impl SetupApp {
                 ),
             ],
         ];
-        let chosen = [
-            a.is_configured(),
-            o.is_configured() && o_is_openai,
-            o.is_configured() && !o_is_openai,
-            w.is_configured(),
-        ];
+        #[cfg(feature = "gateway")]
+        fields.insert(
+            Self::index(Choice::Gateway),
+            vec![
+                Field::new(
+                    "Base URL",
+                    "the root under which /responses lives, e.g. https://gateway.example.com/v1",
+                    g.base_url.clone().unwrap_or_default(),
+                    false,
+                    false,
+                ),
+                Field::new(
+                    "API key",
+                    "leave empty for a gateway on a private network",
+                    g.api_key.clone().unwrap_or_default(),
+                    true,
+                    true,
+                ),
+                Field::new(
+                    "Model",
+                    "the model every alias resolves to",
+                    g.model.clone().unwrap_or_default(),
+                    false,
+                    false,
+                ),
+            ],
+        );
+        let fields: [Vec<Field>; CHOICES] = fields.try_into().expect("one field list per choice");
+        let chosen = Choice::ALL.map(|c| match c {
+            Choice::Anthropic => a.is_configured(),
+            Choice::OpenAi => o.is_configured() && o_is_openai,
+            Choice::Compatible => o.is_configured() && !o_is_openai,
+            #[cfg(feature = "gateway")]
+            Choice::Gateway => g.is_configured(),
+            Choice::WebSearch => w.is_configured(),
+        });
         Self {
             step: Step::Choose,
             chosen,
@@ -356,6 +408,18 @@ impl SetupApp {
             });
         } else {
             s.openai_compat = None;
+        }
+        #[cfg(feature = "gateway")]
+        {
+            s.open_responses = if self.chosen[Self::index(Choice::Gateway)] {
+                Some(OpenResponsesSettings {
+                    api_key: get(Choice::Gateway, 1),
+                    base_url: get(Choice::Gateway, 0),
+                    model: get(Choice::Gateway, 2),
+                })
+            } else {
+                None
+            };
         }
         if self.chosen[Self::index(Choice::WebSearch)] {
             s.web_search = Some(WebSearchSettings {
@@ -712,6 +776,27 @@ pub fn draw(f: &mut Frame<'_>, app: &SetupApp) {
                     ),
                 ]));
             }
+            #[cfg(feature = "gateway")]
+            if let Some(g) = &s.open_responses {
+                lines.push(Line::from(vec![
+                    Span::styled("Open Responses   ", t.text()),
+                    Span::styled(g.base_url.clone().unwrap_or_default(), t.dim()),
+                    Span::styled(
+                        g.api_key
+                            .as_deref()
+                            .map(|k| format!("  key {}", mask(k)))
+                            .unwrap_or_else(|| "  no key".into()),
+                        t.dim(),
+                    ),
+                    Span::styled(
+                        g.model
+                            .as_deref()
+                            .map(|m| format!("  model {m}"))
+                            .unwrap_or_default(),
+                        t.dim(),
+                    ),
+                ]));
+            }
             if let Some(r) = &s.router {
                 lines.push(Line::from(vec![
                     Span::styled("Router           ", t.text()),
@@ -882,17 +967,70 @@ mod tests {
         )
         .unwrap();
         let app = SetupApp::new(existing, "/tmp/x/config.toml".into());
-        assert_eq!(app.chosen, [true, true, false, false]);
+        assert_eq!(app.selected(), vec![Choice::Anthropic, Choice::OpenAi]);
         assert_eq!(app.fields[0][0].value, "sk-ant-old");
         let s = app.settings();
         assert_eq!(s.router.as_deref(), Some(std::path::Path::new("/r.toml")));
         assert_eq!(s.openai_compat.unwrap().api_key.as_deref(), Some("sk-old"));
     }
 
+    #[cfg(feature = "gateway")]
+    #[test]
+    fn gateway_page_takes_a_url_an_optional_key_and_a_model() {
+        let mut app = SetupApp::new(ProviderSettings::default(), "/tmp/x/config.toml".into());
+        for _ in 0..SetupApp::index(Choice::Gateway) {
+            press(&mut app, KeyCode::Down);
+        }
+        press(&mut app, KeyCode::Char(' '));
+        assert_eq!(app.selected(), vec![Choice::Gateway]);
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.step, Step::Fields(0));
+        // The URL is required, the key is not, the model is.
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Enter);
+        assert!(
+            app.error.as_deref().unwrap().contains("base url"),
+            "{:?}",
+            app.error
+        );
+        app.field_cursor = 0;
+        type_text(&mut app, "https://gateway.example.com/v1");
+        press(&mut app, KeyCode::Enter);
+        press(&mut app, KeyCode::Enter);
+        type_text(&mut app, "claude-sonnet-5-5");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.step, Step::Review);
+        match press(&mut app, KeyCode::Char('y')) {
+            SetupAction::Save(s) => {
+                let g = s.open_responses.unwrap();
+                assert_eq!(
+                    g.base_url.as_deref(),
+                    Some("https://gateway.example.com/v1")
+                );
+                assert_eq!(g.api_key, None);
+                assert_eq!(g.model.as_deref(), Some("claude-sonnet-5-5"));
+                assert!(s.anthropic.is_none() && s.openai_compat.is_none());
+            }
+            other => panic!("expected save, got {other:?}"),
+        }
+        // An existing gateway section pre-ticks and pre-fills its page.
+        let existing = ProviderSettings::parse(
+            "[open_responses]\nbase_url = 'https://g.example.com'\napi_key = 'gw-secret-1234'\nmodel = 'm'\n",
+        )
+        .unwrap();
+        let app = SetupApp::new(existing, "/tmp/x/config.toml".into());
+        assert_eq!(app.selected(), vec![Choice::Gateway]);
+        let page = &app.fields[SetupApp::index(Choice::Gateway)];
+        assert_eq!(page[0].value, "https://g.example.com");
+        assert_eq!(page[1].shown(), "gw-s••••••1234");
+        assert_eq!(page[2].value, "m");
+    }
+
     #[test]
     fn web_search_is_optional_and_checks_its_service() {
         let mut app = SetupApp::new(ProviderSettings::default(), "/tmp/x/config.toml".into());
-        for _ in 0..3 {
+        for _ in 0..Choice::ALL.len() - 1 {
             press(&mut app, KeyCode::Down);
         }
         press(&mut app, KeyCode::Char(' '));
@@ -916,7 +1054,7 @@ mod tests {
 
         // A made-up service is refused on its page.
         let mut app = SetupApp::new(ProviderSettings::default(), "/tmp/x/config.toml".into());
-        for _ in 0..3 {
+        for _ in 0..Choice::ALL.len() - 1 {
             press(&mut app, KeyCode::Down);
         }
         press(&mut app, KeyCode::Char(' '));

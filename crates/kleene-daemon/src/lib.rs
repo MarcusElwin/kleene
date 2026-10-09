@@ -69,6 +69,22 @@ pub enum ClientRequest {
         #[serde(default)]
         name: Option<String>,
     },
+    /// The learned function ledger (`Table` tagged `functions`); with a
+    /// name, ask the model for a better prompt for that function and put it
+    /// through the replay gate (`Table` tagged `refine`: one `step`/`text`
+    /// row each for the version before, the candidate, and the verdict);
+    /// with `revert`, un-adopt that ledger version (`Ok`).
+    Refine {
+        /// The function to refine.
+        #[serde(default)]
+        name: Option<String>,
+        /// Only use failures of, and replay, tasks of this kind.
+        #[serde(default)]
+        kind: Option<String>,
+        /// A ledger version to revert instead.
+        #[serde(default)]
+        revert: Option<i64>,
+    },
     /// Submit SQL to a session (interactive REPL). An unknown session id
     /// opens a fresh interactive session under that id.
     Submit {
