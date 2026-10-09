@@ -26,4 +26,4 @@
 
 **How is it pronounced?** "KLAY-nee", as Kleene himself said it.
 
-**Is it production ready?** No. It is pre-release and the benchmarks are honest about the gaps; see [`docs/WRITEUP.md`, "Honest gaps"](https://github.com/MarcusElwin/kleene/blob/main/docs/WRITEUP.md#5-honest-gaps).
+**Is it production ready?** No. It is early (v0.x) and the benchmarks are honest about the gaps; see [`docs/WRITEUP.md`, "Honest gaps"](https://github.com/MarcusElwin/kleene/blob/main/docs/WRITEUP.md#5-honest-gaps).
