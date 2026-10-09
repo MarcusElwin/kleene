@@ -120,7 +120,14 @@ async fn run_is_streamed_and_replayable() {
                 run: r,
                 outcome,
                 answer,
+                answer_columns,
+                answer_rows,
             } => {
+                assert_eq!(answer_columns, ["x"], "{answer_columns:?}");
+                assert!(
+                    answer_rows.iter().any(|r| r == &["3".to_string()]),
+                    "{answer_rows:?}"
+                );
                 assert_eq!(r, run);
                 finished = Some((outcome, answer));
             }

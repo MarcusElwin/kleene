@@ -405,6 +405,77 @@ fn rule(t: &Theme, prefix: &str, label: String, right: String, width: usize) -> 
     ])
 }
 
+/// A turn's rule: `── turn 3 · <headline> ───── 1 call · $0.01`. The
+/// headline is the first sentence of the model's prose, in normal text, cut
+/// to fit; without one the rule is plain.
+fn turn_rule(
+    t: &Theme,
+    prefix: &str,
+    n: u32,
+    headline: Option<&str>,
+    right: String,
+    width: usize,
+) -> Line<'static> {
+    let Some(head) = headline else {
+        return rule(t, prefix, format!("turn {n}"), right, width);
+    };
+    let left = format!("── turn {n} · ");
+    let fixed = prefix.chars().count() + left.chars().count() + right.chars().count() + 2 + 4;
+    let room = width.saturating_sub(fixed + 1);
+    let head: String = if head.chars().count() > room {
+        format!(
+            "{}…",
+            head.chars()
+                .take(room.saturating_sub(1))
+                .collect::<String>()
+        )
+    } else {
+        head.to_string()
+    };
+    let fill = width
+        .saturating_sub(fixed + head.chars().count() + 1)
+        .max(4);
+    Line::from(vec![
+        Span::styled(prefix.to_string(), Style::default().fg(t.border)),
+        Span::styled(left, Style::default().fg(t.faint)),
+        Span::styled(head, t.text()),
+        Span::styled(" ", Style::default()),
+        Span::styled("─".repeat(fill), Style::default().fg(t.border)),
+        Span::styled(format!(" {right} "), t.dim()),
+    ])
+}
+
+/// The first sentence of the model's prose outside SQL fences, if any.
+fn headline(reply: &str) -> Option<String> {
+    let mut in_sql = false;
+    for l in reply.lines() {
+        let trimmed = l.trim();
+        if trimmed.starts_with("```") {
+            in_sql = !in_sql;
+            continue;
+        }
+        if in_sql || trimmed.is_empty() {
+            continue;
+        }
+        let text = trimmed.trim_start_matches(['#', '-', '*', ' ']);
+        let mut end = text.len();
+        let chars: Vec<(usize, char)> = text.char_indices().collect();
+        for (i, (pos, c)) in chars.iter().enumerate() {
+            if matches!(c, '.' | '!' | '?' | ':')
+                && chars.get(i + 1).is_none_or(|(_, n)| n.is_whitespace())
+            {
+                end = pos + if *c == ':' { 0 } else { c.len_utf8() };
+                break;
+            }
+        }
+        let sentence = text[..end].trim().trim_end_matches('.');
+        if !sentence.is_empty() {
+            return Some(sentence.to_string());
+        }
+    }
+    None
+}
+
 fn welcome(t: &Theme, width: usize, out: &mut Vec<Line<'static>>) {
     out.push(Line::from(""));
     if width >= WORDMARK_WIDTH as usize + 2 {
@@ -467,7 +538,10 @@ fn help_lines(t: &Theme, out: &mut Vec<Line<'static>>) {
             "PgUp / PgDn, Home / End",
             "scroll the stream; End follows again",
         ),
-        ("Ctrl-P", "show or hide EXPLAIN plans under statements"),
+        (
+            "Ctrl-P",
+            "unfold each turn: the model's prose, EXPLAIN plans, the whole FINAL",
+        ),
         ("Ctrl-T", "next Catppuccin flavour"),
         ("Ctrl-X", "cancel the run being followed"),
         ("Ctrl-U", "clear the input"),
@@ -498,14 +572,35 @@ fn run_lines(app: &App, run: RunId, out: &mut Vec<Line<'static>>) {
     match (&r.outcome, &r.answer) {
         (Some(o), Some(answer)) if o == "final" => {
             out.push(Line::from(""));
-            out.push(Line::from(Span::styled(
+            let mut head = vec![Span::styled(
                 " FINAL ",
                 Style::default()
                     .fg(t.on_accent)
                     .bg(t.ok)
                     .add_modifier(Modifier::BOLD),
-            )));
-            out.extend(result_lines(&t, answer, false, "  "));
+            )];
+            if !r.answer_rows.is_empty() {
+                let shown = r.answer_rows.len();
+                let total = total_rows(answer, shown);
+                let mut n = format!("  {total} row{}", if total == 1 { "" } else { "s" });
+                if total > shown {
+                    n.push_str(&format!(", first {shown} shown"));
+                }
+                head.push(Span::styled(n, t.dim()));
+            }
+            out.push(Line::from(head));
+            if r.answer_rows.is_empty() {
+                // An older daemon sent only the text the model saw.
+                out.extend(result_lines(&t, answer, false, "  "));
+            } else {
+                out.extend(final_lines(
+                    &t,
+                    &r.answer_columns,
+                    &r.answer_rows,
+                    app.width,
+                    "  ",
+                ));
+            }
         }
         (Some(o), _) if o != "final" => {
             out.push(Line::from(""));
@@ -547,20 +642,51 @@ fn session_lines(app: &App, s: &SessionNode, depth: usize, out: &mut Vec<Line<'s
     for turn in &s.turns_done {
         let usage = turn_usage(m, s, turn.n);
         out.push(Line::from(""));
-        out.push(rule(
+        let head = if app.show_plans {
+            None
+        } else {
+            headline(&turn.reply)
+        };
+        out.push(turn_rule(
             &t,
             &pad_text,
-            format!("turn {}", turn.n),
+            turn.n,
+            head.as_deref(),
             usage,
             app.width,
         ));
-        reply_lines(&t, &turn.reply, &pad_text, out);
+        reply_lines(&t, &turn.reply, &pad_text, !app.show_plans, out);
         let plans = if app.show_plans {
             turn_plans(m, s, turn.n)
         } else {
             vec![]
         };
         for (i, r) in turn.results.iter().enumerate() {
+            // The root's FINAL is laid out for a person at the end of the
+            // run, so here it folds to one line; Ctrl-P unfolds the table
+            // the model saw.
+            if r.is_final && depth == 0 && !app.show_plans {
+                if let Some(run) = m.runs.get(&s.run) {
+                    if run.outcome.as_deref() == Some("final") && run.answer.is_some() {
+                        let n = if run.answer_rows.is_empty() {
+                            r.text.lines().count().saturating_sub(2)
+                        } else {
+                            total_rows(run.answer.as_deref().unwrap_or(""), run.answer_rows.len())
+                        };
+                        out.push(Line::from(vec![
+                            Span::styled(format!("{pad_text}  FINAL"), t.dim()),
+                            Span::styled(
+                                format!(
+                                    " · {n} row{} · the answer is below",
+                                    if n == 1 { "" } else { "s" }
+                                ),
+                                Style::default().fg(t.faint),
+                            ),
+                        ]));
+                        continue;
+                    }
+                }
+            }
             if let Some(Some(explain)) = plans.get(i) {
                 out.push(Line::from(Span::styled(
                     format!("{pad_text}  ▾ plan"),
@@ -651,7 +777,7 @@ fn session_lines(app: &App, s: &SessionNode, depth: usize, out: &mut Vec<Line<'s
             };
             out.push(rule(&t, &pad_text, format!("turn {n}"), state, app.width));
             if let Some(c) = streaming {
-                reply_lines(&t, &c.streaming, &pad_text, out);
+                reply_lines(&t, &c.streaming, &pad_text, false, out);
             }
             for st in executing {
                 for l in st.sql.lines() {
@@ -751,23 +877,44 @@ fn turn_plans(m: &Model, s: &SessionNode, n: u32) -> Vec<Option<String>> {
 }
 
 /// A reply: prose dimmed, SQL inside fences in the SQL colour, fences hidden.
-fn reply_lines(t: &Theme, reply: &str, pad: &str, out: &mut Vec<Line<'static>>) {
+/// Folded, the prose is left out (its first sentence is on the turn's rule)
+/// and a `FINAL` statement shows only its first line, since the answer is
+/// laid out at the end of the run.
+fn reply_lines(t: &Theme, reply: &str, pad: &str, fold: bool, out: &mut Vec<Line<'static>>) {
     let mut in_sql = false;
+    let mut in_final = false;
     for l in reply.lines() {
         let trimmed = l.trim_start();
         if trimmed.starts_with("```") {
             in_sql = !in_sql;
+            in_final = false;
             continue;
         }
         if trimmed.is_empty() {
             continue;
         }
-        let style = if in_sql {
-            Style::default().fg(t.sql)
-        } else {
-            t.dim()
-        };
-        out.push(Line::from(Span::styled(format!("{pad}{l}"), style)));
+        if !in_sql {
+            if !fold {
+                out.push(Line::from(Span::styled(format!("{pad}{l}"), t.dim())));
+            }
+            continue;
+        }
+        let sql = Style::default().fg(t.sql);
+        if fold && in_final {
+            if trimmed.trim_end().ends_with(';') {
+                in_final = false;
+            }
+            continue;
+        }
+        if fold && trimmed.starts_with("FINAL") && !trimmed.trim_end().ends_with(';') {
+            in_final = true;
+            out.push(Line::from(vec![
+                Span::styled(format!("{pad}{l}"), sql),
+                Span::styled(" …", Style::default().fg(t.faint)),
+            ]));
+            continue;
+        }
+        out.push(Line::from(Span::styled(format!("{pad}{l}"), sql)));
     }
 }
 
@@ -817,6 +964,202 @@ pub fn result_lines(t: &Theme, text: &str, is_error: bool, pad: &str) -> Vec<Lin
             Line::from(Span::styled(format!("{pad}{line}"), t.text()))
         };
         out.push(styled);
+    }
+    out
+}
+
+/// The answer's row count: `shown` unless the rendered text ends with the
+/// `... k more rows (n total)` line the renderer adds past its cap.
+fn total_rows(rendered: &str, shown: usize) -> usize {
+    rendered
+        .lines()
+        .last()
+        .and_then(|l| l.strip_prefix("... "))
+        .and_then(|l| l.rsplit_once('('))
+        .and_then(|(_, tail)| tail.strip_suffix(" total)"))
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(shown)
+}
+
+/// Cells up to this wide, in a table that fits, keep the grid; anything
+/// longer reads as cards.
+const GRID_CELL: usize = 32;
+
+/// Long text wraps at this width even on a wide terminal, so a paragraph
+/// stays a readable measure.
+const MEASURE: usize = 100;
+
+/// The FINAL relation laid out for a person, never cutting a cell short.
+///
+/// A table of short cells that fits the width stays a grid. Otherwise each
+/// row is a card: a single-column relation is a list (one value alone is
+/// plain text), and a wider one shows its first column as the title when
+/// that is short, then one `name  value` line per remaining column with
+/// the value word-wrapped under itself.
+pub fn final_lines(
+    t: &Theme,
+    columns: &[String],
+    rows: &[Vec<String>],
+    width: usize,
+    pad: &str,
+) -> Vec<Line<'static>> {
+    let pad_w = pad.chars().count();
+    let inner = width.saturating_sub(pad_w).max(24);
+    let ncols = columns.len().max(1);
+    let cell_w = |v: &str| v.chars().count();
+    let longest = rows
+        .iter()
+        .flat_map(|r| r.iter().map(|c| cell_w(c)))
+        .chain(columns.iter().map(|c| cell_w(c)))
+        .max()
+        .unwrap_or(0);
+    let multiline = rows.iter().flatten().any(|c| c.contains('\n'));
+    if ncols >= 2 && !multiline && longest <= GRID_CELL {
+        let natural: usize = (0..ncols)
+            .map(|i| {
+                rows.iter()
+                    .map(|r| r.get(i).map(|c| cell_w(c)).unwrap_or(0))
+                    .chain(columns.get(i).map(|c| cell_w(c)))
+                    .max()
+                    .unwrap_or(1)
+            })
+            .sum::<usize>()
+            + 3 * ncols
+            + 1;
+        if natural <= inner {
+            return table_lines(t, columns, rows, GRID_CELL, inner, rows.len())
+                .into_iter()
+                .map(|l| {
+                    let mut spans = vec![Span::raw(pad.to_string())];
+                    spans.extend(l.spans);
+                    Line::from(spans)
+                })
+                .collect();
+        }
+    }
+    let measure = inner.min(MEASURE);
+    let value_style = |v: &str| {
+        if v == "NULL" {
+            Style::default().fg(t.faint)
+        } else {
+            t.text()
+        }
+    };
+    let mut out = Vec::new();
+    if ncols == 1 {
+        let one = rows.len() == 1;
+        for r in rows {
+            let v = r.first().map(|s| s.as_str()).unwrap_or("");
+            let (first, rest) = if one { ("", "") } else { ("• ", "  ") };
+            for (i, l) in wrap_words(v, measure.saturating_sub(2))
+                .into_iter()
+                .enumerate()
+            {
+                let lead = if i == 0 { first } else { rest };
+                out.push(Line::from(vec![
+                    Span::styled(format!("{pad}{lead}"), Style::default().fg(t.accent)),
+                    Span::styled(l, value_style(v)),
+                ]));
+            }
+        }
+        return out;
+    }
+    let titled = rows.iter().all(|r| {
+        r.first()
+            .is_some_and(|c| cell_w(c) <= 48 && !c.contains('\n') && !c.is_empty())
+    });
+    let fields: Vec<usize> = (if titled { 1 } else { 0 }..ncols).collect();
+    let name_w = fields
+        .iter()
+        .map(|&i| columns.get(i).map(|c| cell_w(c)).unwrap_or(0))
+        .max()
+        .unwrap_or(0);
+    let lead = if titled { "  " } else { "" };
+    let value_w = measure.saturating_sub(lead.len() + name_w + 2).max(16);
+    for (ri, r) in rows.iter().enumerate() {
+        if ri > 0 {
+            out.push(Line::from(""));
+        }
+        if titled {
+            out.push(Line::from(vec![
+                Span::styled(format!("{pad}▍ "), Style::default().fg(t.accent)),
+                Span::styled(
+                    r.first().cloned().unwrap_or_default(),
+                    Style::default().fg(t.fg).add_modifier(Modifier::BOLD),
+                ),
+            ]));
+        }
+        for &i in &fields {
+            let name = columns.get(i).map(|s| s.as_str()).unwrap_or("");
+            let v = r.get(i).map(|s| s.as_str()).unwrap_or("");
+            for (li, l) in wrap_words(v, value_w).into_iter().enumerate() {
+                let label = if li == 0 {
+                    format!("{pad}{lead}{name:>name_w$}  ")
+                } else {
+                    format!("{pad}{lead}{:>name_w$}  ", "")
+                };
+                out.push(Line::from(vec![
+                    Span::styled(label, Style::default().fg(t.muted)),
+                    Span::styled(l, value_style(v)),
+                ]));
+            }
+        }
+    }
+    out
+}
+
+/// Word-wrap `text` to `width` columns, keeping its own line breaks and
+/// the spacing between words (a cell may hold code); a word longer than
+/// the width is split. Always at least one line.
+fn wrap_words(text: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut out = Vec::new();
+    for para in text.split('\n') {
+        let mut line = String::new();
+        let mut used = 0usize;
+        let chars: Vec<char> = para.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            // The whitespace run before the next word, kept when the word
+            // continues the line and dropped at a line break.
+            let gap_start = i;
+            while i < chars.len() && chars[i].is_whitespace() {
+                i += 1;
+            }
+            let gap = chars.len().min(i) - gap_start;
+            let word_start = i;
+            while i < chars.len() && !chars[i].is_whitespace() {
+                i += 1;
+            }
+            let mut word = &chars[word_start..i];
+            if word.is_empty() {
+                continue;
+            }
+            while !word.is_empty() {
+                let n = word.len();
+                if used > 0 && used + gap + n <= width {
+                    line.extend(&chars[gap_start..word_start]);
+                    line.extend(word);
+                    used += gap + n;
+                    break;
+                } else if used == 0 && n <= width {
+                    line.extend(word);
+                    used = n;
+                    break;
+                } else if used > 0 {
+                    out.push(std::mem::take(&mut line));
+                    used = 0;
+                } else {
+                    line.extend(&word[..width]);
+                    out.push(std::mem::take(&mut line));
+                    word = &word[width..];
+                }
+            }
+        }
+        out.push(line);
+    }
+    if out.is_empty() {
+        out.push(String::new());
     }
     out
 }
@@ -1050,6 +1393,239 @@ mod tests {
             table.iter().map(|l| l.width()).collect::<Vec<_>>()
         );
         assert_eq!(table.len(), 6, "rule, header, rule, two rows, rule");
+    }
+
+    fn finish_with_final(app: &mut App, columns: &[&str], rows: &[&[&str]]) {
+        let run = app.model.run_order[0];
+        let root = app.model.roots()[0];
+        let text = format!(
+            "FINAL\n{}\n{}\n{}",
+            columns.join(" | "),
+            columns
+                .iter()
+                .map(|_| "---")
+                .collect::<Vec<_>>()
+                .join("-+-"),
+            rows.iter()
+                .map(|r| r
+                    .iter()
+                    .map(|c| c.chars().take(57).collect::<String>())
+                    .collect::<Vec<_>>()
+                    .join(" | "))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        app.apply(ServerMessage::TurnFinished {
+            session: root,
+            turn: 2,
+            reply: "Done.".into(),
+            sql: Some("FINAL FROM (SELECT * FROM answer)".into()),
+            results: vec![StatementOutput {
+                text: text.clone(),
+                is_error: false,
+                is_final: true,
+            }],
+            plan: vec![],
+        });
+        app.apply(ServerMessage::RunFinished {
+            run,
+            outcome: "final".into(),
+            answer: Some(text),
+            answer_columns: columns.iter().map(|c| c.to_string()).collect(),
+            answer_rows: rows
+                .iter()
+                .map(|r| r.iter().map(|c| c.to_string()).collect())
+                .collect(),
+        });
+    }
+
+    const LONG: &str = "Query session tables with SQL (joins, aggregates, recursive CTEs), and add yes/no, scoring or JSON judgements by calling a language model on each row";
+
+    #[test]
+    fn final_cards_keep_whole_cells_and_fold_the_turn_copy() {
+        let mut app = app_with_run();
+        finish_with_final(
+            &mut app,
+            &["capability", "how"],
+            &[
+                &["Answer questions over data", LONG],
+                &[
+                    "Read and search files",
+                    "List, grep and read workspace files",
+                ],
+            ],
+        );
+        let lines = stream_lines(&app, 100);
+        let text: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+        let joined = text.join("\n");
+        assert!(text.iter().all(|l| l.chars().count() <= 100), "{joined}");
+        // Every character of the long cell survives, across wrapped lines,
+        // and the rows appear once: the turn's own FINAL table folds to one
+        // line with the row count.
+        let squash = |s: &str| s.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+        let squashed = squash(&joined);
+        assert_eq!(squashed.matches(&squash(LONG)).count(), 1, "{joined}");
+        assert!(!joined.contains("..."), "no truncation: {joined}");
+        assert!(joined.contains("▍ Answer questions over data"), "{joined}");
+        assert!(
+            joined.contains("FINAL · 2 rows · the answer is below"),
+            "{joined}"
+        );
+        // Ctrl-P brings the model's table back.
+        app.show_plans = true;
+        let joined: String = stream_lines(&app, 100)
+            .iter()
+            .map(|l| l.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(joined.contains("---+---"), "{joined}");
+        assert!(!joined.contains("the answer is below"), "{joined}");
+    }
+
+    #[test]
+    fn prose_folds_to_a_headline_and_final_sql_to_one_line() {
+        let mut app = app_with_run();
+        let root = app.model.roots()[0];
+        let run = app.model.run_order[0];
+        app.apply(ServerMessage::TurnFinished {
+            session: root,
+            turn: 2,
+            reply: "The function never strips the hyphens. I'll patch it and rerun.\n\n```sql\nCALL patch('a.py', $$x$$, $$y$$);\nFINAL FROM (SELECT 'a.py' AS file,\n  'a very long explanation' AS why);\n```".into(),
+            sql: None,
+            results: vec![StatementOutput {
+                text: "FINAL\nfile | why\n-----+----\na.py | a very long explanation".into(),
+                is_error: false,
+                is_final: true,
+            }],
+            plan: vec![],
+        });
+        app.apply(ServerMessage::RunFinished {
+            run,
+            outcome: "final".into(),
+            answer: Some("file | why\n-----+----\na.py | a very long explanation\n".into()),
+            answer_columns: vec!["file".into(), "why".into()],
+            answer_rows: vec![vec!["a.py".into(), "a very long explanation".into()]],
+        });
+        let joined = |app: &App| {
+            stream_lines(app, 100)
+                .iter()
+                .map(|l| l.to_string())
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let text = joined(&app);
+        assert!(
+            text.contains("── turn 2 · The function never strips the hyphens ─"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("I'll patch it"),
+            "rest of the prose folded: {text}"
+        );
+        assert!(text.contains("CALL patch('a.py', $$x$$, $$y$$);"), "{text}");
+        assert!(
+            text.contains("FINAL FROM (SELECT 'a.py' AS file, …"),
+            "{text}"
+        );
+        assert_eq!(text.matches("a very long explanation").count(), 1, "{text}");
+        app.show_plans = true;
+        let text = joined(&app);
+        assert!(text.contains("── turn 2 ─"), "{text}");
+        assert!(text.contains("I'll patch it"), "{text}");
+        assert!(
+            text.contains("'a very long explanation' AS why);"),
+            "{text}"
+        );
+        assert_eq!(headline("```sql\nSELECT 1\n```"), None);
+        assert_eq!(
+            headline("Counting: there are many.\n").as_deref(),
+            Some("Counting")
+        );
+        assert_eq!(headline("Done!").as_deref(), Some("Done!"));
+        assert_eq!(
+            headline("v1.2 is out. Next.").as_deref(),
+            Some("v1.2 is out")
+        );
+        let line = turn_rule(
+            &Theme::default(),
+            "",
+            7,
+            Some(&"x".repeat(200)),
+            "1 call".into(),
+            60,
+        );
+        assert!(line.width() <= 60, "{}", line.width());
+        assert!(line.to_string().contains('…'));
+    }
+
+    #[test]
+    fn final_grid_for_short_cells_and_text_for_one_value() {
+        let t = Theme::default();
+        let cols = ["project".to_string(), "total_hours".to_string()];
+        let rows = vec![
+            vec!["Osprey".to_string(), "212.5".to_string()],
+            vec!["Heron".to_string(), "NULL".to_string()],
+        ];
+        let grid = final_lines(&t, &cols, &rows, 100, "  ");
+        let joined: String = grid
+            .iter()
+            .map(|l| l.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(joined.contains("│ Osprey"), "{joined}");
+        assert_eq!(
+            grid.len(),
+            6,
+            "rule, header, rule, two rows, rule: {joined}"
+        );
+        let one = final_lines(
+            &t,
+            &["answer".to_string()],
+            &[vec!["42".to_string()]],
+            100,
+            "  ",
+        );
+        assert_eq!(one.len(), 1);
+        assert_eq!(one[0].to_string(), "  42");
+        let list = final_lines(
+            &t,
+            &["name".to_string()],
+            &[vec!["Osprey".to_string()], vec!["Heron".to_string()]],
+            100,
+            "  ",
+        );
+        assert_eq!(list[0].to_string(), "  • Osprey");
+        assert_eq!(list[1].to_string(), "  • Heron");
+        // Rows whose first cell is itself long get no title, only fields.
+        let untitled = final_lines(
+            &t,
+            &["a".to_string(), "b".to_string()],
+            &[vec![LONG.to_string(), "x".to_string()]],
+            60,
+            "",
+        );
+        let joined: String = untitled
+            .iter()
+            .map(|l| l.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!joined.contains('▍'), "{joined}");
+        assert!(untitled.iter().all(|l| l.width() <= 60), "{joined}");
+        assert!(joined.starts_with("a  Query"), "{joined}");
+        assert!(joined.ends_with("b  x"), "{joined}");
+    }
+
+    #[test]
+    fn word_wrap_breaks_between_words_and_splits_long_words() {
+        assert_eq!(wrap_words("one two three", 7), ["one two", "three"]);
+        assert_eq!(wrap_words("abcdefghij", 4), ["abcd", "efgh", "ij"]);
+        assert_eq!(wrap_words("a\n\nb", 10), ["a", "", "b"]);
+        assert_eq!(wrap_words("x = 1;  y = 2", 20), ["x = 1;  y = 2"]);
+        assert_eq!(wrap_words("  lead", 10), ["lead"]);
+        assert_eq!(wrap_words("ab  cd", 4), ["ab", "cd"]);
+        assert_eq!(wrap_words("", 10), [""]);
+        assert_eq!(total_rows("x\n-\n1\n... 3 more rows (53 total)\n", 50), 53);
+        assert_eq!(total_rows("x\n-\n1\n", 1), 1);
     }
 
     #[test]

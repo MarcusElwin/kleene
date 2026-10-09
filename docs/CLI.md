@@ -459,8 +459,25 @@ always has focus; a footer of keys. A task typed at the prompt starts a run
 on the daemon. The run appears in the stream as it happens: each turn under
 a rule with its calls and cost, the model's reply streaming in with the SQL
 highlighted, every statement's result, child sessions one level in, and the
-answer as a FINAL block. `Ctrl-P` unfolds each statement's `EXPLAIN` under
-it. Runs started against the same daemon from another client (`kleene tui
+answer as a FINAL block. Once a turn is done it folds: the first sentence of
+the model's prose becomes the turn's headline on its rule, the rest of the
+prose is hidden, and a `FINAL` statement shows only its first line, so a
+finished run reads as one line of intent, the SQL, the results and the
+answer per turn.
+
+![A finished run: the answer relation laid out as cards](screenshots/final.png)
+
+The FINAL block is laid out for a person, from the relation itself rather
+than the text the model saw, so no cell is cut short. A table of short cells
+that fits the width stays a grid. Otherwise each row becomes a card: a
+single-column relation is a list (one value alone is plain text), and a wider
+one shows its first column as the title when that is short, then one `name
+value` line per remaining column with the value word-wrapped under it. The
+turn that ran the `FINAL` statement shows one line in its place, with the row
+count, so the answer appears once. `Ctrl-P` unfolds every turn: the model's
+prose in full, each statement's `EXPLAIN` under it, the whole `FINAL`
+statement, and the FINAL table exactly as the model saw it, cells cut at 60
+characters. Runs started against the same daemon from another client (`kleene tui
 --run`, `kleene attach --run`) appear in the same stream; `kleene run` is
 in-process and does not go through the daemon.
 

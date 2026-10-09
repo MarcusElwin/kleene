@@ -153,8 +153,17 @@ pub enum ServerMessage {
         run: RunId,
         /// `final`, `budget_exhausted`, `turns_exhausted`, `error`, `cancelled`.
         outcome: String,
-        /// The answer relation rendered as text, when there is one.
+        /// The answer relation rendered as text, when there is one: the
+        /// form the model saw, cells cut at 60 characters.
         answer: Option<String>,
+        /// The answer relation's column names, when there is one.
+        #[serde(default)]
+        answer_columns: Vec<String>,
+        /// The answer relation's rows with every cell rendered in full, so a
+        /// client can lay the answer out for a person. At most the first
+        /// 200 rows; `answer` says how many there are.
+        #[serde(default)]
+        answer_rows: Vec<Vec<String>>,
     },
     /// A session's turn completed: what the model said and what each
     /// statement rendered to, so a client can show the conversation without
