@@ -188,6 +188,11 @@ pub struct App {
     pub repl_session: SessionId,
     /// The stream's width in columns, for rules; set by the event loop.
     pub width: usize,
+    /// Ticks of the event loop (four a second), for the spinner.
+    pub tick: u64,
+    /// A task was sent from the prompt and the daemon has not started its
+    /// run yet; the stream shows a spinner under the input meanwhile.
+    pub awaiting_run: bool,
     /// The setup wizard while `/setup` has it open; it takes every key.
     pub setup: Option<SetupApp>,
     /// Where `/setup` reads and writes the config file.
@@ -215,6 +220,8 @@ impl Default for App {
             workspace: String::new(),
             repl_session: SessionId::new(),
             width: 100,
+            tick: 0,
+            awaiting_run: false,
             setup: None,
             config_path: ProviderSettings::path(),
         }
@@ -272,6 +279,7 @@ impl App {
         match &msg {
             ServerMessage::Event { traced, .. } => {
                 if let TraceEvent::RunStarted { run, .. } = &traced.event {
+                    self.awaiting_run = false;
                     if !self.entries.iter().any(|e| e == &Entry::Run(*run)) {
                         self.entries.push(Entry::Run(*run));
                     }
@@ -321,6 +329,7 @@ impl App {
                 });
             }
             ServerMessage::Error { message } => {
+                self.awaiting_run = false;
                 self.entries.push(Entry::Notice(message.clone()));
             }
             ServerMessage::Ok { message } => {
@@ -354,6 +363,7 @@ impl App {
         }
         self.entries.push(Entry::Input(text.clone()));
         self.follow = None;
+        self.awaiting_run = true;
         Action::Send(ClientRequest::StartRun {
             task: text,
             workspace: self.workspace.clone(),
@@ -791,7 +801,7 @@ async fn event_loop(
                 Some(Err(e)) => return Err(TuiError::Io(e)),
                 None => return Ok(()),
             },
-            _ = tick.tick() => {}
+            _ = tick.tick() => app.tick = app.tick.wrapping_add(1),
         }
     }
 }
