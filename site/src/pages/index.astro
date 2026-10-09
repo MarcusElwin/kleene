@@ -2,6 +2,7 @@
 import Base from "../layouts/Base.astro";
 import Terminal from "../components/Terminal.astro";
 import TypedTerminal from "../components/TypedTerminal.astro";
+import { VERSION } from "../lib/version";
 ---
 <Base title="Kleene · relational algebra for recursive model calls">
   <section class="hero">
@@ -29,7 +30,7 @@ import TypedTerminal from "../components/TypedTerminal.astro";
 
   <TypedTerminal title="kleene — ~/notes — 80×24">
     <span data-line data-type><span class="prompt">$ </span><span data-text>kleene</span></span>
-    <span data-line data-wait="400" class="dim">kleene 0.1.0 · one stream, a prompt, slash commands · /setup to add a key</span>
+    <span data-line data-wait="400" class="dim">kleene {VERSION} · one stream, a prompt, slash commands · /setup to add a key</span>
     <span data-line data-type><span class="prompt">&gt; </span><span data-text>Which project consumed the most hours in total? The notes are in demos/oolong/corpus.txt</span></span>
     <span data-line data-wait="500" class="rule">── turn 1 ─────────────────────────────────────────── 0 calls · $0.0000</span>
     <span data-line class="cmt">No context table was given, so the notes come in through the workspace tools.</span>
@@ -147,10 +148,11 @@ import TypedTerminal from "../components/TypedTerminal.astro";
 
   <section class="status">
     <h2>Status</h2>
-    <p>Pre-release. Every milestone of <a href="/docs/plan/">the plan</a> is on <code>main</code>: the relational core with recursive CTEs by semi-naive evaluation, the call algebra with memo, batching and budgets, the RLM harness with <code>rlm</code> and <code>spawn</code>, the daemon and the Catppuccin TUI, the planner, the continual learning loop and the benchmark harness. Rust, model-agnostic, no SDK and no gateway required, MIT licensed.</p>
+    <p>Released: <code>v{VERSION}</code> ships as prebuilt binaries through <code>install.sh</code>, Homebrew and GitHub releases. Every milestone of <a href="/docs/plan/">the plan</a> is on <code>main</code>: the relational core with recursive CTEs by semi-naive evaluation, the call algebra with memo, batching and budgets, the RLM harness with <code>rlm</code> and <code>spawn</code>, the daemon and the Catppuccin TUI, the planner, the continual learning loop and the benchmark harness. Rust, model-agnostic, no SDK and no gateway required, MIT licensed.</p>
     <p class="dim">
       <span class="green">[x]</span> M0 scaffold &nbsp; <span class="green">[x]</span> M1 relational core &nbsp; <span class="green">[x]</span> M2 call algebra &nbsp; <span class="green">[x]</span> M3 RLM harness<br />
-      <span class="green">[x]</span> M4 daemon and TUI &nbsp; <span class="green">[x]</span> M5 planner &nbsp; <span class="green">[x]</span> M6 continual loop &nbsp; <span class="green">[x]</span> M7 benchmarks &nbsp; <span class="amber">[ ]</span> v0.1.0 release
+      <span class="green">[x]</span> M4 daemon and TUI &nbsp; <span class="green">[x]</span> M5 planner &nbsp; <span class="green">[x]</span> M6 continual loop &nbsp; <span class="green">[x]</span> M7 benchmarks<br />
+      <span class="green">[x]</span> v0.1.0 release &nbsp; <span class="green">[x]</span> v{VERSION} on <code>install.sh</code> and Homebrew
     </p>
   </section>
 </Base>

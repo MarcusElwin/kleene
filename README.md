@@ -613,8 +613,11 @@ Models: Claude Opus 5.5 is `claude-opus-5-5`, Claude Haiku 4.5 is `claude-haiku-
 
 ## Status
 
-Pre-release. Every milestone of [the plan](docs/PLAN.md#6-milestones) is
-on `main`; the repository is private and no version has been tagged yet.
+Released: the latest tag is on the [releases page][releases] with prebuilt
+binaries, and `install.sh`, Homebrew and `cargo install` all install it.
+Every milestone of [the plan](docs/PLAN.md#6-milestones) is on `main`.
+
+[releases]: https://github.com/MarcusElwin/kleene/releases
 
 | Milestone | Shipped |
 |---|---|
@@ -640,8 +643,6 @@ project instructions from `AGENTS.md`, MCP servers as catalog tools
 
 Not yet, in the order they are planned:
 
-- **A first release.** Tag `v0.1.0`, publish the binaries, make the
-  repository public so the install lines above work for everyone.
 - **Harder packs.** The first real runs (Claude Opus 5.5, 27 September
   2026) solved every task of every pack in every mode, so they compare cost
   only: the playbook cuts calls per task (oolong 4.9 to 3.9, legal 12.7 to
