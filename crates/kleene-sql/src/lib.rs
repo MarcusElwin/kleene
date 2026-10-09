@@ -22,10 +22,10 @@ pub mod types;
 
 pub use error::SqlError;
 pub use expr::{AggregateFn, AggregateOrder, BinaryOp, Expr, Literal, UnaryOp};
-pub use extensions::{plan_call, plan_create_agent, plan_create_function};
+pub use extensions::{plan_calibrate, plan_call, plan_create_agent, plan_create_function};
 pub use kleene_core::Catalog;
 pub use plan::{JoinKind, LogicalPlan, SortKey};
-pub use statement::{FunctionBody, Statement, StatementKind};
+pub use statement::{FunctionBody, ProxyClause, Statement, StatementKind};
 pub use types::type_of;
 
 /// Parse one or more CallSQL statements from text.
