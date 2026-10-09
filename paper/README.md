@@ -7,7 +7,8 @@ GPT-6 Luna runs across all seven packs, related work and limitations.
 
 - `main.tex`, `references.bib`: the paper. Every arXiv identifier in the
   bibliography was checked against the arXiv API on 2026-10-03.
-- `figures/`: PDFs converted from the SVGs under `plots/` and `plots/results/` (`make figures`).
+- `figures/`: every figure is drawn from the evals CSVs and plots under
+  `plots/` by `figures/make_figures.py` (matplotlib); `make figures` runs it.
 - `Makefile`: `make` builds `main.pdf` with latexmk.
 
 The numbers are copied from `docs/WRITEUP.md` sections 4 to 4.3 and from

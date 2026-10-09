@@ -698,16 +698,12 @@ legal-synthetic (20)   & frozen   & 20/20 & 12.65 & 62\,452 & 1.69 \\
 
 \begin{figure}[htbp]
 \centering
-\begin{subfigure}[t]{0.78\textwidth}
-  \includegraphics[width=\linewidth]{opus_cost_parity}
-  \caption{Cumulative accuracy against cumulative dollars.}
-\end{subfigure}\\[6pt]
-\begin{subfigure}[t]{0.78\textwidth}
-  \includegraphics[width=\linewidth]{opus_calls_vs_difficulty}
-  \caption{Calls per task against the task's rating.}
-\end{subfigure}
-\caption{The Opus 5.5 run. Every line reaches accuracy 1; the plot separates the
-modes on cost only, with the plain agent leftmost on every pack.}
+\includegraphics[width=\textwidth]{opus_cost}
+\caption{The Opus 5.5 run: mean cents per task by mode, one panel per pack.
+Every task was solved in every mode, so cost is the only axis. The plain
+agent is cheapest wherever the context fits one prompt; learning is below
+frozen on every pack, by run-to-run variance on terminal and finance where
+nothing was adopted.}
 \label{fig:opus}
 \end{figure}
 
@@ -793,18 +789,11 @@ text).}
 
 \begin{figure}[htbp]
 \centering
-\begin{subfigure}[t]{0.78\textwidth}
-  \includegraphics[width=\linewidth]{haiku_learning_curve}
-  \caption{Rolling-5 accuracy by position in the stream.}
-\end{subfigure}\\[6pt]
-\begin{subfigure}[t]{0.78\textwidth}
-  \includegraphics[width=\linewidth]{haiku_cost_parity}
-  \caption{Cumulative accuracy against cumulative dollars.}
-\end{subfigure}
-\caption{The Haiku 4.5 run on \code{memo-rubric} and \code{coding}. On
-memo-rubric the learning line ends above frozen and plain at a fraction of
-frozen's spend; on coding both \kleene{} lines fall to zero after the first
-step of each episode.}
+\includegraphics[width=\textwidth]{haiku_curves}
+\caption{The 1 October Haiku 4.5 run: accuracy over the last five tasks by
+position in the stream. On memo-rubric the learning line ends above frozen
+and plain; on coding both \kleene{} modes solve only the first step of each
+episode and fall to zero.}
 \label{fig:haiku}
 \end{figure}
 
@@ -916,10 +905,13 @@ per cell, one store per cell. Dollars below half a cent print as 0.00.}
 
 \begin{figure}[htbp]
 \centering
-\includegraphics[width=0.78\textwidth]{luna_learning_curve}
-\caption{Rolling-5 accuracy by position in the stream, Luna run, all packs
-and modes. The memo-rubric learning line sits at or above 0.8 from the start
-where frozen hovers near 0.4; the coding lines stay high in every mode.}
+\includegraphics[width=\textwidth]{luna_curves}
+\caption{The Luna run: accuracy over the last five tasks by position in the
+stream, one panel per pack. On memo-rubric the learning line sits at or
+above 0.8 from the start where frozen hovers near 0.4; on oolong-like
+learning is flat at 1 where frozen and plain wander; on logbook-hard frozen
+climbs to 0.8 while plain stays near 0.2 (the learning run stopped after
+three tasks).}
 \label{fig:luna}
 \end{figure}
 
@@ -1126,22 +1118,13 @@ logbook-hard is pending.}
 
 \begin{figure}[htbp]
 \centering
-\begin{subfigure}[t]{0.49\textwidth}
-  \includegraphics[width=\linewidth]{pareto_memo-rubric}
-  \caption{memo-rubric}
-\end{subfigure}\hfill
-\begin{subfigure}[t]{0.49\textwidth}
-  \includegraphics[width=\linewidth]{pareto_coding}
-  \caption{coding}
-\end{subfigure}\\[6pt]
-\begin{subfigure}[t]{0.49\textwidth}
-  \includegraphics[width=\linewidth]{pareto_logbook-hard}
-  \caption{logbook-hard}
-\end{subfigure}
-\caption{Pass rate against mean dollars per task of the solver's own calls,
-every model and mode, for the three packs that separate on accuracy. The
-dashed line is the Pareto frontier. Gate replays and judge calls are not in
-the cost.}
+\includegraphics[width=\textwidth]{pareto}
+\caption{Pass rate against mean dollars per task of the solver's own calls
+(log scale), every model and mode, for the three packs that separate on
+accuracy. Colour is the model, shape is the mode; the dashed line joins the
+points no other point beats on both axes. Gate replays and judge calls are
+not in the cost. Luna's learning run of logbook-hard (1 of 3 tasks) is
+plotted as recorded.}
 \label{fig:pareto}
 \end{figure}
 
@@ -1192,9 +1175,11 @@ October) and 928 (Opus, 6 October) further statements, with the same shape.
 
 \begin{figure}[htbp]
 \centering
-\includegraphics[width=0.6\textwidth]{haiku_estimate_accuracy}
-\caption{Estimated against actual calls per statement, Haiku run. Points on the
-diagonal are exact; the outliers lie below it (over-estimates).}
+\includegraphics[width=0.62\textwidth]{estimate}
+\caption{Estimated against actual calls per statement, the 1 October Haiku
+run, on symmetric log axes; the area of a point is the number of statements
+at it. Points on the diagonal are exact estimates; every outlier lies below
+it, an over-estimate.}
 \label{fig:estimate}
 \end{figure}
 
@@ -1283,6 +1268,46 @@ Bradley--Terry~\citep{bradley1952rank}. The replay gate is the harness-level
 analogue of the default-FAIL test contract common to long-running agent
 harnesses: nothing is adopted that has not beaten the current version on held
 tasks.
+
+\section{Key takeaways}
+\label{sec:takeaways}
+
+\begin{enumerate}[leftmargin=1.5em,itemsep=3pt]
+\item \textbf{SQL is a workable action language for an agent, and it buys a
+  planner.} Three model families wrote \callsql{} well enough to solve
+  terminal, extraction, aggregation, drafting and code-editing tasks through
+  it, and every statement they wrote was priced before it ran. Across 9\,000
+  traced statements the planner never under-estimated by more than a call;
+  its errors are over-estimates, the safe direction for a budget.
+\item \textbf{The abstraction pays where the context does not fit a prompt
+  or the task repeats.} On the 30\,000-token log, \kleene{} frozen is the most
+  accurate mode for both models that ran it (Luna 7/10 against the plain
+  agent's 3/10). On a stream of aggregation or drafting tasks the playbook
+  turns the stream into lookups: Luna memo-rubric 8/20 to 18/20, oolong-like
+  15/20 to 20/20 at 1.3 calls a task against 34.
+\item \textbf{It does not pay for one-call lookups.} Wherever the context
+  fits one prompt and the question is a single fact, the native
+  tool-calling agent is as accurate and ten to a hundred times cheaper. The
+  catalog, the planner and the rendered results are overhead there, and the
+  numbers say so on finance, legal and memo-rubric for every model.
+\item \textbf{Learning is cheap to run and expensive to gate.} Adopted
+  entries cut calls per task on every pack where something was adopted, but
+  the replay gate costs 40\% to 500\% of the counted run at twenty tasks a
+  pack, and a sample of three can admit an entry that hurts (Opus on
+  memo-rubric, 10 to 4). The gate's sample size, not the playbook, is the
+  open design question.
+\item \textbf{Cost is in the worker calls, and batching is the lever.}
+  The expensive runs were per-row extraction over long contexts: 79\,000
+  worker calls on one Haiku pack. Batching 20 rows a call with an item-wise
+  re-ask, conversation caching and strict-schema rewriting were each forced
+  by a run and each cut the next run's cost; the Opus coding run read 5M
+  tokens from cache against 30\,000 billed.
+\item \textbf{Benchmarks must grow with the models.} Opus 5.5 saturates
+  five of the seven packs; what separated modes on Haiku is a tie on Opus.
+  The packs that still separate (logbook-hard, memo-rubric) are the ones to
+  extend, and the imported real datasets (OOLONG, Harvey LAB, contract
+  redlining) are the next step.
+\end{enumerate}
 
 \section{Limitations and future work}
 \label{sec:limits}
