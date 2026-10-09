@@ -22,7 +22,7 @@ pub mod ui;
 
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use futures::StreamExt;
-use kleene_core::{RunId, SessionId};
+use kleene_core::{ConversationId, RunId, SessionId};
 use kleene_daemon::client::{Client, ClientReader, ClientWriter};
 use kleene_daemon::{ClientRequest, ServerMessage, StatementOutput};
 use kleene_llm::ProviderSettings;
@@ -118,6 +118,11 @@ pub const COMMANDS: &[Command] = &[
         help: "the loaded skills, or one skill in full",
     },
     Command {
+        name: "/new",
+        args: "",
+        help: "start a new conversation; the next task does not see this one",
+    },
+    Command {
         name: "/clear",
         args: "",
         help: "clear the stream",
@@ -186,6 +191,9 @@ pub struct App {
     pub workspace: String,
     /// The interactive session `/sql` statements go to.
     pub repl_session: SessionId,
+    /// The conversation tasks typed at the prompt continue: each run is
+    /// told the earlier tasks and answers. `/new` starts another.
+    pub conversation: ConversationId,
     /// The stream's width in columns, for rules; set by the event loop.
     pub width: usize,
     /// Ticks of the event loop (four a second), for the spinner.
@@ -219,6 +227,7 @@ impl Default for App {
                 .unwrap_or_default(),
             workspace: String::new(),
             repl_session: SessionId::new(),
+            conversation: ConversationId::new(),
             width: 100,
             tick: 0,
             awaiting_run: false,
@@ -372,6 +381,7 @@ impl App {
             max_depth: None,
             budget_calls: None,
             check: None,
+            conversation: Some(self.conversation),
         })
     }
 
@@ -528,6 +538,13 @@ impl App {
                 };
                 self.entries
                     .push(Entry::Notice(format!("theme {}", self.theme.name)));
+                Action::None
+            }
+            "new" => {
+                self.conversation = ConversationId::new();
+                self.entries.push(Entry::Notice(
+                    "new conversation; the next task starts from scratch".to_string(),
+                ));
                 Action::None
             }
             "clear" => {
@@ -863,6 +880,32 @@ mod tests {
         assert_eq!(app.history, vec!["Sum 1..4".to_string()]);
         key(&mut app, KeyCode::Up);
         assert_eq!(app.input, "Sum 1..4", "history walks back");
+    }
+
+    #[test]
+    fn tasks_share_a_conversation_until_new() {
+        let mut app = App::default();
+        let conversation = |app: &mut App, task: &str| {
+            type_text(app, task);
+            match key(app, KeyCode::Enter) {
+                Action::Send(ClientRequest::StartRun { conversation, .. }) => conversation,
+                other => panic!("expected StartRun, got {other:?}"),
+            }
+        };
+        let first = conversation(&mut app, "How many?");
+        let second = conversation(&mut app, "And the sum?");
+        assert_eq!(first, Some(app.conversation));
+        assert_eq!(first, second, "a follow-up continues the conversation");
+        type_text(&mut app, "/new");
+        assert_eq!(key(&mut app, KeyCode::Enter), Action::None);
+        assert_eq!(
+            app.entries.last(),
+            Some(&Entry::Notice(
+                "new conversation; the next task starts from scratch".into()
+            ))
+        );
+        let third = conversation(&mut app, "Fresh start");
+        assert_ne!(third, first, "/new starts another conversation");
     }
 
     #[test]

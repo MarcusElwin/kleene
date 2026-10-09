@@ -347,10 +347,18 @@ kleene run <task|@file> [--context <file>] [--max-turns 30] [--max-depth 2]
 | `-q` | Print only the final relation |
 
 The run id is printed with the result and stored in `trace_runs`. The
-session's earlier turns are folded into its table `turns(n, sql, result)`
+session's earlier turns are folded into the table `turns(run, n, sql, result)`
 once more than sixteen have run (the last eight stay in the prompt in
 full), a table named `plan(step, status)` is shown by the UI as the task's
 plan, and the skills and MCP tools below are in every session's catalog.
+`turns` is kept across runs, and `memory(key, value)` is a plain table the
+model can `INSERT INTO` to keep a fact for later runs.
+
+Tasks typed in the TUI belong to a conversation: every run records its task
+and its answer in `conversations(conversation, run, n, role, text, ts)`, and
+a follow-up run's task message shows the last four messages inline and
+points at the table for the rest. `/new` in the TUI starts another
+conversation; `kleene run` runs outside any.
 
 ### `kleene resume <run-id>`
 

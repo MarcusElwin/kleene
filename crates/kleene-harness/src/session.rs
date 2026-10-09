@@ -9,19 +9,19 @@
 //! at depth + 1 with a role, a budget slice and their own table namespace.
 
 use crate::live::{ChildRunner, DefinedFunction, LiveSink, ModelSettings, SessionMeta};
-use crate::prompt::{self, ContextSummary, PromptContext};
+use crate::prompt::{self, ContextSummary, ConversationHistory, Exchange, PromptContext};
 use crate::repl::{Rendered, Repl};
 use crate::sink::StoreSink;
 use crate::{AgentRole, Outcome, RenderOptions};
 use kleene_core::{
-    Batch, Budget, BudgetUsage, CallId, CallKind, Catalog, DataType, Field, FunctionDef, RunId,
-    Schema, SessionId, StatementId, TableSource, Value,
+    Batch, Budget, BudgetUsage, CallId, CallKind, Catalog, ConversationId, DataType, Field,
+    FunctionDef, RunId, Schema, SessionId, StatementId, TableSource, Value,
 };
 use kleene_exec::CallSink;
 use kleene_exec::ExecError;
 use kleene_llm::{CompletionRequest, Message, Provider, ProviderOptions, StopReason};
 use kleene_store::duckdb::literal;
-use kleene_store::{DuckDbStore, StoreError};
+use kleene_store::{DuckDbStore, Store, StoreError};
 use kleene_tools::mcp::{McpServerConfig, McpStatus};
 use kleene_tools::skills::Skill;
 use kleene_tools::{catalog_entries, standard_tools, ToolContext, ToolRegistry, WebSearchBackend};
@@ -105,7 +105,7 @@ pub struct HarnessConfig {
     pub finish_check: Option<String>,
     /// How many recent turns stay rendered in full in the transcript. Older
     /// turns are folded: their results move to the session table
-    /// `turns(n, sql, result)` and a one-line stub stays in their place. The
+    /// `turns(run, n, sql, result)` and a one-line stub stays in their place. The
     /// fold boundary moves in steps of this size so the cached prefix is
     /// stable between folds.
     pub keep_turns: usize,
@@ -258,6 +258,10 @@ struct SessionRecord {
     messages: Vec<Message>,
     turns: u32,
     max_turns: u32,
+    /// The conversation a root session belongs to, if any; its task and
+    /// answer are recorded in `conversations` under it.
+    #[serde(default)]
+    conversation: Option<ConversationId>,
 }
 
 /// Everything a session starts from.
@@ -287,10 +291,27 @@ pub struct Harness {
 
 const SESSIONS_DDL: &str = "CREATE TABLE IF NOT EXISTS kleene_sessions (session VARCHAR PRIMARY KEY, run VARCHAR, parent VARCHAR, depth INTEGER, role VARCHAR, task VARCHAR, status VARCHAR, outcome VARCHAR, turns INTEGER, record VARCHAR, updated_at TIMESTAMP)";
 
+/// Every task and answer of every conversation, one row per message, so a
+/// follow-up run can read what came before it. The model sees it as an
+/// ordinary table.
+const CONVERSATIONS_DDL: &str = "CREATE TABLE IF NOT EXISTS conversations (conversation VARCHAR, run VARCHAR, n INTEGER, role VARCHAR, text VARCHAR, ts TIMESTAMP)";
+
+/// Facts the model keeps across runs with plain `INSERT INTO memory`.
+const MEMORY_DDL: &str = "CREATE TABLE IF NOT EXISTS memory (key VARCHAR, value VARCHAR)";
+
+/// How many of a conversation's most recent messages a follow-up task
+/// shows inline; the rest stay in `conversations`.
+const RECENT_EXCHANGES: usize = 4;
+
+/// Rows of a `FINAL` relation recorded as the answer in `conversations`.
+const ANSWER_ROWS: usize = 200;
+
 impl Harness {
     /// Open a harness over a store.
     pub async fn new(store: DuckDbStore, cfg: HarnessConfig) -> Result<Arc<Self>, HarnessError> {
         store.execute(SESSIONS_DDL).await?;
+        store.execute(CONVERSATIONS_DDL).await?;
+        store.execute(MEMORY_DDL).await?;
         let mut registry = standard_tools();
         let (mcp_tools, mcp_status) = kleene_tools::mcp::connect_all(&cfg.mcp).await;
         for t in mcp_tools {
@@ -410,6 +431,20 @@ impl Harness {
         task: &str,
         context: Option<String>,
     ) -> Result<RunReport, HarnessError> {
+        self.run_in(run, None, task, context).await
+    }
+
+    /// [`Harness::run_as`] inside a conversation: the task message shows
+    /// the conversation's recent messages and points at the rest in the
+    /// `conversations` table, and the task and the answer are appended to
+    /// it when the run ends.
+    pub async fn run_in(
+        self: &Arc<Self>,
+        run: RunId,
+        conversation: Option<ConversationId>,
+        task: &str,
+        context: Option<String>,
+    ) -> Result<RunReport, HarnessError> {
         if let Some(t) = &self.cfg.tracer {
             t.emit(TraceEvent::RunStarted {
                 run,
@@ -451,6 +486,7 @@ impl Harness {
             messages: vec![],
             turns: 0,
             max_turns: self.cfg.max_turns,
+            conversation,
         };
         let spec = SessionSpec {
             meta,
@@ -560,16 +596,22 @@ impl Harness {
             }
             context_summary = Some(ContextSummary::of(ctx, paragraphs(ctx).len() as u64));
         }
+        // `turns` is keyed by run and kept across runs, so a follow-up can
+        // read an earlier run's results. A store from before the run column
+        // still has the old three-column table: replace it.
+        let turns_physical = sink.store().physical("turns");
+        if let Some(existing) = self.store.schema(&turns_physical).await? {
+            if existing.index_of("run").is_none() {
+                self.store.drop_table(&turns_physical).await?;
+            }
+        }
         sink.store()
             .create_table("turns", turns_schema(), true)
             .await?;
-        if fresh {
-            // A root session shares the store's `turns` with earlier runs;
-            // start it empty so the model only sees its own history.
-            self.store
-                .execute(&format!("DELETE FROM {}", sink.store().physical("turns")))
-                .await?;
-        }
+        let history = match (fresh, record.conversation) {
+            (true, Some(c)) => Some(self.conversation_history(c).await?),
+            _ => None,
+        };
         let repl = Repl::from_sink(
             sink.clone(),
             meta.id,
@@ -615,7 +657,12 @@ impl Harness {
                 &task,
                 context_summary.as_ref(),
                 check,
+                history.as_ref(),
             )));
+            if let (Some(c), Some(h)) = (record.conversation, &history) {
+                self.record_exchange(c, meta.run, h.total + 1, "user", &task)
+                    .await?;
+            }
         }
         self.persist(&meta, parent, &task, SessionStatus::Running, None, &record)
             .await?;
@@ -646,7 +693,7 @@ impl Harness {
                 alias: record.role.model.clone(),
                 model: String::new(),
                 system: system.clone(),
-                messages: fold_messages(&record.messages, self.cfg.keep_turns),
+                messages: fold_messages(&record.messages, self.cfg.keep_turns, meta.run),
                 tools: vec![],
                 output_schema: None,
                 max_tokens: self.cfg.max_tokens,
@@ -741,7 +788,7 @@ impl Harness {
                 feedback: feedback.clone(),
                 plan,
             };
-            self.record_turn(&sink, &turn).await;
+            self.record_turn(&sink, meta.run, &turn).await;
             let final_rows = turn
                 .results
                 .iter()
@@ -770,6 +817,15 @@ impl Harness {
         self.unregister(meta.id);
         if self.cfg.drop_session_tables {
             sink.store().drop_created().await?;
+        }
+        if let Some(c) = record.conversation {
+            let text = match &outcome {
+                Outcome::Final { answer } => answer.render_table(ANSWER_ROWS),
+                other => format!("(no answer: {})", other.tag()),
+            };
+            let n = self.conversation_len(c).await? + 1;
+            self.record_exchange(c, meta.run, n, "assistant", &text)
+                .await?;
         }
         let mut usage = sink.usage().await;
         usage.wall = started.elapsed();
@@ -869,10 +925,11 @@ impl Harness {
     }
 
     /// Append the turn to the session's `turns` table.
-    async fn record_turn(&self, sink: &LiveSink, turn: &Turn) {
+    async fn record_turn(&self, sink: &LiveSink, run: RunId, turn: &Turn) {
         let batch = Batch {
             schema: turns_schema(),
             rows: vec![vec![
+                Value::Text(run.to_string()),
                 Value::Int(i64::from(turn.n)),
                 Value::Text(turn.sql.clone().unwrap_or_default()),
                 Value::Text(turn.feedback.clone()),
@@ -881,6 +938,76 @@ impl Harness {
         if let Err(e) = sink.store().insert("turns", batch).await {
             tracing::warn!("turns table: {e}");
         }
+    }
+
+    /// How many messages a conversation holds.
+    async fn conversation_len(&self, c: ConversationId) -> Result<usize, HarnessError> {
+        let rows = self
+            .store
+            .query(&format!(
+                "SELECT COUNT(*) FROM conversations WHERE conversation = {}",
+                literal(&Value::Text(c.to_string()))
+            ))
+            .await?;
+        Ok(rows
+            .rows
+            .first()
+            .and_then(|r| r.first())
+            .and_then(Value::as_int)
+            .unwrap_or(0)
+            .max(0) as usize)
+    }
+
+    /// What a follow-up run is told: the conversation's size and its last
+    /// [`RECENT_EXCHANGES`] messages.
+    async fn conversation_history(
+        &self,
+        c: ConversationId,
+    ) -> Result<ConversationHistory, HarnessError> {
+        let total = self.conversation_len(c).await?;
+        let rows = self
+            .store
+            .query(&format!(
+                "SELECT role, text FROM (SELECT role, text, n FROM conversations WHERE conversation = {} ORDER BY n DESC LIMIT {RECENT_EXCHANGES}) ORDER BY n",
+                literal(&Value::Text(c.to_string()))
+            ))
+            .await?;
+        let recent = rows
+            .rows
+            .iter()
+            .map(|r| Exchange {
+                role: r[0].render(),
+                text: r[1].render(),
+            })
+            .collect();
+        Ok(ConversationHistory {
+            id: c,
+            total,
+            recent,
+        })
+    }
+
+    /// Append one message to a conversation.
+    async fn record_exchange(
+        &self,
+        c: ConversationId,
+        run: RunId,
+        n: usize,
+        role: &str,
+        text: &str,
+    ) -> Result<(), HarnessError> {
+        let t = |s: &str| literal(&Value::Text(s.to_string()));
+        self.store
+            .execute(&format!(
+                "INSERT INTO conversations VALUES ({}, {}, {}, {}, {}, now())",
+                t(&c.to_string()),
+                t(&run.to_string()),
+                n,
+                t(role),
+                t(text)
+            ))
+            .await?;
+        Ok(())
     }
 
     async fn persist(
@@ -1017,6 +1144,7 @@ impl ChildRunner for Arc<Harness> {
             messages: vec![],
             turns: 0,
             max_turns,
+            conversation: None,
         };
         let spec = SessionSpec {
             meta,
@@ -1179,9 +1307,10 @@ const FINISH_CHECK_TIMEOUT_MS: i64 = 300_000;
 /// Lines of check output a refusal shows.
 const FINISH_CHECK_LINES: usize = 40;
 
-/// The schema of the session table `turns(n, sql, result)`.
+/// The schema of the session table `turns(run, n, sql, result)`.
 fn turns_schema() -> Arc<Schema> {
     Arc::new(Schema::new(vec![
+        Field::not_null("run", DataType::Text),
         Field::not_null("n", DataType::Int),
         Field::not_null("sql", DataType::Text),
         Field::not_null("result", DataType::Text),
@@ -1192,8 +1321,9 @@ fn turns_schema() -> Arc<Schema> {
 /// the results of all but the most recent `keep` turns replaced by a
 /// one-line stub pointing at `turns`. The number of folded turns is a
 /// multiple of `keep`, so the folded prefix only changes every `keep`
-/// turns and stays cacheable in between. `keep == 0` folds nothing.
-pub fn fold_messages(messages: &[Message], keep: usize) -> Vec<Message> {
+/// turns and stays cacheable in between. `keep == 0` folds nothing. The
+/// stub names the run, because `turns` is kept across runs.
+pub fn fold_messages(messages: &[Message], keep: usize, run: RunId) -> Vec<Message> {
     let pairs = messages.len().saturating_sub(1) / 2;
     if keep == 0 || pairs < 2 * keep {
         return messages.to_vec();
@@ -1221,7 +1351,7 @@ pub fn fold_messages(messages: &[Message], keep: usize) -> Vec<Message> {
             ""
         };
         out.push(Message::user(format!(
-            "(turn {n} result folded{note}; SELECT result FROM turns WHERE n = {n} shows it)"
+            "(turn {n} result folded{note}; SELECT result FROM turns WHERE run = '{run}' AND n = {n} shows it)"
         )));
     }
     out
@@ -1269,35 +1399,36 @@ mod tests {
 
     #[test]
     fn folding_keeps_recent_turns_and_moves_in_steps() {
+        let run = RunId(uuid::Uuid::from_u128(7));
         // Fewer than 2 * keep turns: nothing folds.
         let m = transcript(15);
-        assert_eq!(fold_messages(&m, 8), m);
+        assert_eq!(fold_messages(&m, 8, run), m);
         // 16 turns, keep 8: the first 8 results fold, replies stay.
         let m = transcript(16);
-        let f = fold_messages(&m, 8);
+        let f = fold_messages(&m, 8, run);
         assert_eq!(f.len(), m.len());
         assert_eq!(text_of(&f[0]), "# Task");
         assert_eq!(text_of(&f[1]), "```sql\nSELECT 1\n```");
         assert_eq!(
             text_of(&f[2]),
-            "(turn 1 result folded; SELECT result FROM turns WHERE n = 1 shows it)"
+            "(turn 1 result folded; SELECT result FROM turns WHERE run = '00000000-0000-0000-0000-000000000007' AND n = 1 shows it)"
         );
         assert_eq!(
             text_of(&f[4]),
-            "(turn 2 result folded; a statement failed; SELECT result FROM turns WHERE n = 2 shows it)"
+            "(turn 2 result folded; a statement failed; SELECT result FROM turns WHERE run = '00000000-0000-0000-0000-000000000007' AND n = 2 shows it)"
         );
         assert!(text_of(&f[16]).starts_with("(turn 8"), "turn 8 is folded");
         assert_eq!(text_of(&f[18]), "9\n1 row\nturn 9/30", "turn 9 is kept");
         // Up to 23 turns the same 8 stay folded (a stable prefix); at 24 the
         // next 8 fold.
-        let f23 = fold_messages(&transcript(23), 8);
+        let f23 = fold_messages(&transcript(23), 8, run);
         assert!(text_of(&f23[16]).starts_with("(turn 8"));
         assert!(text_of(&f23[18]).starts_with("9\n"));
-        let f24 = fold_messages(&transcript(24), 8);
+        let f24 = fold_messages(&transcript(24), 8, run);
         assert!(text_of(&f24[32]).starts_with("(turn 16"));
         assert!(text_of(&f24[34]).starts_with("17\n"));
         // keep 0 disables folding.
-        assert_eq!(fold_messages(&m, 0), m);
+        assert_eq!(fold_messages(&m, 0, run), m);
     }
 
     #[test]

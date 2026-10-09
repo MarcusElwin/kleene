@@ -189,6 +189,7 @@ The commands the popup lists:
 | `/setup` | add or change API keys: model providers and web search; the daemon reloads them |
 | `/mcp [add <name> <cmd> ...]` | the MCP servers and their tools; add or remove one in `mcp.json` |
 | `/skills [name]` | the loaded skills, or one in full |
+| `/new` | start a new conversation; until then each task continues the last one (the model is told the earlier tasks and answers, and finds all of them in the `conversations` table) |
 | `/clear`, `/quit` | clear the stream (`Ctrl-L`); detach, the daemon and its runs keep going (`Ctrl-C`) |
 
 `Tab` completes a command, `Up`/`Down` walk the input history, `PageUp`/`PageDown`
