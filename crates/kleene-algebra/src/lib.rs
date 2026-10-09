@@ -23,7 +23,7 @@ use kleene_core::{CallKind, Catalog, Volatility};
 use kleene_sql::LogicalPlan;
 use serde::{Deserialize, Serialize};
 
-pub use annotate::{annotate, beam_of, rounds_of, CostModel};
+pub use annotate::{annotate, beam_of, plan_call_names, rounds_of, CostModel};
 pub use explain::explain;
 pub use rules::{Cascade, CheapFirst, Fences, JoinOrder, SemiJoin};
 
@@ -185,6 +185,10 @@ pub struct CallPlan {
     /// Size of the join-order search, when one ran.
     #[serde(default)]
     pub plan_space: Option<PlanSpace>,
+    /// The learned estimates the plan relies on, one line each
+    /// ([`CostModel::learned_notes`]).
+    #[serde(default)]
+    pub learned: Vec<String>,
 }
 
 impl CallPlan {
@@ -271,6 +275,9 @@ pub fn plan_with(
     if let Some(chosen) = alternatives.iter_mut().find(|a| a.chosen) {
         chosen.estimate = total;
     }
+    let mut names = vec![];
+    plan_call_names(logical, catalog, &mut names);
+    let learned = cost.learned_notes(&names);
     CallPlan {
         root,
         fragment,
@@ -278,5 +285,6 @@ pub fn plan_with(
         rules_applied: applied,
         alternatives,
         plan_space,
+        learned,
     }
 }

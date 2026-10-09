@@ -283,6 +283,9 @@ pub fn explain(plan: &CallPlan) -> String {
             ps.relations, ps.orders, ps.evaluated, ps.pruned
         ));
     }
+    if !plan.learned.is_empty() {
+        out.push_str(&format!("learned: {}\n", plan.learned.join("; ")));
+    }
     if !plan.alternatives.is_empty() {
         out.push_str("alternatives:\n");
         for a in &plan.alternatives {

@@ -263,6 +263,48 @@ fn expand_and_recursion_are_estimated_per_round() {
     assert!(text.contains("κ worker"), "{text}");
 }
 
+#[test]
+fn learned_branching_and_selectivity_change_estimates_and_are_listed() {
+    let c = catalog();
+    let mut cost = CostModel::default();
+    cost.table_rows.insert("possibilities".into(), 4.0);
+    let sql = "SELECT e.item FROM possibilities CROSS JOIN LATERAL expand(candidate, 3) AS e";
+    let plain = plan(&logical(sql, &c), &c, &cost);
+    assert!(explain(&plain).contains("~12 rows"), "{}", explain(&plain));
+    assert!(!explain(&plain).contains("learned:"));
+    // Measured: expand yields 1.5 rows per call over 8 calls.
+    cost.call_branching.insert("expand".into(), 1.5);
+    cost.learned.insert("expand".into(), 8);
+    let learned = plan(&logical(sql, &c), &c, &cost);
+    let text = explain(&learned);
+    assert!(text.contains("~6 rows"), "{text}");
+    assert!(
+        text.contains("learned: expand: 1.5 rows per call from 8 calls"),
+        "{text}"
+    );
+    // A selectivity learned for a predicate the plan does not use is not listed.
+    cost.call_selectivity.insert("verify".into(), 0.25);
+    cost.learned.insert("verify".into(), 40);
+    let text = explain(&plan(&logical(sql, &c), &c, &cost));
+    assert!(!text.contains("verify"), "{text}");
+    let text = explain(&plan(
+        &logical(
+            "SELECT candidate FROM possibilities WHERE verify(candidate)",
+            &c,
+        ),
+        &c,
+        &cost,
+    ));
+    assert!(
+        text.contains("~1 rows") || text.contains("~1.0 rows"),
+        "{text}"
+    );
+    assert!(
+        text.contains("learned: verify: selectivity 0.25 from 40 rows"),
+        "{text}"
+    );
+}
+
 /// Catalog for the join-order demo: three tables and two LLM predicates.
 fn join_catalog() -> Catalog {
     let mut c = standard_catalog();
