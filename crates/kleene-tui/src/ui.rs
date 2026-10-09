@@ -405,6 +405,77 @@ fn rule(t: &Theme, prefix: &str, label: String, right: String, width: usize) -> 
     ])
 }
 
+/// A turn's rule: `── turn 3 · <headline> ───── 1 call · $0.01`. The
+/// headline is the first sentence of the model's prose, in normal text, cut
+/// to fit; without one the rule is plain.
+fn turn_rule(
+    t: &Theme,
+    prefix: &str,
+    n: u32,
+    headline: Option<&str>,
+    right: String,
+    width: usize,
+) -> Line<'static> {
+    let Some(head) = headline else {
+        return rule(t, prefix, format!("turn {n}"), right, width);
+    };
+    let left = format!("── turn {n} · ");
+    let fixed = prefix.chars().count() + left.chars().count() + right.chars().count() + 2 + 4;
+    let room = width.saturating_sub(fixed + 1);
+    let head: String = if head.chars().count() > room {
+        format!(
+            "{}…",
+            head.chars()
+                .take(room.saturating_sub(1))
+                .collect::<String>()
+        )
+    } else {
+        head.to_string()
+    };
+    let fill = width
+        .saturating_sub(fixed + head.chars().count() + 1)
+        .max(4);
+    Line::from(vec![
+        Span::styled(prefix.to_string(), Style::default().fg(t.border)),
+        Span::styled(left, Style::default().fg(t.faint)),
+        Span::styled(head, t.text()),
+        Span::styled(" ", Style::default()),
+        Span::styled("─".repeat(fill), Style::default().fg(t.border)),
+        Span::styled(format!(" {right} "), t.dim()),
+    ])
+}
+
+/// The first sentence of the model's prose outside SQL fences, if any.
+fn headline(reply: &str) -> Option<String> {
+    let mut in_sql = false;
+    for l in reply.lines() {
+        let trimmed = l.trim();
+        if trimmed.starts_with("```") {
+            in_sql = !in_sql;
+            continue;
+        }
+        if in_sql || trimmed.is_empty() {
+            continue;
+        }
+        let text = trimmed.trim_start_matches(['#', '-', '*', ' ']);
+        let mut end = text.len();
+        let chars: Vec<(usize, char)> = text.char_indices().collect();
+        for (i, (pos, c)) in chars.iter().enumerate() {
+            if matches!(c, '.' | '!' | '?' | ':')
+                && chars.get(i + 1).is_none_or(|(_, n)| n.is_whitespace())
+            {
+                end = pos + if *c == ':' { 0 } else { c.len_utf8() };
+                break;
+            }
+        }
+        let sentence = text[..end].trim().trim_end_matches('.');
+        if !sentence.is_empty() {
+            return Some(sentence.to_string());
+        }
+    }
+    None
+}
+
 fn welcome(t: &Theme, width: usize, out: &mut Vec<Line<'static>>) {
     out.push(Line::from(""));
     if width >= WORDMARK_WIDTH as usize + 2 {
@@ -469,7 +540,7 @@ fn help_lines(t: &Theme, out: &mut Vec<Line<'static>>) {
         ),
         (
             "Ctrl-P",
-            "show or hide EXPLAIN plans, and the FINAL table as the model saw it",
+            "unfold each turn: the model's prose, EXPLAIN plans, the whole FINAL",
         ),
         ("Ctrl-T", "next Catppuccin flavour"),
         ("Ctrl-X", "cancel the run being followed"),
@@ -571,14 +642,20 @@ fn session_lines(app: &App, s: &SessionNode, depth: usize, out: &mut Vec<Line<'s
     for turn in &s.turns_done {
         let usage = turn_usage(m, s, turn.n);
         out.push(Line::from(""));
-        out.push(rule(
+        let head = if app.show_plans {
+            None
+        } else {
+            headline(&turn.reply)
+        };
+        out.push(turn_rule(
             &t,
             &pad_text,
-            format!("turn {}", turn.n),
+            turn.n,
+            head.as_deref(),
             usage,
             app.width,
         ));
-        reply_lines(&t, &turn.reply, &pad_text, out);
+        reply_lines(&t, &turn.reply, &pad_text, !app.show_plans, out);
         let plans = if app.show_plans {
             turn_plans(m, s, turn.n)
         } else {
@@ -700,7 +777,7 @@ fn session_lines(app: &App, s: &SessionNode, depth: usize, out: &mut Vec<Line<'s
             };
             out.push(rule(&t, &pad_text, format!("turn {n}"), state, app.width));
             if let Some(c) = streaming {
-                reply_lines(&t, &c.streaming, &pad_text, out);
+                reply_lines(&t, &c.streaming, &pad_text, false, out);
             }
             for st in executing {
                 for l in st.sql.lines() {
@@ -800,23 +877,44 @@ fn turn_plans(m: &Model, s: &SessionNode, n: u32) -> Vec<Option<String>> {
 }
 
 /// A reply: prose dimmed, SQL inside fences in the SQL colour, fences hidden.
-fn reply_lines(t: &Theme, reply: &str, pad: &str, out: &mut Vec<Line<'static>>) {
+/// Folded, the prose is left out (its first sentence is on the turn's rule)
+/// and a `FINAL` statement shows only its first line, since the answer is
+/// laid out at the end of the run.
+fn reply_lines(t: &Theme, reply: &str, pad: &str, fold: bool, out: &mut Vec<Line<'static>>) {
     let mut in_sql = false;
+    let mut in_final = false;
     for l in reply.lines() {
         let trimmed = l.trim_start();
         if trimmed.starts_with("```") {
             in_sql = !in_sql;
+            in_final = false;
             continue;
         }
         if trimmed.is_empty() {
             continue;
         }
-        let style = if in_sql {
-            Style::default().fg(t.sql)
-        } else {
-            t.dim()
-        };
-        out.push(Line::from(Span::styled(format!("{pad}{l}"), style)));
+        if !in_sql {
+            if !fold {
+                out.push(Line::from(Span::styled(format!("{pad}{l}"), t.dim())));
+            }
+            continue;
+        }
+        let sql = Style::default().fg(t.sql);
+        if fold && in_final {
+            if trimmed.trim_end().ends_with(';') {
+                in_final = false;
+            }
+            continue;
+        }
+        if fold && trimmed.starts_with("FINAL") && !trimmed.trim_end().ends_with(';') {
+            in_final = true;
+            out.push(Line::from(vec![
+                Span::styled(format!("{pad}{l}"), sql),
+                Span::styled(" …", Style::default().fg(t.faint)),
+            ]));
+            continue;
+        }
+        out.push(Line::from(Span::styled(format!("{pad}{l}"), sql)));
     }
 }
 
@@ -1382,6 +1480,82 @@ mod tests {
             .join("\n");
         assert!(joined.contains("---+---"), "{joined}");
         assert!(!joined.contains("the answer is below"), "{joined}");
+    }
+
+    #[test]
+    fn prose_folds_to_a_headline_and_final_sql_to_one_line() {
+        let mut app = app_with_run();
+        let root = app.model.roots()[0];
+        let run = app.model.run_order[0];
+        app.apply(ServerMessage::TurnFinished {
+            session: root,
+            turn: 2,
+            reply: "The function never strips the hyphens. I'll patch it and rerun.\n\n```sql\nCALL patch('a.py', $$x$$, $$y$$);\nFINAL FROM (SELECT 'a.py' AS file,\n  'a very long explanation' AS why);\n```".into(),
+            sql: None,
+            results: vec![StatementOutput {
+                text: "FINAL\nfile | why\n-----+----\na.py | a very long explanation".into(),
+                is_error: false,
+                is_final: true,
+            }],
+            plan: vec![],
+        });
+        app.apply(ServerMessage::RunFinished {
+            run,
+            outcome: "final".into(),
+            answer: Some("file | why\n-----+----\na.py | a very long explanation\n".into()),
+            answer_columns: vec!["file".into(), "why".into()],
+            answer_rows: vec![vec!["a.py".into(), "a very long explanation".into()]],
+        });
+        let joined = |app: &App| {
+            stream_lines(app, 100)
+                .iter()
+                .map(|l| l.to_string())
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let text = joined(&app);
+        assert!(
+            text.contains("── turn 2 · The function never strips the hyphens ─"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("I'll patch it"),
+            "rest of the prose folded: {text}"
+        );
+        assert!(text.contains("CALL patch('a.py', $$x$$, $$y$$);"), "{text}");
+        assert!(
+            text.contains("FINAL FROM (SELECT 'a.py' AS file, …"),
+            "{text}"
+        );
+        assert_eq!(text.matches("a very long explanation").count(), 1, "{text}");
+        app.show_plans = true;
+        let text = joined(&app);
+        assert!(text.contains("── turn 2 ─"), "{text}");
+        assert!(text.contains("I'll patch it"), "{text}");
+        assert!(
+            text.contains("'a very long explanation' AS why);"),
+            "{text}"
+        );
+        assert_eq!(headline("```sql\nSELECT 1\n```"), None);
+        assert_eq!(
+            headline("Counting: there are many.\n").as_deref(),
+            Some("Counting")
+        );
+        assert_eq!(headline("Done!").as_deref(), Some("Done!"));
+        assert_eq!(
+            headline("v1.2 is out. Next.").as_deref(),
+            Some("v1.2 is out")
+        );
+        let line = turn_rule(
+            &Theme::default(),
+            "",
+            7,
+            Some(&"x".repeat(200)),
+            "1 call".into(),
+            60,
+        );
+        assert!(line.width() <= 60, "{}", line.width());
+        assert!(line.to_string().contains('…'));
     }
 
     #[test]
