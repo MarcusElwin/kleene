@@ -40,6 +40,16 @@ pub enum FunctionBody {
     },
 }
 
+/// `PROXY name [THRESHOLDS (low, high)]` on a `CREATE FUNCTION`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProxyClause {
+    /// The scoring function (same arguments as the oracle, returns `DOUBLE`).
+    pub function: String,
+    /// `(low, high)` when declared; `None` leaves them to a calibration or
+    /// the defaults `(0.2, 0.8)`.
+    pub thresholds: Option<(f64, f64)>,
+}
+
 /// Statement kinds in the CallSQL subset.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "stmt")]
@@ -86,9 +96,9 @@ pub enum StatementKind {
         volatility: Volatility,
         /// `CREATE OR REPLACE`.
         replace: bool,
-        /// `PROXY name THRESHOLDS (low, high)`: a cheap scoring function the
-        /// planner may cascade this predicate through.
-        proxy: Option<(String, f64, f64)>,
+        /// `PROXY name [THRESHOLDS (low, high)]`: a cheap scoring function
+        /// the planner may cascade this predicate through.
+        proxy: Option<ProxyClause>,
         /// `MODEL 'alias'`: the model tier a prompt function runs on
         /// (default: the session's default alias).
         model: Option<String>,
@@ -137,5 +147,20 @@ pub enum StatementKind {
     Final {
         /// The answer.
         plan: LogicalPlan,
+    },
+    /// `CALIBRATE name [SAMPLE n] [RECALL r] [PRECISION p] FROM query`: set
+    /// the cascade thresholds of a predicate's proxy from a sample of rows
+    /// scored by both.
+    Calibrate {
+        /// The oracle predicate whose proxy is calibrated.
+        function: String,
+        /// Rows sampled from the query (its first `sample` rows).
+        sample: usize,
+        /// The share of oracle-true rows the band must keep (`low`).
+        recall: f64,
+        /// The share of proxy-accepted rows that must be oracle-true (`high`).
+        precision: f64,
+        /// The rows to sample: the function's arguments, in order.
+        input: LogicalPlan,
     },
 }

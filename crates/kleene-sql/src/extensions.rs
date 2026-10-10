@@ -7,7 +7,7 @@
 
 use crate::error::SqlError;
 use crate::plan::LogicalPlan;
-use crate::statement::{FunctionBody, Statement, StatementKind};
+use crate::statement::{FunctionBody, ProxyClause, Statement, StatementKind};
 use kleene_core::{CallKind, Catalog, DataType, Volatility};
 
 fn unsupported(construct: &str, hint: &str) -> SqlError {
@@ -40,6 +40,9 @@ pub(crate) fn plan_extension(text: &str, catalog: &Catalog) -> Result<Option<Sta
     }
     if words.first().is_some_and(|w| w == "CALL") {
         return plan_call(text, catalog).map(Some);
+    }
+    if words.first().is_some_and(|w| w == "CALIBRATE") {
+        return plan_calibrate(text, catalog).map(Some);
     }
     Ok(None)
 }
@@ -374,7 +377,7 @@ pub fn plan_create_function(text: &str) -> Result<Statement, SqlError> {
             let pname = sc
                 .ident()
                 .ok_or_else(|| parse_err("expected a proxy function name", PHINT))?;
-            let (low, high) = if sc.eat_keyword("THRESHOLDS") {
+            let thresholds = if sc.eat_keyword("THRESHOLDS") {
                 let t = sc
                     .parenthesised()
                     .ok_or_else(|| parse_err("expected THRESHOLDS (low, high)", PHINT))?;
@@ -390,11 +393,14 @@ pub fn plan_create_function(text: &str) -> Result<Statement, SqlError> {
                 {
                     return Err(parse_err("thresholds must be 0 <= low <= high <= 1", PHINT));
                 }
-                (nums[0], nums[1])
+                Some((nums[0], nums[1]))
             } else {
-                (0.2, 0.8)
+                None
             };
-            proxy = Some((pname, low, high));
+            proxy = Some(ProxyClause {
+                function: pname,
+                thresholds,
+            });
         } else {
             break;
         }
@@ -458,6 +464,132 @@ pub fn placeholders(template: &str) -> Vec<String> {
         }
     }
     out
+}
+
+/// Plan `CALIBRATE name [SAMPLE n] [RECALL r] [PRECISION p] FROM query`:
+/// the query's columns are the predicate's arguments, in order; its first
+/// `n` rows (20 by default) are scored by the proxy and the oracle and the
+/// thresholds are set so the sample meets the targets (0.9 each by default).
+pub fn plan_calibrate(text: &str, catalog: &Catalog) -> Result<Statement, SqlError> {
+    const HINT: &str =
+        "CALIBRATE relevant SAMPLE 20 RECALL 0.9 PRECISION 0.9 FROM SELECT text FROM docs";
+    let trimmed = text.trim().trim_end_matches(';');
+    let mut sc = Scanner::new(trimmed);
+    if !sc.eat_keyword("CALIBRATE") {
+        return Err(parse_err("expected CALIBRATE", HINT));
+    }
+    sc.eat_keyword("FUNCTION");
+    let function = sc
+        .ident()
+        .ok_or_else(|| parse_err("expected the predicate's name after CALIBRATE", HINT))?;
+    let mut sample = 20usize;
+    let mut recall = 0.9;
+    let mut precision = 0.9;
+    loop {
+        if sc.eat_keyword("SAMPLE") {
+            sample = sc
+                .ident()
+                .and_then(|t| t.parse::<usize>().ok())
+                .filter(|n| *n >= 2)
+                .ok_or_else(|| parse_err("SAMPLE expects a row count of at least 2", HINT))?;
+        } else if sc.eat_keyword("RECALL") {
+            recall = number_in_unit(&mut sc)
+                .ok_or_else(|| parse_err("RECALL expects a number between 0 and 1", HINT))?;
+        } else if sc.eat_keyword("PRECISION") {
+            precision = number_in_unit(&mut sc)
+                .ok_or_else(|| parse_err("PRECISION expects a number between 0 and 1", HINT))?;
+        } else {
+            break;
+        }
+    }
+    if !sc.eat_keyword("FROM") {
+        return Err(parse_err(
+            "expected FROM and a query giving the predicate's arguments",
+            HINT,
+        ));
+    }
+    sc.skip_ws();
+    let query = sc.rest().trim().to_string();
+    if query.is_empty() {
+        return Err(parse_err("expected a query after FROM", HINT));
+    }
+    let def = catalog
+        .function(&function)
+        .ok_or_else(|| SqlError::Unresolved {
+            what: "function",
+            name: function.clone(),
+            hint: crate::similar::suggest(&function, catalog.functions().map(|f| f.name.as_str())),
+        })?;
+    if def.returns
+        != (kleene_core::FunctionReturn::Scalar {
+            data_type: DataType::Bool,
+        })
+    {
+        return Err(unsupported(
+            &format!("CALIBRATE {function}"),
+            "only BOOLEAN predicates have a proxy to calibrate",
+        ));
+    }
+    if catalog.proxy(&function).is_none() {
+        return Err(unsupported(
+            &format!("CALIBRATE {function}"),
+            "declare a proxy first: CREATE OR REPLACE FUNCTION ... PROXY score_fn",
+        ));
+    }
+    let head: String = query
+        .chars()
+        .take(6)
+        .collect::<String>()
+        .to_ascii_uppercase();
+    let select = if head.starts_with("SELECT") || head.starts_with("WITH") {
+        query
+    } else {
+        format!("SELECT * FROM {query}")
+    };
+    let stmts = crate::parse(&select)?;
+    if stmts.len() != 1 {
+        return Err(parse_err("CALIBRATE takes one query after FROM", HINT));
+    }
+    let planned = crate::planner::Planner::new(catalog).plan_statement(&stmts[0], select)?;
+    let StatementKind::Query { plan } = planned.kind else {
+        return Err(parse_err("the text after FROM must be a query", HINT));
+    };
+    if plan.schema().len() != def.args.len() {
+        return Err(parse_err(
+            format!(
+                "{function} takes {} argument{} but the query has {} column{}",
+                def.args.len(),
+                if def.args.len() == 1 { "" } else { "s" },
+                plan.schema().len(),
+                if plan.schema().len() == 1 { "" } else { "s" }
+            ),
+            HINT,
+        ));
+    }
+    Ok(Statement {
+        sql: text.trim().to_string(),
+        kind: StatementKind::Calibrate {
+            function: function.to_ascii_lowercase(),
+            sample,
+            recall,
+            precision,
+            input: plan,
+        },
+    })
+}
+
+fn number_in_unit(sc: &mut Scanner) -> Option<f64> {
+    sc.skip_ws();
+    let rest = sc.rest();
+    let end = rest
+        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .unwrap_or(rest.len());
+    let v: f64 = rest[..end].parse().ok()?;
+    if !(0.0..=1.0).contains(&v) {
+        return None;
+    }
+    sc.pos += end;
+    Some(v)
 }
 
 /// Plan `CALL tool(args) [FROM query]`.
@@ -726,6 +858,37 @@ mod tests {
         assert!(e.to_string().contains("unknown budget dimension"), "{e}");
         let e = plan_create_agent("CREATE AGENT z EFFORT 'ultra'").unwrap_err();
         assert!(e.to_string().contains("unknown effort"), "{e}");
+    }
+
+    #[test]
+    fn proxy_clause_keeps_declared_thresholds_only() {
+        let s = plan_create_function(
+            "CREATE FUNCTION rel(t TEXT) RETURNS BOOLEAN AS PROMPT 'Is {t} relevant?' PROXY score",
+        )
+        .unwrap();
+        let StatementKind::CreateFunction { proxy, .. } = s.kind else {
+            panic!()
+        };
+        assert_eq!(
+            proxy,
+            Some(ProxyClause {
+                function: "score".into(),
+                thresholds: None
+            })
+        );
+        let s = plan_create_function(
+            "CREATE FUNCTION rel(t TEXT) RETURNS BOOLEAN AS PROMPT 'Is {t} relevant?' PROXY score THRESHOLDS (0.3, 0.7)",
+        )
+        .unwrap();
+        let StatementKind::CreateFunction { proxy, .. } = s.kind else {
+            panic!()
+        };
+        assert_eq!(proxy.unwrap().thresholds, Some((0.3, 0.7)));
+        let e = plan_create_function(
+            "CREATE FUNCTION rel(t TEXT) RETURNS BOOLEAN AS PROMPT 'x {t}' PROXY score THRESHOLDS (0.9, 0.1)",
+        )
+        .unwrap_err();
+        assert!(e.to_string().contains("low <= high"), "{e}");
     }
 
     #[test]

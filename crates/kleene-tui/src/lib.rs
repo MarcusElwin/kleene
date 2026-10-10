@@ -118,6 +118,11 @@ pub const COMMANDS: &[Command] = &[
         help: "the loaded skills, or one skill in full",
     },
     Command {
+        name: "/refine",
+        args: "[name [kind] | revert <version>]",
+        help: "the learned function ledger; refine one function's prompt through the replay gate, before and after; or roll a version back",
+    },
+    Command {
         name: "/clear",
         args: "",
         help: "clear the stream",
@@ -297,6 +302,21 @@ impl App {
                         .and_then(|r| r.first())
                         .cloned()
                         .unwrap_or_default();
+                    self.entries.push(Entry::Text(body));
+                } else if title == "refine" {
+                    // Before and after snapshots read better as blocks than
+                    // as cells.
+                    let body = rows
+                        .iter()
+                        .map(|r| {
+                            format!(
+                                "{}\n{}",
+                                r.first().cloned().unwrap_or_default(),
+                                r.get(1).cloned().unwrap_or_default()
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n\n");
                     self.entries.push(Entry::Text(body));
                 } else {
                     self.entries.push(Entry::Table {
@@ -481,6 +501,44 @@ impl App {
             "mcp" => {
                 self.entries.push(Entry::Input(typed.to_string()));
                 self.mcp_command(arg)
+            }
+            "refine" => {
+                self.entries.push(Entry::Input(typed.to_string()));
+                let words: Vec<&str> = arg.split_whitespace().collect();
+                match words.as_slice() {
+                    [] => Action::Send(ClientRequest::Refine {
+                        name: None,
+                        kind: None,
+                        revert: None,
+                    }),
+                    ["revert", version] => match version.trim_start_matches('v').parse::<i64>() {
+                        Ok(v) => Action::Send(ClientRequest::Refine {
+                            name: None,
+                            kind: None,
+                            revert: Some(v),
+                        }),
+                        Err(_) => {
+                            self.entries.push(Entry::Notice(
+                                "usage: /refine revert <version>, a number from the ledger".into(),
+                            ));
+                            Action::None
+                        }
+                    },
+                    [name] | [name, _] if *name != "revert" => {
+                        Action::Send(ClientRequest::Refine {
+                            name: Some((*name).to_string()),
+                            kind: words.get(1).map(|k| (*k).to_string()),
+                            revert: None,
+                        })
+                    }
+                    _ => {
+                        self.entries.push(Entry::Notice(
+                            "usage: /refine, /refine <name> [kind], /refine revert <version>"
+                                .into(),
+                        ));
+                        Action::None
+                    }
+                }
             }
             "follow" => {
                 let found = self
@@ -896,6 +954,44 @@ mod tests {
         type_text(&mut app, "/nope");
         key(&mut app, KeyCode::Enter);
         assert!(matches!(app.entries.last(), Some(Entry::Notice(n)) if n.contains("unknown")));
+        type_text(&mut app, "/refine");
+        assert!(matches!(
+            key(&mut app, KeyCode::Enter),
+            Action::Send(ClientRequest::Refine {
+                name: None,
+                kind: None,
+                revert: None
+            })
+        ));
+        type_text(&mut app, "/refine verify logbook");
+        assert!(matches!(
+            key(&mut app, KeyCode::Enter),
+            Action::Send(ClientRequest::Refine { name: Some(n), kind: Some(k), revert: None }) if n == "verify" && k == "logbook"
+        ));
+        type_text(&mut app, "/refine revert v7");
+        assert!(matches!(
+            key(&mut app, KeyCode::Enter),
+            Action::Send(ClientRequest::Refine {
+                revert: Some(7),
+                ..
+            })
+        ));
+        type_text(&mut app, "/refine revert soon");
+        key(&mut app, KeyCode::Enter);
+        assert!(matches!(app.entries.last(), Some(Entry::Notice(n)) if n.contains("usage")));
+        app.apply(ServerMessage::Table {
+            columns: vec!["step".into(), "text".into()],
+            rows: vec![
+                vec!["before v3".into(), "CREATE FUNCTION a".into()],
+                vec!["after v4".into(), "CREATE FUNCTION b".into()],
+                vec!["adopted".into(), "4/4 solved".into()],
+            ],
+            tag: Some("refine".into()),
+        });
+        assert!(matches!(
+            app.entries.last(),
+            Some(Entry::Text(t)) if t == "before v3\nCREATE FUNCTION a\n\nafter v4\nCREATE FUNCTION b\n\nadopted\n4/4 solved"
+        ));
         type_text(&mut app, "/quit");
         assert_eq!(key(&mut app, KeyCode::Enter), Action::Detach);
         // Typing q is text, not detach; ctrl-c is.

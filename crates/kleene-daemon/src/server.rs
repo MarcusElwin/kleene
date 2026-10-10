@@ -656,6 +656,100 @@ impl Daemon {
                     },
                 }
             }
+            ClientRequest::Refine { name, kind, revert } => {
+                let cfg = self
+                    .live
+                    .read()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .1
+                    .clone();
+                let learn = match kleene_harness::learn::Learn::new(
+                    self.store.clone(),
+                    cfg,
+                    kleene_harness::learn::LearnConfig::default(),
+                )
+                .await
+                {
+                    Ok(l) => l,
+                    Err(e) => {
+                        return ServerMessage::Error {
+                            message: e.to_string(),
+                        }
+                    }
+                };
+                let text_table = |rows: Vec<(String, String)>, tag: &str| ServerMessage::Table {
+                    columns: vec!["step".into(), "text".into()],
+                    rows: rows.into_iter().map(|(a, b)| vec![a, b]).collect(),
+                    tag: Some(tag.into()),
+                };
+                if let Some(version) = revert {
+                    return match learn.revert_function(version).await {
+                        Ok(Some(prev)) => ServerMessage::Ok {
+                            message: format!("reverted function v{version}; v{prev} adopted again"),
+                        },
+                        Ok(None) => ServerMessage::Ok {
+                            message: format!("reverted function v{version}"),
+                        },
+                        Err(e) => ServerMessage::Error {
+                            message: e.to_string(),
+                        },
+                    };
+                }
+                let Some(name) = name else {
+                    return match learn.functions().await {
+                        Ok(b) => ServerMessage::Table {
+                            columns: b.schema.names().iter().map(|c| c.to_string()).collect(),
+                            rows: b
+                                .rows
+                                .iter()
+                                .map(|r| r.iter().map(kleene_core::Value::render).collect())
+                                .collect(),
+                            tag: Some("functions".into()),
+                        },
+                        Err(e) => ServerMessage::Error {
+                            message: e.to_string(),
+                        },
+                    };
+                };
+                let before = match learn.adopted_function(&name).await {
+                    Ok(Some(v)) => v,
+                    Ok(None) => {
+                        return ServerMessage::Error {
+                            message: format!(
+                                "no adopted definition of {name}; /refine lists the ledger, and a session that defines the function adds it"
+                            ),
+                        }
+                    }
+                    Err(e) => {
+                        return ServerMessage::Error {
+                            message: e.to_string(),
+                        }
+                    }
+                };
+                match learn.refine(&name, kind.as_deref()).await {
+                    Ok(r) => text_table(
+                        vec![
+                            (format!("before v{}", r.baseline), before.definition),
+                            (format!("after v{}", r.candidate), r.definition),
+                            (
+                                if r.adopted {
+                                    "adopted".to_string()
+                                } else {
+                                    format!(
+                                        "rejected (v{} stays; /refine revert {} is not needed)",
+                                        r.baseline, r.candidate
+                                    )
+                                },
+                                r.note,
+                            ),
+                        ],
+                        "refine",
+                    ),
+                    Err(e) => ServerMessage::Error {
+                        message: e.to_string(),
+                    },
+                }
+            }
             ClientRequest::Reload => match self.reload().await {
                 Ok(message) => ServerMessage::Ok { message },
                 Err(message) => ServerMessage::Error { message },

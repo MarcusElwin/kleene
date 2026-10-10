@@ -283,6 +283,32 @@ pub struct Harness {
     instructions: Option<String>,
     /// Live sessions, for cancellation and inspection.
     live: std::sync::Mutex<HashMap<SessionId, Arc<LiveSink>>>,
+    /// Children started with `spawn_async`, by handle.
+    children: std::sync::Mutex<HashMap<String, AsyncChild>>,
+    /// Messages sent to a session with `send`, oldest first.
+    mail: std::sync::Mutex<HashMap<SessionId, Vec<InboxMessage>>>,
+    /// Each child's parent, for `send('parent', ...)`.
+    parents: std::sync::Mutex<HashMap<SessionId, SessionId>>,
+}
+
+/// A child session started with `spawn_async`.
+struct AsyncChild {
+    /// The session that started it.
+    parent: SessionId,
+    /// The child's session id.
+    session: SessionId,
+    /// The running session, until the first `await` takes it.
+    task: Option<tokio::task::JoinHandle<Result<SessionReport, HarnessError>>>,
+    /// The child's relation once it finished.
+    result: Option<Result<Batch, String>>,
+}
+
+/// One row of `inbox()`.
+#[derive(Debug, Clone)]
+struct InboxMessage {
+    from: SessionId,
+    at: String,
+    text: String,
 }
 
 const SESSIONS_DDL: &str = "CREATE TABLE IF NOT EXISTS kleene_sessions (session VARCHAR PRIMARY KEY, run VARCHAR, parent VARCHAR, depth INTEGER, role VARCHAR, task VARCHAR, status VARCHAR, outcome VARCHAR, turns INTEGER, record VARCHAR, updated_at TIMESTAMP)";
@@ -322,6 +348,9 @@ impl Harness {
             skills,
             instructions,
             live: std::sync::Mutex::new(HashMap::new()),
+            children: std::sync::Mutex::new(HashMap::new()),
+            mail: std::sync::Mutex::new(HashMap::new()),
+            parents: std::sync::Mutex::new(HashMap::new()),
         }))
     }
 
@@ -767,7 +796,12 @@ impl Harness {
                 break Outcome::BudgetExhausted { detail };
             }
         };
+        // Children started with spawn_async and never awaited still spend
+        // this session's budget: wait for them so their usage is charged
+        // before the report is final.
+        self.join_children(meta.id).await;
         self.unregister(meta.id);
+        self.forget_session(meta.id);
         if self.cfg.drop_session_tables {
             sink.store().drop_created().await?;
         }
@@ -915,21 +949,23 @@ impl Harness {
     }
 }
 
-#[async_trait::async_trait]
-impl ChildRunner for Arc<Harness> {
-    async fn run_child(
+impl Harness {
+    /// Everything a child of `parent` needs to run: the role, the budget
+    /// slice, the restricted catalog. `what` names the caller for errors
+    /// (`rlm`, `spawn`, `spawn_async`).
+    async fn child_spec(
         &self,
         parent: &LiveSink,
+        what: &str,
         agent: Option<&str>,
         task: String,
         context: Option<String>,
-    ) -> Result<Batch, ExecError> {
+    ) -> Result<SessionSpec, ExecError> {
         let pmeta = parent.meta().await;
         let depth = pmeta.depth + 1;
         if depth > self.cfg.max_depth {
             return Err(ExecError::Call(format!(
-                "{} refused: depth {depth} exceeds the maximum {} (SET budget.depth, or answer here)",
-                if agent.is_some() { "spawn" } else { "rlm" },
+                "{what} refused: depth {depth} exceeds the maximum {} (SET budget.depth, or answer here)",
                 self.cfg.max_depth
             )));
         }
@@ -941,7 +977,7 @@ impl ChildRunner for Arc<Harness> {
                 .cloned()
                 .ok_or_else(|| {
                     ExecError::Call(format!(
-                        "spawn: no agent named {name}; declare it with CREATE AGENT {name} ..."
+                        "{what}: no agent named {name}; declare it with CREATE AGENT {name} ..."
                     ))
                 })?,
         };
@@ -962,7 +998,6 @@ impl ChildRunner for Arc<Harness> {
         // with a bare "call budget exceeded: 1 > 0". Refuse it here instead,
         // naming what the parent has left and how the slice is computed, so
         // the model can raise the budget or answer in this session.
-        let what = if agent.is_some() { "spawn" } else { "rlm" };
         let pct = (self.cfg.child_budget_fraction * 100.0).round() as u64;
         if let (Some(0), Some(limit)) = (budget.calls, pbudget.calls) {
             return Err(ExecError::Call(format!(
@@ -1025,13 +1060,252 @@ impl ChildRunner for Arc<Harness> {
             record,
             base_catalog: base,
         };
-        let report = self
-            .run_session(spec)
-            .await
-            .map_err(|e| ExecError::Call(e.to_string()))?;
+        if let Ok(mut p) = self.parents.lock() {
+            p.insert(spec.meta.id, pmeta.id);
+        }
+        Ok(spec)
+    }
+
+    /// Wait for every `spawn_async` child of `session` that nobody awaited.
+    async fn join_children(self: &Arc<Self>, session: SessionId) {
+        let pending: Vec<String> = self
+            .children
+            .lock()
+            .map(|c| {
+                c.iter()
+                    .filter(|(_, child)| child.parent == session && child.task.is_some())
+                    .map(|(h, _)| h.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        for handle in pending {
+            if let Some(sink) = self.live.lock().ok().and_then(|l| l.get(&session).cloned()) {
+                let _ = ChildRunner::await_child(self, &sink, &handle).await;
+            }
+        }
+    }
+
+    /// Drop a finished session's handles and mail.
+    fn forget_session(&self, session: SessionId) {
+        if let Ok(mut c) = self.children.lock() {
+            c.retain(|_, child| child.parent != session);
+        }
+        if let Ok(mut m) = self.mail.lock() {
+            m.remove(&session);
+        }
+        if let Ok(mut p) = self.parents.lock() {
+            p.remove(&session);
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl ChildRunner for Arc<Harness> {
+    async fn run_child(
+        &self,
+        parent: &LiveSink,
+        agent: Option<&str>,
+        task: String,
+        context: Option<String>,
+    ) -> Result<Batch, ExecError> {
+        let what = if agent.is_some() { "spawn" } else { "rlm" };
+        let spec = self.child_spec(parent, what, agent, task, context).await?;
+        let child = spec.meta.id;
+        let report = self.run_session(spec).await;
+        self.forget_session(child);
+        let report = report.map_err(|e| ExecError::Call(e.to_string()))?;
         parent.charge_child(&report.usage).await;
         Ok(child_relation(&report, agent.is_some()))
     }
+
+    async fn spawn_async(
+        &self,
+        parent: &LiveSink,
+        agent: &str,
+        task: String,
+        context: Option<String>,
+    ) -> Result<Batch, ExecError> {
+        let spec = self
+            .child_spec(parent, "spawn_async", Some(agent), task, context)
+            .await?;
+        let session = spec.meta.id;
+        let handle = short_id(session);
+        let harness = self.clone();
+        let parent_id = parent.meta().await.id;
+        let task = tokio::spawn(async move {
+            let report = harness.run_session(spec).await;
+            // Charge the parent as soon as the child is done, whether or not
+            // it is ever awaited.
+            if let Ok(r) = &report {
+                let parent = harness
+                    .live
+                    .lock()
+                    .ok()
+                    .and_then(|l| l.get(&parent_id).cloned());
+                if let Some(p) = parent {
+                    p.charge_child(&r.usage).await;
+                }
+            }
+            report
+        });
+        if let Ok(mut c) = self.children.lock() {
+            c.insert(
+                handle.clone(),
+                AsyncChild {
+                    parent: parent_id,
+                    session,
+                    task: Some(task),
+                    result: None,
+                },
+            );
+        }
+        let schema = Arc::new(Schema::new(vec![
+            Field::not_null("handle", DataType::Text),
+            Field::not_null("session", DataType::Text),
+        ]));
+        Batch::try_new(
+            schema,
+            vec![vec![Value::Text(handle), Value::Text(session.to_string())]],
+        )
+        .map_err(ExecError::from)
+    }
+
+    async fn await_child(&self, parent: &LiveSink, handle: &str) -> Result<Batch, ExecError> {
+        let me = parent.meta().await.id;
+        let handle = handle.trim();
+        let taken = {
+            let mut c = self
+                .children
+                .lock()
+                .map_err(|_| ExecError::Call("await: the child registry is poisoned".into()))?;
+            let Some(child) = c.get_mut(handle) else {
+                return Err(ExecError::Call(format!(
+                    "await: no child with handle {handle:?}; spawn_async returns the handle to wait for"
+                )));
+            };
+            if child.parent != me {
+                return Err(ExecError::Call(format!(
+                    "await: {handle} was started by another session"
+                )));
+            }
+            match (&child.result, child.task.take()) {
+                (Some(done), _) => return done.clone().map_err(ExecError::Call),
+                (None, Some(task)) => task,
+                (None, None) => {
+                    return Err(ExecError::Call(format!(
+                        "await: {handle} is being awaited by another statement"
+                    )))
+                }
+            }
+        };
+        let outcome = match taken.await {
+            Ok(Ok(report)) => Ok(child_relation(&report, true)),
+            Ok(Err(e)) => Err(e.to_string()),
+            Err(e) => Err(format!("the child session stopped: {e}")),
+        };
+        let finished = self.children.lock().ok().and_then(|mut c| {
+            c.get_mut(handle).map(|child| {
+                child.result = Some(outcome.clone());
+                child.session
+            })
+        });
+        // Outside the registry lock: forget_session takes it again.
+        if let Some(session) = finished {
+            self.forget_session(session);
+        }
+        outcome.map_err(ExecError::Call)
+    }
+
+    async fn send(&self, from: &LiveSink, to: &str, text: String) -> Result<bool, ExecError> {
+        let me = from.meta().await.id;
+        let target = if to.trim().eq_ignore_ascii_case("parent") {
+            self.parents
+                .lock()
+                .ok()
+                .and_then(|p| p.get(&me).copied())
+                .ok_or_else(|| {
+                    ExecError::Call(
+                        "send: this session has no parent; only a child can send to 'parent'"
+                            .into(),
+                    )
+                })?
+        } else {
+            let found = self
+                .children
+                .lock()
+                .ok()
+                .and_then(|c| c.get(to.trim()).map(|child| (child.parent, child.session)));
+            match found {
+                Some((parent, session)) if parent == me => session,
+                Some(_) => {
+                    return Err(ExecError::Call(format!(
+                        "send: {to} was started by another session"
+                    )))
+                }
+                None => {
+                    return Err(ExecError::Call(format!(
+                        "send: no child with handle {to:?}; use a handle from spawn_async, or 'parent' from a child"
+                    )))
+                }
+            }
+        };
+        let at = chrono_now();
+        if let Ok(mut m) = self.mail.lock() {
+            m.entry(target)
+                .or_default()
+                .push(InboxMessage { from: me, at, text });
+        }
+        Ok(true)
+    }
+
+    async fn inbox(&self, me: &LiveSink) -> Result<Batch, ExecError> {
+        let id = me.meta().await.id;
+        let messages = self
+            .mail
+            .lock()
+            .ok()
+            .and_then(|m| m.get(&id).cloned())
+            .unwrap_or_default();
+        let schema = Arc::new(Schema::new(vec![
+            Field::not_null("from_session", DataType::Text),
+            Field::not_null("ts", DataType::Text),
+            Field::not_null("text", DataType::Text),
+        ]));
+        let rows = messages
+            .into_iter()
+            .map(|m| {
+                vec![
+                    Value::Text(short_id(m.from)),
+                    Value::Text(m.at),
+                    Value::Text(m.text),
+                ]
+            })
+            .collect();
+        Batch::try_new(schema, rows).map_err(ExecError::from)
+    }
+}
+
+/// The current time as `YYYY-MM-DDTHH:MM:SS.mmmZ`, without a date crate.
+fn chrono_now() -> String {
+    let d = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = d.as_secs();
+    let millis = d.subsec_millis();
+    let days = secs / 86_400;
+    let (h, m, s) = ((secs / 3600) % 24, (secs / 60) % 60, secs % 60);
+    // Civil date from days since the epoch (Howard Hinnant's algorithm).
+    let z = days as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if month <= 2 { y + 1 } else { y };
+    format!("{year:04}-{month:02}-{day:02}T{h:02}:{m:02}:{s:02}.{millis:03}Z")
 }
 
 /// Rows of `rlm`/`spawn`: answer (first column), detail (the row as JSON) and,
