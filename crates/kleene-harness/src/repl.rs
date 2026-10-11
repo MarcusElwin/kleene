@@ -619,30 +619,42 @@ fn is_extension(stmt: &str) -> bool {
         || head == "CALIBRATE"
 }
 
-/// Split a script on `;` outside quotes and comments; trimmed, non-empty
-/// pieces without their terminator.
+/// Split a script on `;` outside quotes, `$$...$$` bodies and comments;
+/// trimmed, non-empty pieces without their terminator.
 pub fn split_statements(sql: &str) -> Vec<String> {
     let mut out = vec![];
     let mut cur = String::new();
-    let mut chars = sql.chars().peekable();
-    while let Some(c) = chars.next() {
+    let mut chars = sql.char_indices().peekable();
+    while let Some((at, c)) = chars.next() {
         match c {
-            '\'' | '"' => {
+            '\'' | '$' => {
+                // A quoted string or dollar-quoted body is copied whole; an
+                // unterminated one runs to the end of the script.
+                let len = kleene_sql::string_len(&sql[at..]).unwrap_or(sql.len() - at);
+                cur.push_str(&sql[at..at + len]);
+                for _ in 1..len {
+                    chars.next();
+                }
+            }
+            '"' => {
                 cur.push(c);
-                while let Some(d) = chars.next() {
+                while let Some((_, d)) = chars.next() {
                     cur.push(d);
                     if d == c {
-                        if chars.peek() == Some(&c) {
-                            cur.push(chars.next().unwrap_or(c));
+                        if chars.peek().map(|p| p.1) == Some(c) {
+                            cur.push(chars.next().map(|p| p.1).unwrap_or(c));
                         } else {
                             break;
                         }
                     }
                 }
             }
-            '-' if chars.peek() == Some(&'-') => {
-                let comment: String = chars.by_ref().take_while(|&d| d != '\n').collect();
-                let _ = comment;
+            '-' if chars.peek().map(|p| p.1) == Some('-') => {
+                for (_, d) in chars.by_ref() {
+                    if d == '\n' {
+                        break;
+                    }
+                }
                 cur.push('\n');
             }
             ';' => {
@@ -694,5 +706,22 @@ fn kind_name(k: &StatementKind) -> &'static str {
         StatementKind::Set { .. } => "SET",
         StatementKind::Final { .. } => "FINAL",
         StatementKind::Calibrate { .. } => "CALIBRATE",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_statements;
+
+    #[test]
+    fn scripts_split_outside_strings_and_dollar_quotes() {
+        let script = "CALL write_file('a.py', $$import sys; print('x;y')\nsys.exit(main())\n$$);\n-- note; here\nSELECT 'it''s; fine' AS s; FINAL(1)";
+        let pieces = split_statements(script);
+        assert_eq!(pieces.len(), 3, "{pieces:?}");
+        assert!(pieces[0].ends_with("$$)"), "{}", pieces[0]);
+        assert_eq!(pieces[1], "SELECT 'it''s; fine' AS s");
+        assert_eq!(pieces[2], "FINAL(1)");
+        // A dollar sign that opens no quote is ordinary text.
+        assert_eq!(split_statements("SELECT 1 AS $x; SELECT 2").len(), 2);
     }
 }

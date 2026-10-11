@@ -1,11 +1,11 @@
 //! Planner tests over a fixed catalog.
 
 use kleene_core::{
-    standard_catalog, Catalog, DataType, Field, Schema, TableDef, TableSource, Volatility,
+    standard_catalog, Catalog, DataType, Field, Schema, TableDef, TableSource, Value, Volatility,
 };
 use kleene_sql::{
-    plan_sql, render_error, type_of, AggregateFn, BinaryOp, Expr, JoinKind, LogicalPlan, SqlError,
-    Statement, StatementKind,
+    plan_sql, render_error, type_of, AggregateFn, BinaryOp, Expr, JoinKind, Literal, LogicalPlan,
+    SqlError, Statement, StatementKind,
 };
 
 fn table(name: &str, cols: &[(&str, DataType)]) -> TableDef {
@@ -670,6 +670,23 @@ fn create_function_and_call_statements() {
         }
     ));
     assert_eq!(names(&input), ["name"]);
+    // Code in a dollar-quoted body may hold quotes, parentheses and
+    // semicolons; the model is taught to write files this way.
+    let s = one("CALL shell('python3', $$import sys\nprint('it''s (fine)'); sys.exit(main())\n$$)");
+    let StatementKind::Call { args, .. } = s.kind else {
+        panic!()
+    };
+    assert_eq!(args.len(), 2);
+    assert!(
+        matches!(&args[1], Expr::Literal(Literal(Value::Text(t))) if t.contains("sys.exit(main())")),
+        "{:?}",
+        args[1]
+    );
+    let s = one("CALL shell($body$print(\"a)\")$body$)");
+    let StatementKind::Call { args, .. } = s.kind else {
+        panic!()
+    };
+    assert_eq!(args.len(), 1);
     let e = err("CALL upper('x')");
     assert!(matches!(e, SqlError::Unsupported { .. }), "{e:?}");
     let e = err("CALL nope('x')");
