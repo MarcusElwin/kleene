@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.1](https://github.com/MarcusElwin/kleene/compare/v0.3.0...v0.3.1) (2026-10-11)
+
+
+### Bug Fixes
+
+* **harness:** drop the previous task's plan table when a new run starts ([b5c765c](https://github.com/MarcusElwin/kleene/commit/b5c765cc49ac7bd58a4393b1e481746104b755ce))
+* **sql:** let CALL arguments and scripts carry dollar-quoted bodies ([3649080](https://github.com/MarcusElwin/kleene/commit/3649080f7710aa5fad349be263f5f759bb6673b6))
+
 ## [0.3.0](https://github.com/MarcusElwin/kleene/compare/v0.2.0...v0.3.0) (2026-10-11)
 
 
