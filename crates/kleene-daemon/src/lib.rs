@@ -12,7 +12,7 @@
 pub mod client;
 pub mod server;
 
-use kleene_core::{RunId, SessionId, StatementId};
+use kleene_core::{ConversationId, RunId, SessionId, StatementId};
 use kleene_trace::Traced;
 use serde::{Deserialize, Serialize};
 
@@ -58,6 +58,11 @@ pub enum ClientRequest {
         /// A shell command that must exit 0 before a `FINAL` is accepted.
         #[serde(default)]
         check: Option<String>,
+        /// The conversation this run continues: the model is told the
+        /// earlier tasks and answers (recent ones inline, all of them in the
+        /// `conversations` table), and this run's are recorded there too.
+        #[serde(default)]
+        conversation: Option<ConversationId>,
     },
     /// List the configured MCP servers with their state and tools. Replies
     /// `Table` tagged `mcp`.

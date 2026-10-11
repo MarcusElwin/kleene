@@ -533,7 +533,11 @@ fn welcome(t: &Theme, width: usize, out: &mut Vec<Line<'static>>) {
         t.text(),
     )));
     out.push(Line::from(Span::styled(
-        "see every statement's plan and cost, and get the answer as a relation.",
+        "see every statement's plan and cost, and get the answer as a relation. A second task continues",
+        t.text(),
+    )));
+    out.push(Line::from(Span::styled(
+        "the conversation: the model is told what was asked and answered before; /new starts another.",
         t.text(),
     )));
     out.push(Line::from(""));
@@ -1528,7 +1532,7 @@ mod tests {
     #[test]
     fn welcome_block_and_help_render() {
         let mut app = App::default();
-        let mut terminal = Terminal::new(TestBackend::new(120, 34)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
         terminal.draw(|f| draw(f, &app)).unwrap();
         let text = buffer_text(terminal.backend());
         assert!(text.contains("/help"), "{text}");

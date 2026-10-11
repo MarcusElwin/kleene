@@ -576,6 +576,94 @@ async fn a_repeated_statement_gets_a_note_and_turns_land_in_the_turns_table() {
 }
 
 #[tokio::test]
+async fn runs_in_a_conversation_see_the_earlier_tasks_and_answers() {
+    use kleene_core::{ConversationId, RunId};
+    let f = fixture(
+        vec![
+            // The follow-up run: its task message carries the history and
+            // the model reads the table and the earlier run's turns.
+            (
+                "This continues conversation",
+                &sql("SELECT n, role, text FROM conversations ORDER BY n;\nSELECT COUNT(*) AS c FROM turns;\nFINAL(2)"),
+            ),
+            ("# Task", &sql("FINAL(1)")),
+        ],
+        |_| {},
+    )
+    .await;
+    let c = ConversationId::new();
+    let first = f
+        .harness
+        .run_in(RunId::new(), Some(c), "How many?", None)
+        .await
+        .unwrap();
+    assert_eq!(final_rows(&first)[0][0].as_int(), Some(1));
+    // The first run recorded its task and answer.
+    let rows = f
+        .store
+        .query("SELECT n, role, text FROM conversations ORDER BY n")
+        .await
+        .unwrap();
+    assert_eq!(rows.rows.len(), 2);
+    assert_eq!(rows.rows[0][1].as_text(), Some("user"));
+    assert_eq!(rows.rows[0][2].as_text(), Some("How many?"));
+    assert_eq!(rows.rows[1][1].as_text(), Some("assistant"));
+    let answer = rows.rows[1][2].render();
+    assert!(
+        answer.starts_with("answer\n") && answer.contains("\n1"),
+        "{answer}"
+    );
+    // A run outside any conversation records nothing.
+    f.harness.run("Aside.", None).await.unwrap();
+    assert_eq!(
+        count(&f.store, "SELECT COUNT(*) FROM conversations").await,
+        2
+    );
+    // The follow-up is told the history inline and in the table.
+    let second = f
+        .harness
+        .run_in(RunId::new(), Some(c), "And now?", None)
+        .await
+        .unwrap();
+    assert_eq!(final_rows(&second)[0][0].as_int(), Some(2));
+    let record = f
+        .store
+        .query(&format!(
+            "SELECT record FROM kleene_sessions WHERE run = '{}'",
+            second.run
+        ))
+        .await
+        .unwrap();
+    let record = record.rows[0][0].render();
+    assert!(record.contains("This continues conversation"), "{record}");
+    assert!(record.contains("[user] How many?"), "{record}");
+    assert!(record.contains("[assistant] answer"), "{record}");
+    let shown = &second.root.transcript[0].results[0].text;
+    assert!(shown.contains("How many?"), "{shown}");
+    assert!(shown.contains("And now?"), "{shown}");
+    // `turns` kept the earlier runs' rows: 1 + 1 before this run's own.
+    let turns = &second.root.transcript[0].results[1].text;
+    assert!(turns.contains("c\n-\n2"), "{turns}");
+    assert_eq!(
+        count(&f.store, "SELECT COUNT(*) FROM conversations").await,
+        4
+    );
+    let last = f
+        .store
+        .query("SELECT n, role FROM conversations ORDER BY n DESC LIMIT 1")
+        .await
+        .unwrap();
+    assert_eq!(last.rows[0][0].as_int(), Some(4));
+    assert_eq!(last.rows[0][1].as_text(), Some("assistant"));
+    // The memory table exists and takes plain inserts.
+    f.store
+        .execute("INSERT INTO memory VALUES ('k', 'v')")
+        .await
+        .unwrap();
+    assert_eq!(count(&f.store, "SELECT COUNT(*) FROM memory").await, 1);
+}
+
+#[tokio::test]
 async fn a_plan_table_is_reported_with_the_latest_status_per_step() {
     let f = fixture(
         vec![

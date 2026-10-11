@@ -1,4 +1,4 @@
-//! Identifiers for runs, sessions, statements and calls.
+//! Identifiers for conversations, runs, sessions, statements and calls.
 //!
 //! All are UUID v7 so they sort by creation time, which keeps trace tables
 //! naturally ordered.
@@ -38,6 +38,14 @@ macro_rules! id_type {
                 fmt::Display::fmt(&self.0, f)
             }
         }
+
+        impl std::str::FromStr for $name {
+            type Err = uuid::Error;
+
+            fn from_str(s: &str) -> Result<Self, Self::Err> {
+                s.parse().map(Self)
+            }
+        }
     };
 }
 
@@ -48,6 +56,13 @@ id_type!(
 id_type!(
     /// One model session (root or sub-agent). Sessions form a tree via a parent id.
     SessionId
+);
+id_type!(
+    /// A conversation: a sequence of runs where each task may refer to the
+    /// ones before it. The TUI starts one when it opens and `/new` starts
+    /// another; every run in it records its task and answer in the store's
+    /// `conversations` table, so a later run can read them back.
+    ConversationId
 );
 id_type!(
     /// One CallSQL statement submitted by a session.

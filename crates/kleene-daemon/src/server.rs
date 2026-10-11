@@ -417,6 +417,7 @@ impl Daemon {
                 max_depth,
                 budget_calls,
                 check,
+                conversation,
             } => {
                 let (live_harness, live_cfg) = {
                     let live = self.live.read().unwrap_or_else(|e| e.into_inner());
@@ -461,7 +462,7 @@ impl Daemon {
                 let run = RunId::new();
                 let me = self.clone();
                 let handle = tokio::spawn(async move {
-                    let outcome = harness.run_as(run, &task, context).await;
+                    let outcome = harness.run_in(run, conversation, &task, context).await;
                     let (tag, answer, answer_columns, answer_rows) = match &outcome {
                         Ok(report) => match &report.root.outcome {
                             Outcome::Final { answer } => {

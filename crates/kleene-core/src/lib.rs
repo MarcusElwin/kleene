@@ -24,5 +24,5 @@ pub use catalog::{
     Volatility,
 };
 pub use error::CoreError;
-pub use ids::{CallId, RunId, SessionId, StatementId};
+pub use ids::{CallId, ConversationId, RunId, SessionId, StatementId};
 pub use value::{DataType, Field, Schema, Value};
