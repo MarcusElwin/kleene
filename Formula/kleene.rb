@@ -12,7 +12,7 @@
 class Kleene < Formula
   desc "Relational algebra for recursive model calls: CallSQL engine, planner, harness and TUI"
   homepage "https://kleene.sh"
-  version "0.2.0"
+  version "0.3.0"
   license "MIT"
 
   head do
@@ -23,22 +23,22 @@ class Kleene < Formula
   on_macos do
     on_arm do
       url "https://github.com/MarcusElwin/kleene/releases/download/v#{version}/kleene-#{version}-aarch64-apple-darwin.tar.gz"
-      sha256 "6d2de507b9d6faad5fd204f9dc3c1584ff8c0460d758cea3fb3dda8dced9f2b0"
+      sha256 "8d3b9e27d716ba89c3350bcf31c6f58548a7c0aeb1fa5067123f78272915779a"
     end
     on_intel do
       url "https://github.com/MarcusElwin/kleene/releases/download/v#{version}/kleene-#{version}-x86_64-apple-darwin.tar.gz"
-      sha256 "4a0415fb939caf107fca6b6bc1bb50e4bff737c921e8bd8cbe1acdb477667987"
+      sha256 "552c460762d80e36c99676cb98c67c25826d069d9cf8a2f4aced728f94cdd4b6"
     end
   end
 
   on_linux do
     on_arm do
       url "https://github.com/MarcusElwin/kleene/releases/download/v#{version}/kleene-#{version}-aarch64-unknown-linux-gnu.tar.gz"
-      sha256 "5f0a3da067dabaa376f2ba047e78d91aec3e90ad8e7b6e8356d461c790c7a667"
+      sha256 "dccc078df7e8765ee3b7d560c0cfef5f8f1802b3dce06fc5a9a30500b7214e6f"
     end
     on_intel do
       url "https://github.com/MarcusElwin/kleene/releases/download/v#{version}/kleene-#{version}-x86_64-unknown-linux-gnu.tar.gz"
-      sha256 "a02eca735b95fdf30aa65c00403b378cd8aef3e65447b838e64d1cee1767e56d"
+      sha256 "1623cda2a291689f73778d301f135650be1d2e39541aa68bc05fd360d87239b3"
     end
   end
 
