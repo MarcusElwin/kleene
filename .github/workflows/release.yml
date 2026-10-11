@@ -1,21 +1,25 @@
 name: Release
 
-# Publishes the `kleene` binary for macOS (Apple silicon and Intel) and Linux
-# (x86_64 and aarch64) as tarballs with SHA-256 checksums on a GitHub release,
-# and prints the values the Homebrew formula needs.
+# Builds the `kleene` binary for macOS (Apple silicon and Intel) and Linux
+# (x86_64 and aarch64), attaches the tarballs and SHA-256 checksums to the
+# GitHub release for a tag, and commits the new version and checksums to
+# Formula/kleene.rb on main, so the tap serves the release at once.
 #
-# It runs in three situations:
-#   * a merge to main that changes the workspace version in Cargo.toml: when
-#     no tag `v<version>` exists yet, the release job creates it on the merge
-#     commit and publishes. Bumping the version in a PR is the release button.
-#   * a pushed tag `v*`, for releasing a commit by hand.
-#   * "Run workflow": with a tag, rebuilds that release; with the tag left
-#     empty, releases the version main is at, if it has no tag yet.
-# A merge that does not change the version runs only the short `version`
-# job and stops.
+# Versions come from release-please (release-please.yml next to this file):
+# it keeps a release pull request open on main from the conventional
+# commits merged since the last tag, and merging that PR bumps Cargo.toml,
+# Cargo.lock and CHANGELOG.md, then creates the tag `v<version>` and the
+# release with the changelog as its notes. That tag push is what runs this
+# workflow; it builds and uploads the assets to the release that already
+# exists. A tag whose release already carries SHA256SUMS is a no-op, so
+# re-delivered tag events do not rebuild.
 #
-# The release itself is created with the `RELEASE_TOKEN` secret when it is
-# set: a fine-grained personal access token for this repository with
+# "Run workflow" with a tag rebuilds that release's assets by hand; with the
+# tag left empty it releases the version main is at, if it has no tag yet
+# (the pre-release-please route, kept for emergencies).
+#
+# The release is created or updated with the `RELEASE_TOKEN` secret when it
+# is set: a fine-grained personal access token for this repository with
 # Contents: read and write. GitHub refuses release creation from the
 # workflow's own GITHUB_TOKEN here (403 "Resource not accessible by
 # integration" on the first run, 6 October 2026), so the secret is what
@@ -26,8 +30,6 @@ name: Release
 
 on:
   push:
-    branches: [main]
-    paths: [Cargo.toml]
     tags: ["v*"]
   workflow_dispatch:
     inputs:
@@ -66,10 +68,13 @@ jobs:
             tag="${{ github.event.inputs.tag }}"
           elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
             tag="$GITHUB_REF_NAME"
-            # The tag a release run itself creates arrives here as a push;
-            # its release already exists, so there is nothing to do.
-            if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-              echo "::notice::$tag already has a release; nothing to do"
+            # release-please creates the tag and the release before this
+            # run starts; the assets are what is missing. A release that
+            # already has them (a re-delivered tag event, a manual tag push
+            # for a finished release) is left alone.
+            if gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets \
+                --jq '.assets[].name' 2>/dev/null | grep -qx SHA256SUMS; then
+              echo "::notice::$tag already has its assets; nothing to do"
               publish=false
             fi
           else
@@ -164,21 +169,39 @@ jobs:
           echo '```' >> notes.md
           echo >> notes.md
           echo "Install with \`curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh\` or \`brew install ${{ github.repository_owner }}/kleene/kleene\`." >> notes.md
-      - name: Formula values
-        env:
-          TAG: ${{ needs.version.outputs.tag }}
-        run: |
-          echo "Homebrew formula (Formula/kleene.rb in the tap): set version to ${TAG#v} and these sha256 values:"
-          cat dist/SHA256SUMS
+      - name: Checksum values
+        run: cat dist/SHA256SUMS
       - uses: softprops/action-gh-release@v2
         with:
-          # Creates the tag on this commit when it does not exist yet (a
-          # version bump merged to main); reuses it otherwise.
+          # Uploads to the release release-please made for the tag and
+          # appends the checksums to its changelog notes. A tag pushed by
+          # hand has no release yet: one is created on that commit with the
+          # checksums as its notes.
           token: ${{ secrets.RELEASE_TOKEN || github.token }}
           tag_name: ${{ needs.version.outputs.tag }}
           target_commitish: ${{ github.sha }}
-          generate_release_notes: true
           body_path: dist/notes.md
+          append_body: true
           files: |
             dist/*.tar.gz
             dist/SHA256SUMS
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          path: repo
+          token: ${{ secrets.RELEASE_TOKEN || github.token }}
+      - name: Point the Homebrew formula at this release
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          cd repo
+          scripts/update-formula.sh "${TAG#v}" ../dist/SHA256SUMS
+          if git diff --quiet; then
+            echo "::notice::Formula/kleene.rb already points at $TAG"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore(formula): kleene ${TAG#v} checksums"
+          git push origin HEAD:main
