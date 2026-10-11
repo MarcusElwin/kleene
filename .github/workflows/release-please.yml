@@ -1,0 +1,38 @@
+name: Release PR
+
+# Keeps one release pull request open on main, "chore(main): release X.Y.Z",
+# rebuilt on every merge from the conventional commits since the last tag:
+# `feat:` bumps the minor version, `fix:` the patch, a `!` or a
+# "BREAKING CHANGE:" footer the minor while the crate is below 1.0
+# (bump-minor-pre-major in release-please-config.json), and anything else
+# (`docs:`, `chore:`, `refactor:`, `ci:`, a subject with no type) goes into
+# the changelog's other sections without moving the version. The PR edits
+# the workspace version in Cargo.toml, the kleene-* entries in Cargo.lock and
+# CHANGELOG.md, so a merge of it is a normal green commit.
+#
+# Merging that PR is the release button: release-please then tags the merge
+# commit `v<version>` and creates the GitHub release with the changelog as
+# its notes, and that tag push runs release.yml, which builds the four
+# targets and attaches the binaries.
+#
+# RELEASE_TOKEN is the same fine-grained personal access token release.yml
+# uses; here it also needs Pull requests: read and write and Issues: read and
+# write (for the autorelease labels). A token other than GITHUB_TOKEN is what
+# lets the release PR run CI and the tag run release.yml.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ secrets.RELEASE_TOKEN }}

@@ -52,17 +52,32 @@ keyed on the lockfile and sccache behind it, and a change that only touches
 docs, the formula or the installer (`paths-ignore` in the workflow) runs
 none of them.
 
-## Releases
+## Commits and releases
 
-`release.yml` publishes a GitHub release with the four binaries when a merge
-to `main` changes the workspace `version` in `Cargo.toml` to one that has no
-`v<version>` tag yet. Nothing else releases: a merge that leaves the version
-alone runs only the short `version` job and stops, so a feature PR that
-should ship bumps `version` in `Cargo.toml` (and runs `cargo update -w`, the
-release build is `--locked`), either in that PR or in a one-line PR right
-after. Check `git tag` against `Cargo.toml` before asking why a release did
-not run. After the release, a follow-up PR pastes the new version and the
-four sha256 values from the workflow's summary into `Formula/kleene.rb`.
+Commit subjects follow Conventional Commits, because release-please reads
+them: `feat(tui): fold a finished turn` bumps the minor version, `fix(llm):
+…` the patch, `feat!:` or a `BREAKING CHANGE:` footer the minor while the
+version is below 1.0, and `docs:`, `chore:`, `refactor:`, `test:`, `ci:`,
+`bench:` move nothing. The scope is the crate or area without its `kleene-`
+prefix. A merge commit's own subject is ignored; the commits inside count.
+
+`release-please.yml` keeps one release pull request open on `main` from the
+commits merged since the last tag. It edits the workspace `version` in
+`Cargo.toml`, the thirteen `kleene-*` entries in `Cargo.lock` (the release
+build is `--locked`) and `CHANGELOG.md`; `release-please-config.json` says
+how and `.release-please-manifest.json` records the released version. Nobody
+bumps the version by hand. Merging the release PR is the release button:
+release-please tags the merge commit `v<version>` and creates the release
+with the changelog as its notes, and that tag runs `release.yml`, which
+builds the four targets, attaches the binaries and `SHA256SUMS`, and runs
+`scripts/update-formula.sh` to commit the new version and checksums to
+`Formula/kleene.rb` on `main`, so the tap serves the release without a
+hand-made PR.
+
+The `Cargo.lock` jsonpath compares `@.name.value` because release-please
+parses TOML with a parser that wraps every scalar in a tagged object; plain
+`@.name` matches nothing. Adding a crate to the workspace means adding its
+name there.
 
 A coding agent's GitHub App token cannot push `.github/workflows/`, so an
 agent that changes the workflow must hand the push to a human. **Never
