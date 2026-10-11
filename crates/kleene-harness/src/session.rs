@@ -637,6 +637,13 @@ impl Harness {
         sink.store()
             .create_table("turns", turns_schema(), true)
             .await?;
+        // The `plan` table belongs to one task: a fresh root run drops the
+        // one the previous task left in the store, so a new task neither
+        // shows the old plan nor finds `CREATE TABLE plan` already taken.
+        if fresh && meta.depth == 0 {
+            use kleene_exec::CallSink;
+            sink.drop_table("plan", true).await?;
+        }
         let history = match (fresh, record.conversation) {
             (true, Some(c)) => Some(self.conversation_history(c).await?),
             _ => None,

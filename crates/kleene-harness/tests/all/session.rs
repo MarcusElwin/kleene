@@ -693,6 +693,48 @@ async fn a_plan_table_is_reported_with_the_latest_status_per_step() {
 }
 
 #[tokio::test]
+async fn a_new_run_starts_without_the_previous_tasks_plan() {
+    use kleene_core::{ConversationId, RunId};
+    let f = fixture(
+        vec![
+            ("# Task\nplan it", &sql("CREATE TABLE plan AS SELECT * FROM (VALUES ('read', 'done'), ('write', 'done')) AS p(step, status);\nFINAL(1)")),
+            ("# Task\nsomething else", &sql("FINAL(2)")),
+            ("# Task\nplan again", &sql("CREATE TABLE plan AS SELECT * FROM (VALUES ('think', 'doing')) AS p(step, status);\nFINAL(3)")),
+        ],
+        |_| {},
+    )
+    .await;
+    let first = f.harness.run("plan it", None).await.unwrap();
+    assert_eq!(first.root.transcript[0].plan.len(), 2);
+    // An unrelated task in the same store (the TUI after /clear or /new)
+    // does not inherit the finished task's plan.
+    let conversation = Some(ConversationId::new());
+    let second = f
+        .harness
+        .run_in(RunId::new(), conversation, "something else", None)
+        .await
+        .unwrap();
+    assert_eq!(final_rows(&second)[0][0].as_int(), Some(2));
+    assert!(
+        second.root.transcript[0].plan.is_empty(),
+        "{:?}",
+        second.root.transcript[0].plan
+    );
+    // And a task that writes its own plan is not refused because the old
+    // table still exists.
+    let third = f
+        .harness
+        .run_in(RunId::new(), conversation, "plan again", None)
+        .await
+        .unwrap();
+    assert_eq!(final_rows(&third)[0][0].as_int(), Some(3));
+    assert_eq!(
+        third.root.transcript[0].plan,
+        vec![("think".to_string(), "doing".to_string())]
+    );
+}
+
+#[tokio::test]
 async fn skills_are_listed_in_the_prompt_and_served_by_skill() {
     let f = fixture(
         vec![(
