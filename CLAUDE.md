@@ -59,7 +59,10 @@ them: `feat(tui): fold a finished turn` bumps the minor version, `fix(llm):
 …` the patch, `feat!:` or a `BREAKING CHANGE:` footer the minor while the
 version is below 1.0, and `docs:`, `chore:`, `refactor:`, `test:`, `ci:`,
 `bench:` move nothing. The scope is the crate or area without its `kleene-`
-prefix. A merge commit's own subject is ignored; the commits inside count.
+prefix. A merge commit of a pull request counts as the PR's title, so a PR
+title written as `feat: …` lists the change twice in the changelog, once
+for the title and once for the commit inside. Keep PR titles plain prose
+("Conversation memory in SQL tables") and put the type on the commits.
 
 `release-please.yml` keeps one release pull request open on `main` from the
 commits merged since the last tag. It edits the workspace `version` in
