@@ -120,7 +120,9 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    /// Text inside balanced parentheses, starting at `(`.
+    /// Text inside balanced parentheses, starting at `(`. Parentheses
+    /// inside `'...'` strings and `$$...$$` dollar-quoted bodies do not
+    /// count, so code passed to a tool can hold any of them.
     fn parenthesised(&mut self) -> Option<String> {
         self.skip_ws();
         let rest = self.rest();
@@ -128,12 +130,16 @@ impl<'a> Scanner<'a> {
             return None;
         }
         let mut depth = 0i32;
-        let mut in_str = false;
-        for (i, c) in rest.char_indices() {
+        let mut i = 0;
+        while i < rest.len() {
+            let c = rest[i..].chars().next()?;
             match c {
-                '\'' => in_str = !in_str,
-                '(' if !in_str => depth += 1,
-                ')' if !in_str => {
+                '\'' | '$' => {
+                    i += string_len(&rest[i..])?;
+                    continue;
+                }
+                '(' => depth += 1,
+                ')' => {
                     depth -= 1;
                     if depth == 0 {
                         self.pos += i + 1;
@@ -142,9 +148,39 @@ impl<'a> Scanner<'a> {
                 }
                 _ => {}
             }
+            i += c.len_utf8();
         }
         None
     }
+}
+
+/// The byte length of the string literal `text` starts with: a `'...'`
+/// string with `''` escapes, or a `$tag$...$tag$` dollar-quoted body;
+/// `None` when it is unterminated. A `$` that does not open a dollar quote
+/// is one character long.
+pub fn string_len(text: &str) -> Option<usize> {
+    if let Some(body) = text.strip_prefix('\'') {
+        let mut i = 0;
+        loop {
+            let close = body[i..].find('\'')?;
+            let after = i + close + 1;
+            if body[after..].starts_with('\'') {
+                i = after + 1;
+            } else {
+                return Some(after + 1);
+            }
+        }
+    }
+    let body = text.strip_prefix('$')?;
+    let tag_end = body
+        .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .unwrap_or(body.len());
+    if !body[tag_end..].starts_with('$') {
+        return Some(1);
+    }
+    let tag = &text[..tag_end + 2];
+    let inner = &text[tag.len()..];
+    inner.find(tag).map(|at| tag.len() + at + tag.len())
 }
 
 fn data_type(word: &str) -> Result<DataType, SqlError> {
@@ -706,6 +742,22 @@ pub fn plan_call(text: &str, catalog: &Catalog) -> Result<Statement, SqlError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn string_literals_are_measured_whole() {
+        assert_eq!(string_len("'a''b' rest"), Some(6));
+        assert_eq!(string_len("'open"), None);
+        assert_eq!(string_len("$$x ' ) ; $$ rest"), Some(12));
+        assert_eq!(string_len("$t$ $$ $t$."), Some(10));
+        assert_eq!(string_len("$$never closed"), None);
+        assert_eq!(string_len("$1 + 2"), Some(1));
+        let mut sc = Scanner::new("($$f(x)$$, 'y)', ($$a$$)) tail");
+        assert_eq!(
+            sc.parenthesised().as_deref(),
+            Some("$$f(x)$$, 'y)', ($$a$$)")
+        );
+        assert_eq!(sc.rest(), " tail");
+    }
 
     #[test]
     fn create_function_forms() {
