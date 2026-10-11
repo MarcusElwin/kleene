@@ -562,6 +562,85 @@ fn multiple_statements_keep_their_text() {
 }
 
 #[test]
+fn calibrate_statement_checks_the_proxy_and_the_arity() {
+    let mut c = catalog();
+    let scalar = |name: &str, returns: DataType| kleene_core::FunctionDef {
+        name: name.into(),
+        args: vec![DataType::Text],
+        variadic: false,
+        returns: kleene_core::FunctionReturn::Scalar { data_type: returns },
+        call_kind: kleene_core::CallKind::LlmScalar {
+            alias: kleene_core::ModelAlias::worker(),
+            batch: None,
+        },
+        volatility: Volatility::Stable,
+        description: String::new(),
+    };
+    c.add_function(scalar("score", DataType::Float));
+    c.add_function(scalar("rel", DataType::Bool));
+    c.add_function(scalar("tag", DataType::Text));
+    c.set_proxy(
+        "rel",
+        Some(kleene_core::ProxySpec {
+            function: "score".into(),
+            low: 0.2,
+            high: 0.8,
+        }),
+    );
+    let s = plan_sql(
+        "CALIBRATE rel SAMPLE 10 RECALL 0.95 PRECISION 0.8 FROM SELECT body FROM docs",
+        &c,
+    )
+    .unwrap()
+    .remove(0);
+    let StatementKind::Calibrate {
+        function,
+        sample,
+        recall,
+        precision,
+        input,
+    } = s.kind
+    else {
+        panic!()
+    };
+    assert_eq!(
+        (function.as_str(), sample, recall, precision),
+        ("rel", 10, 0.95, 0.8)
+    );
+    assert_eq!(names(&input), ["body"]);
+    // Defaults, FUNCTION keyword and a bare table name.
+    let s = plan_sql(
+        "CALIBRATE FUNCTION rel FROM (SELECT body FROM docs) AS d",
+        &c,
+    )
+    .unwrap()
+    .remove(0);
+    let StatementKind::Calibrate {
+        sample,
+        recall,
+        precision,
+        ..
+    } = s.kind
+    else {
+        panic!()
+    };
+    assert_eq!((sample, recall, precision), (20, 0.9, 0.9));
+    // What the model reads is the message plus the hint.
+    let full = |e: &SqlError| format!("{e}\n{}", e.hint().unwrap_or_default());
+    let e = plan_sql("CALIBRATE tag FROM SELECT body FROM docs", &c).unwrap_err();
+    assert!(full(&e).contains("BOOLEAN"), "{e}");
+    let e = plan_sql("CALIBRATE nope FROM SELECT body FROM docs", &c).unwrap_err();
+    assert!(matches!(e, SqlError::Unresolved { .. }), "{e:?}");
+    let e = plan_sql("CALIBRATE rel FROM SELECT id, body FROM docs", &c).unwrap_err();
+    assert!(full(&e).contains("1 argument"), "{e}");
+    let e = plan_sql("CALIBRATE rel SAMPLE 1 FROM SELECT body FROM docs", &c).unwrap_err();
+    assert!(full(&e).contains("at least 2"), "{e}");
+    c.set_proxy("rel", None);
+    let e = plan_sql("CALIBRATE rel FROM SELECT body FROM docs", &c).unwrap_err();
+    assert!(full(&e).contains("declare a proxy"), "{e}");
+}
+
+#[test]
 fn create_function_and_call_statements() {
     let s = one("CREATE FUNCTION verify(c TEXT) RETURNS BOOLEAN AS PROMPT 'Is {c} right?'");
     assert!(matches!(s.kind, StatementKind::CreateFunction { .. }));

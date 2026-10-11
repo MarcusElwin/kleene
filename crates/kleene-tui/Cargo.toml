@@ -20,5 +20,10 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 
+[features]
+# The Open Responses gateway page of the setup wizard (`OpenResponsesSettings`
+# in kleene-llm). Off by default; the `kleene` binary turns it on.
+gateway = ["kleene-llm/gateway"]
+
 [lints]
 workspace = true

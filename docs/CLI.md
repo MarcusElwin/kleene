@@ -34,33 +34,11 @@ destination is not on your `PATH`. Environment variables it honours:
 | `KLEENE_VERSION` | Install a specific tag, e.g. `v0.1.0` | latest release |
 | `KLEENE_INSTALL` | Destination directory | `~/.local/bin` |
 | `KLEENE_REPO` | `owner/repo` to fetch from | `MarcusElwin/kleene` |
-| `GITHUB_TOKEN` (or `GH_TOKEN`) | Token with read access to the repository; required while it is private, and raises the API rate limit otherwise | unset |
+| `GITHUB_TOKEN` (or `GH_TOKEN`) | Token for the GitHub API; optional, it raises the rate limit | unset |
 
 Read it before piping it into a shell if that is your habit:
 [`install.sh`](../install.sh) is a hundred lines of POSIX `sh` and needs only
 `curl` and `tar`.
-
-**While the repository is private**, the raw URL above returns 404, with or
-without a token: `raw.githubusercontent.com` does not serve private files.
-Fetch the script through the API's contents endpoint instead, which returns
-the file itself with the `vnd.github.raw` accept header. `gh auth token`
-prints the token the GitHub CLI holds:
-
-```bash
-export GITHUB_TOKEN="$(gh auth token)"
-curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github.raw" \
-  "https://api.github.com/repos/MarcusElwin/kleene/contents/install.sh?ref=main" | sh
-```
-
-or, letting `gh` handle the authentication:
-
-```bash
-export GITHUB_TOKEN="$(gh auth token)"
-gh api -H "Accept: application/vnd.github.raw" repos/MarcusElwin/kleene/contents/install.sh | sh
-```
-
-The script downloads release assets through the GitHub API with the same
-token, which works for private and public repositories alike.
 
 Releases come from the workflow in `.github/workflows/release.yml`: a merge
 to `main` that bumps the workspace version (or a pushed `v*` tag) builds the
@@ -97,15 +75,10 @@ on the first build. `rustup` picks the toolchain pinned in
 `rust-toolchain.toml` automatically inside a checkout; `cargo install --git`
 uses your default toolchain.
 
-While the repository is private, `cargo install --git` over HTTPS fails with
-`failed to authenticate when downloading repository`: cargo fetches with its
-own git library, which does not consult your credential helper. Any of these
-works instead:
+Other ways to install with cargo:
 
 ```bash
 cargo install --path crates/kleene                    # from a checkout you already have
-CARGO_NET_GIT_FETCH_WITH_CLI=true \
-  cargo install --git https://github.com/MarcusElwin/kleene kleene   # let the git CLI authenticate
 cargo install --git ssh://git@github.com/MarcusElwin/kleene kleene   # over SSH
 ```
 
@@ -145,6 +118,8 @@ kleene setup
 │   ○ OpenAI                       OPENAI_API_KEY                  │
 │   ○ OpenAI-compatible endpoint   OPENAI_BASE_URL                 │
 │       Ollama, vLLM, LM Studio, a gateway.                        │
+│   ○ Open Responses gateway       OPEN_RESPONSES_BASE_URL         │
+│       A gateway speaking the Open Responses API.                 │
 │   ○ Web search                   KLEENE_WEB_SEARCH_API_KEY       │
 │       Optional. Brave, Tavily, Exa or Linkup behind web_search.  │
 ╰──────────────────────────────────────────────────────────────────╯
@@ -154,8 +129,11 @@ kleene setup
 without a configured provider, and `/setup` at the TUI's prompt opens it
 again at any time to add or change keys; saving there asks the running
 daemon to reload, so the next run uses the new keys without a restart.
-Web search is the fourth row of the first step: tick it with space, and
-its own page asks for the service and the key.
+Web search is the last row of the first step: tick it with space, and
+its own page asks for the service and the key. The Open Responses gateway
+row (present when the binary is built with the `gateway` feature, the
+default) asks for the gateway's base URL, an optional key and the model to
+route to, and writes them as `[open_responses]`.
 
 ![The web search page of the setup wizard](screenshots/setup-web-search.png)
 Non-interactive forms for scripts:
@@ -179,6 +157,11 @@ api_key = "sk-ant-..."
 [openai_compat]
 base_url = "http://localhost:11434/v1"
 model = "llama3"
+
+[open_responses]
+base_url = "https://gateway.example.com/v1"
+api_key = "..."         # optional
+model = "gpt-6"
 
 [web_search]
 provider = "brave"      # or "tavily", "exa", "linkup"
@@ -508,6 +491,9 @@ Slash commands, with completion (type `/`, `Tab` completes, `↑`/`↓` pick):
 | `/mcp` | the configured MCP servers with their state and tools |
 | `/mcp add <name> <command> [args...]` | add a server to the user's `mcp.json` and reload; `/mcp remove <name>` drops it |
 | `/skills [name]` | the loaded skills with their source and description, or one skill in full |
+| `/refine` | the adopted prompt functions with their versions |
+| `/refine <name> [kind]` | ask the learner to refine one function's prompt from its judged runs and replay the candidate; shows before, after and the verdict |
+| `/refine revert <version>` | restore an earlier adopted version |
 | `/clear` | clear the stream |
 | `/quit` | detach; the daemon and its runs keep going |
 

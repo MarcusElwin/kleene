@@ -367,15 +367,18 @@ calls are not traced, roughly a dollar at the most. What the numbers say:
   it. Before those fixes a Luna run could not make a single `LLM_JSON`
   call.
 
-### 4.3 Opus 5.5 on coding and memo-rubric (6 October 2026)
+### 4.3 Opus 5.5 on the harder packs (6 and 10 October 2026)
 
-The two hard packs Opus 5.5 had not run yet, in all three modes, with
+The three hard packs Opus 5.5 had not run yet, in all three modes, with
 the routing of the 27 September run (`root` on Opus 5.5 at high effort,
 `worker` and `judge` on Sonnet 5.5, `proxy` on Haiku 4.5;
 `plots/opus-2026-10-06/router.toml`), one fresh store per pack and mode,
 the conversation cached and prompt functions batched by default. Rows
 and report are `plots/opus-2026-10-06/evals.csv` and `report.txt`.
-`logbook-hard` has not run on Opus yet.
+Coding and memo-rubric ran on 6 October; `logbook-hard`, capped at ten
+tasks like the Haiku and Luna runs, on 10 October from the same router
+file, with its own plots and console under
+`plots/opus-2026-10-06/logbook-hard/`.
 
 | pack | mode | solved | calls / task | tokens / task | dollars |
 |---|---|---|---|---|---|
@@ -385,11 +388,16 @@ and report are `plots/opus-2026-10-06/evals.csv` and `report.txt`.
 | memo-rubric (20) | frozen | 10/20 | 5.30 | 40,086 | 1.26 |
 | memo-rubric (20) | learning | 4/20 | 5.35 | 44,064 | 1.24 |
 | memo-rubric (20) | plain | 10/20 | 1.00 | 5,763 | 0.55 |
+| logbook-hard (10) | frozen | 10/10 | 8.50 | 79,296 | 1.45 |
+| logbook-hard (10) | learning | 10/10 | 6.70 | 66,997 | 1.43 |
+| logbook-hard (10) | plain | 5/10 | 11.90 | 801,803 | 14.82 |
 
-The counted runs cost $7.38; the gate replays (16 candidates, 8
-adopted) cost another $9.22, $7.67 of it on coding alone, so a learning
-run of coding costs five times what its rows show. What the numbers
-say:
+The counted runs cost $25.08, $17.70 of it on logbook-hard and $14.82
+of that on its plain run; the gate replays (26 candidates, 13 adopted)
+cost another $10.63, $7.67 of it on coding alone, so a learning run of
+coding costs five times what its rows show, while on logbook-hard the
+gate added $1.41 (10 candidates, 5 adopted, 6 replays). What the
+numbers say:
 
 - **Coding is saturated for Opus, as the original packs were.** Every
   task in every mode, where Luna solved 11, 10 and 9 and Haiku 2, 2
@@ -402,10 +410,23 @@ say:
   the other way (8 to 18). The rubric judge is Sonnet 5.5 in both
   runs, so the difference is in what the models write, not in how it is
   scored.
+- **Logbook-hard is where the SQL abstraction pays for itself.** Opus
+  solves all ten tasks in frozen and learning mode at 8.5 and 6.7 root
+  calls a task and about $0.14 each, with no worker calls at all: it
+  reads the 30k-token log through `ctx` and aggregates in SQL rather
+  than extracting with `LLM_JSON`, where Haiku made some 1,700 worker
+  calls a task and solved one. The plain agent on the same model solves
+  five of ten for ten times the money: three tasks ran out of their
+  thirty turns at over $3 each, and every turn re-sends the log, so a
+  task averages 800k tokens against 79k. Frozen beats plain on this
+  pack with every model that ran it (Luna 7/10 to 3/10, Opus 10/10 to
+  5/10); only Haiku, which could not finish the SQL route, is the
+  exception.
 - **The caching and batching changes hold at Opus prices.** Learning
   coding read 5.0M tokens from cache against 30k billed in full; the
   batched prompt functions kept the worker side to a few hundred calls
-  per run, where the Haiku logbook-hard runs made tens of thousands.
+  per run, where the Haiku logbook-hard runs made tens of thousands,
+  and Opus on logbook-hard needed none.
 
 ## 5. Honest gaps
 

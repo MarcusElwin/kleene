@@ -26,6 +26,8 @@ const INTERNAL_TABLES: &[&str] = &[
     "trace_final",
     "memo",
     "kleene_columns",
+    "estimates",
+    "calibrations",
 ];
 
 /// Embedded DuckDB store.
@@ -419,6 +421,8 @@ CREATE TABLE IF NOT EXISTS trace_rounds (statement VARCHAR, cte VARCHAR, round I
 CREATE TABLE IF NOT EXISTS trace_final (session VARCHAR, rows BIGINT, recorded_at TIMESTAMP);
 CREATE TABLE IF NOT EXISTS memo (model VARCHAR, fingerprint VARCHAR, response VARCHAR, input_tokens BIGINT, output_tokens BIGINT, cost_usd DOUBLE, created_at TIMESTAMP, PRIMARY KEY (model, fingerprint));
 CREATE TABLE IF NOT EXISTS kleene_columns (table_name VARCHAR, column_index INTEGER, column_name VARCHAR, data_type VARCHAR);
+CREATE TABLE IF NOT EXISTS estimates (template_hash VARCHAR PRIMARY KEY, function VARCHAR, template VARCHAR, sel DOUBLE, branch DOUBLE, n BIGINT, updated_at TIMESTAMP);
+CREATE TABLE IF NOT EXISTS calibrations (function VARCHAR, template_hash VARCHAR, proxy VARCHAR, low DOUBLE, high DOUBLE, n BIGINT, sample_precision DOUBLE, sample_recall DOUBLE, calibrated_at TIMESTAMP, PRIMARY KEY (function, template_hash));
 "#;
 
 #[async_trait::async_trait]

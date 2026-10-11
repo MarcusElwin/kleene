@@ -5,8 +5,10 @@ use kleene_core::{CallKind, Catalog, FunctionDef, Volatility};
 use kleene_sql::{Expr, JoinKind, LogicalPlan};
 use std::collections::HashMap;
 
-/// Parameters of the cost model. Everything is a guess in M2; M5 learns
-/// selectivities and branching factors from `EXPLAIN ANALYZE` actuals.
+/// Parameters of the cost model: the store's row counts, the defaults, and
+/// what the harness has learned (selectivities and branching factors from
+/// the actuals of earlier statements, kept in the store's `estimates` table
+/// and sampled again within the session).
 #[derive(Debug, Clone, PartialEq)]
 pub struct CostModel {
     /// Known row counts per stored table (from the store), lower case names.
@@ -38,6 +40,14 @@ pub struct CostModel {
     /// Token and dollar multiplier per model alias, relative to `worker`.
     /// Missing aliases cost 1.0; `proxy` defaults to 0.1.
     pub alias_factor: HashMap<String, f64>,
+    /// Observed rows per call of table functions, by function name (lower
+    /// case): the learned branching factor. Missing names fall back to
+    /// `branching`.
+    pub call_branching: HashMap<String, f64>,
+    /// How many observations stand behind a learned entry of
+    /// `call_selectivity` or `call_branching`, by function name; `EXPLAIN`
+    /// lists them so the model knows which estimates are measured.
+    pub learned: HashMap<String, u64>,
 }
 
 impl Default for CostModel {
@@ -56,6 +66,8 @@ impl Default for CostModel {
             distinct_fraction: 1.0,
             call_selectivity: HashMap::new(),
             alias_factor: HashMap::from([("proxy".to_string(), 0.1)]),
+            call_branching: HashMap::new(),
+            learned: HashMap::new(),
         }
     }
 }
@@ -116,6 +128,85 @@ impl CostModel {
         self.call_selectivity
             .get(&function.to_ascii_lowercase())
             .copied()
+    }
+
+    /// Rows one call of a table function produces: the learned factor for
+    /// its name, else the default `branching`.
+    pub fn branching_of(&self, function: &str) -> f64 {
+        self.call_branching
+            .get(&function.to_ascii_lowercase())
+            .copied()
+            .unwrap_or(self.branching)
+    }
+
+    /// One line per learned estimate the plan relies on, for `EXPLAIN`:
+    /// `name: selectivity 0.75 from 12 rows`.
+    pub fn learned_notes(&self, call_names: &[String]) -> Vec<String> {
+        let mut seen: Vec<&String> = vec![];
+        let mut out = vec![];
+        for name in call_names {
+            if seen.contains(&name) {
+                continue;
+            }
+            seen.push(name);
+            let Some(n) = self.learned.get(name) else {
+                continue;
+            };
+            if let Some(sel) = self.call_selectivity.get(name) {
+                out.push(format!("{name}: selectivity {sel:.2} from {n} rows"));
+            } else if let Some(b) = self.call_branching.get(name) {
+                out.push(format!("{name}: {b:.1} rows per call from {n} calls"));
+            }
+        }
+        out
+    }
+}
+
+/// Names of the call functions a plan evaluates (lower case, with repeats,
+/// in evaluation order).
+pub fn plan_call_names(plan: &LogicalPlan, catalog: &Catalog, out: &mut Vec<String>) {
+    for child in plan.children() {
+        plan_call_names(child, catalog, out);
+    }
+    match plan {
+        LogicalPlan::Values { rows, .. } => {
+            for e in rows.iter().flatten() {
+                call_names(e, catalog, out);
+            }
+        }
+        LogicalPlan::Project { exprs, .. } => {
+            for e in exprs {
+                call_names(e, catalog, out);
+            }
+        }
+        LogicalPlan::Filter { predicate, .. } => call_names(predicate, catalog, out),
+        LogicalPlan::Join { on: Some(on), .. } => call_names(on, catalog, out),
+        LogicalPlan::TableFunction { name, args, .. } => {
+            for a in args {
+                call_names(a, catalog, out);
+            }
+            if catalog
+                .function(name)
+                .is_some_and(|d| d.call_kind != CallKind::Pure)
+            {
+                out.push(name.to_ascii_lowercase());
+            }
+        }
+        LogicalPlan::Aggregate {
+            group_by,
+            aggregates,
+            ..
+        } => {
+            for e in group_by.iter().chain(aggregates) {
+                call_names(e, catalog, out);
+            }
+        }
+        LogicalPlan::Sort { keys, .. } => {
+            for k in keys {
+                call_names(&k.expr, catalog, out);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -648,7 +739,7 @@ fn annotate_in(
                     }
                 }
             }
-            est.rows = per_input * cost.branching;
+            est.rows = per_input * cost.branching_of(name);
             if matches!(kind, CallKind::Recursive { .. }) {
                 est.depth = 1;
             }

@@ -1,0 +1,43 @@
+=== logbook-hard frozen 21:22:18
+✓   1 logbook-001              9 calls $0.1680 8 row(s) match
+✓   2 logbook-002              8 calls $0.1618 1 row(s) match
+✓   3 logbook-003              6 calls $0.0845 1 row(s) match
+✓   4 logbook-004              13 calls $0.2118 6 row(s) match
+✓   5 logbook-005              6 calls $0.1002 6 row(s) match
+✓   6 logbook-006              7 calls $0.1270 8 row(s) match
+✓   7 logbook-007              12 calls $0.1872 1 row(s) match
+✓   8 logbook-008              9 calls $0.1467 8 row(s) match
+✓   9 logbook-009              9 calls $0.1743 6 row(s) match
+✓  10 logbook-010              6 calls $0.0867 1 row(s) match
+run 01a127b1-fc0d-7390-bf05-8d6b3b900cc5 · logbook-hard · frozen · 10/10 solved (100%) · 85 calls · $1.4481
+curve ██████████
+=== exit 0 21:31:00
+=== logbook-hard learning 21:31:00
+✓   1 logbook-001              6 calls $0.1267 8 row(s) match
+✓   2 logbook-002              10 calls $0.1993 1 row(s) match
+✓   3 logbook-003              6 calls $0.0900 1 row(s) match
+✓   4 logbook-004              10 calls $0.1811 6 row(s) match
+✓   5 logbook-005              5 calls $0.1132 6 row(s) match
+✓   6 logbook-006              4 calls $0.1254 8 row(s) match
+✓   7 logbook-007              8 calls $0.1907 1 row(s) match
+✓   8 logbook-008              5 calls $0.1194 8 row(s) match
+✓   9 logbook-009              9 calls $0.1955 6 row(s) match
+✓  10 logbook-010              4 calls $0.0896 1 row(s) match
+run 01a127b9-f3e9-701c-b4ab-2962cf413274 · logbook-hard · learning · 10/10 solved (100%) · 67 calls · $1.4310
+curve ██████████
+=== exit 0 21:45:43
+=== logbook-hard plain 21:45:43
+✗   1 logbook-001              5 calls $0.7182 expected 8 row(s) ["amara | 157", "bao | 130", "chidi | 72", "dana | 156"], got 8 row(s) ["amara | 156", "bao | 130", "chidi | 72", "dana | 156"]
+✗   2 logbook-002              30 calls $3.4443 no answer: turns_exhausted
+✓   3 logbook-003              1 calls $0.2302 1 row(s) match
+✗   4 logbook-004              9 calls $1.3031 expected 6 row(s) ["heron | 148", "kestrel | 193", "osprey | 208", "plover | 255"], got 0 row(s) []
+✓   5 logbook-005              1 calls $0.2408 6 row(s) match
+✓   6 logbook-006              8 calls $1.1953 8 row(s) match
+✗   7 logbook-007              30 calls $3.3344 no answer: turns_exhausted
+✓   8 logbook-008              4 calls $0.7647 8 row(s) match
+✗   9 logbook-009              30 calls $3.3623 no answer: turns_exhausted
+✓  10 logbook-010              1 calls $0.2258 1 row(s) match
+run 01a127c7-6d66-7562-a17f-72bef49a5c18 · logbook-hard · plain · 5/10 solved (50%) · 119 calls · $14.8191
+curve ▁▁▃▃▄▅▅▅▅▅
+=== exit 0 22:35:31
+all done 0

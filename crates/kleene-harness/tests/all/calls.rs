@@ -364,3 +364,238 @@ async fn batch_functions_answer_many_rows_in_one_call() {
     drop(f.dir);
     drop(f2.dir);
 }
+
+async fn repl_on(store: DuckDbStore, provider: Arc<ScriptedProvider>) -> Fixture {
+    let dir = tempfile::tempdir().unwrap();
+    let trace = store.trace_sink();
+    let tracer = Some(kleene_trace::Tracer::new(Arc::new(trace.clone())));
+    let r = Repl::with_config(
+        store,
+        ReplConfig {
+            workspace: dir.path().to_path_buf(),
+            provider: Some(provider),
+            tracer,
+            web_search: None,
+        },
+    )
+    .await
+    .unwrap();
+    Fixture {
+        repl: r,
+        trace,
+        dir,
+    }
+}
+
+/// A proxy that scores `row n` as `n / 10` and an oracle that is true from
+/// row 4 up, except row 7: the shape the calibration has to fit.
+fn calibration_provider() -> Arc<ScriptedProvider> {
+    let mut rules: Vec<(String, String)> = vec![];
+    for n in 1..=10 {
+        rules.push((format!("Score row {n} "), format!("{:.1}", n as f64 / 10.0)));
+        let ok = n >= 4 && n != 7;
+        rules.push((
+            format!("Is row {n} relevant"),
+            format!(r#"{{"answer": {ok}}}"#),
+        ));
+    }
+    rules.push(("two things about".into(), r#"["one", "two"]"#.into()));
+    let rules: Vec<(&str, &str)> = rules
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    Arc::new(ScriptedProvider::new(rules, "0.0"))
+}
+
+const CALIBRATION_SETUP: &str = "CREATE TABLE t AS SELECT 'row ' || generate_series AS x FROM generate_series(1, 10); \
+     CREATE FUNCTION score(t TEXT) RETURNS DOUBLE AS PROMPT 'Score {t} from 0 to 1' MODEL 'proxy' BATCH 1; \
+     CREATE FUNCTION rel(t TEXT) RETURNS BOOLEAN AS PROMPT 'Is {t} relevant?' BATCH 1 PROXY score";
+
+#[tokio::test]
+async fn calibrate_sets_cascade_thresholds_from_a_sample() {
+    let f = repl(calibration_provider()).await;
+    let r = &f.repl;
+    let out = r.submit(CALIBRATION_SETUP).await;
+    assert!(out.iter().all(|o| !o.is_error), "{}", text(&out));
+    // Without a calibration the defaults apply.
+    let out = r.submit("EXPLAIN SELECT x FROM t WHERE rel(x)").await;
+    assert!(out[0].text.contains(">= 0.8"), "{}", out[0].text);
+    assert!(out[0].text.contains(">= 0.2"), "{}", out[0].text);
+
+    let out = r
+        .submit("CALIBRATE rel SAMPLE 10 FROM SELECT x FROM t")
+        .await;
+    assert!(!out[0].is_error, "{}", out[0].text);
+    assert!(
+        out[0].text.starts_with(
+            "calibrated rel: PROXY score THRESHOLDS (0.40, 0.80) from 10 sampled rows (6 true): 3 accepted by the proxy alone, 4 in the band ask the oracle, 3 rejected; on the sample precision 1.00, recall 1.00 (targets 0.90, 0.90)"
+        ),
+        "{}",
+        out[0].text
+    );
+    // 20 calls: ten scores, ten verdicts.
+    assert!(out[0].text.contains("20 calls"), "{}", out[0].text);
+    // The plan now cascades through the calibrated band.
+    let out = r.submit("EXPLAIN SELECT x FROM t WHERE rel(x)").await;
+    assert!(out[0].text.contains("cascade"), "{}", out[0].text);
+    assert!(out[0].text.contains(">= 0.4"), "{}", out[0].text);
+    assert!(!out[0].text.contains(">= 0.2"), "{}", out[0].text);
+    // Running it: every row is scored again (memo), the three rows in the
+    // band 0.4..0.8 ask the oracle, nothing else is called.
+    let before = f.repl.sink().usage().await.calls;
+    let out = r.submit("SELECT x FROM t WHERE rel(x)").await;
+    assert!(out[0].text.contains("6 rows"), "{}", out[0].text);
+    assert_eq!(f.repl.sink().usage().await.calls, before, "{}", out[0].text);
+
+    // A loose precision target accepts more outright, and the thresholds
+    // are remembered for the next definition of the same template.
+    let out = r
+        .submit("CALIBRATE FUNCTION rel SAMPLE 10 PRECISION 0.8 FROM (SELECT x FROM t) AS s")
+        .await;
+    assert!(
+        out[0].text.contains("THRESHOLDS (0.40, 0.40)"),
+        "{}",
+        out[0].text
+    );
+    let out = r
+        .submit("CREATE OR REPLACE FUNCTION rel(t TEXT) RETURNS BOOLEAN AS PROMPT 'Is {t} relevant?' BATCH 1 PROXY score")
+        .await;
+    assert_eq!(
+        out[0].text.lines().next().unwrap(),
+        "defined function rel with calibrated thresholds (0.40, 0.40)"
+    );
+    // Declared thresholds still win, and a changed template starts afresh.
+    let out = r
+        .submit("CREATE OR REPLACE FUNCTION rel(t TEXT) RETURNS BOOLEAN AS PROMPT 'Is {t} relevant?' BATCH 1 PROXY score THRESHOLDS (0.1, 0.9)")
+        .await;
+    assert_eq!(out[0].text.lines().next().unwrap(), "defined function rel");
+    let out = r
+        .submit("CREATE OR REPLACE FUNCTION rel(t TEXT) RETURNS BOOLEAN AS PROMPT 'Is {t} really relevant?' BATCH 1 PROXY score")
+        .await;
+    assert_eq!(out[0].text.lines().next().unwrap(), "defined function rel");
+
+    // Errors the model can act on.
+    let out = r.submit("CALIBRATE score FROM SELECT x FROM t").await;
+    assert!(
+        out[0].is_error && out[0].text.contains("BOOLEAN"),
+        "{}",
+        out[0].text
+    );
+    let out = r.submit("CALIBRATE rel FROM SELECT x, x FROM t").await;
+    assert!(
+        out[0].is_error && out[0].text.contains("1 argument"),
+        "{}",
+        out[0].text
+    );
+    let out = r
+        .submit("CALIBRATE rel FROM SELECT x FROM t WHERE x = 'none'")
+        .await;
+    assert!(
+        out[0].is_error && out[0].text.contains("at least 2"),
+        "{}",
+        out[0].text
+    );
+    drop(f.dir);
+}
+
+#[tokio::test]
+async fn estimates_learned_in_one_session_seed_the_next() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("store.duckdb");
+    let provider = calibration_provider();
+    {
+        let f = repl_on(DuckDbStore::open(&path).unwrap(), provider.clone()).await;
+        let r = &f.repl;
+        let out = r.submit(ESTIMATES_SETUP).await;
+        assert!(out.iter().all(|o| !o.is_error), "{}", text(&out));
+        // Nothing learned yet: the default selectivity, no learned line.
+        let out = r.submit("EXPLAIN SELECT x FROM t WHERE rel(x)").await;
+        assert!(out[0].text.contains("~5 rows"), "{}", out[0].text);
+        assert!(!out[0].text.contains("learned:"), "{}", out[0].text);
+        // Six of ten rows pass; expand yields two rows per call.
+        let out = r.submit("SELECT x FROM t WHERE rel(x)").await;
+        assert!(out[0].text.contains("6 rows"), "{}", out[0].text);
+        let out = r
+            .submit("SELECT e.item FROM t CROSS JOIN LATERAL expand('two things about ' || x, 2) e")
+            .await;
+        assert!(!out[0].is_error, "{}", out[0].text);
+        let out = r.submit("EXPLAIN SELECT x FROM t WHERE rel(x)").await;
+        assert!(
+            out[0]
+                .text
+                .contains("learned: rel: selectivity 0.60 from 10 rows"),
+            "{}",
+            out[0].text
+        );
+        f.trace.flush().await;
+        drop(f.dir);
+    }
+    // The store remembers, keyed by the template.
+    let store = DuckDbStore::open(&path).unwrap();
+    let learned = store
+        .query("SELECT function, sel, branch, n FROM estimates ORDER BY function")
+        .await
+        .unwrap();
+    let rows: Vec<(String, Option<f64>, Option<f64>, i64)> = learned
+        .rows
+        .iter()
+        .map(|r| {
+            (
+                r[0].render(),
+                r[1].as_f64(),
+                r[2].as_f64(),
+                r[3].as_int().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("expand".to_string(), None, Some(2.0), 10),
+            ("rel".to_string(), Some(0.6), None, 10)
+        ],
+        "{rows:?}"
+    );
+    // A new session over the same store starts from what the first learned,
+    // for the same template only.
+    let f = repl_on(store, provider).await;
+    let r = &f.repl;
+    let out = r.submit("DROP TABLE IF EXISTS t").await;
+    assert!(!out[0].is_error, "{}", out[0].text);
+    let out = r.submit(ESTIMATES_SETUP).await;
+    assert!(out.iter().all(|o| !o.is_error), "{}", text(&out));
+    let out = r.submit("EXPLAIN SELECT x FROM t WHERE rel(x)").await;
+    assert!(out[0].text.contains("~6 rows"), "{}", out[0].text);
+    assert!(
+        out[0]
+            .text
+            .contains("learned: rel: selectivity 0.60 from 10 rows"),
+        "{}",
+        out[0].text
+    );
+    let out = r
+        .submit(
+            "EXPLAIN SELECT e.item FROM t CROSS JOIN LATERAL expand('two things about ' || x, 2) e",
+        )
+        .await;
+    assert!(out[0].text.contains("~20 rows"), "{}", out[0].text);
+    assert!(
+        out[0]
+            .text
+            .contains("learned: expand: 2.0 rows per call from 10 calls"),
+        "{}",
+        out[0].text
+    );
+    let out = r
+        .submit("CREATE OR REPLACE FUNCTION rel(t TEXT) RETURNS BOOLEAN AS PROMPT 'Is {t} truly relevant?' BATCH 1")
+        .await;
+    assert!(!out[0].is_error, "{}", out[0].text);
+    let out = r.submit("EXPLAIN SELECT x FROM t WHERE rel(x)").await;
+    assert!(out[0].text.contains("~5 rows"), "{}", out[0].text);
+    assert!(!out[0].text.contains("learned: rel"), "{}", out[0].text);
+    drop(f.dir);
+}
+
+const ESTIMATES_SETUP: &str =
+    "CREATE TABLE t AS SELECT 'row ' || generate_series AS x FROM generate_series(1, 10); \
+     CREATE FUNCTION rel(t TEXT) RETURNS BOOLEAN AS PROMPT 'Is {t} relevant?' BATCH 1";

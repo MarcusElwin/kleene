@@ -118,6 +118,11 @@ pub const COMMANDS: &[Command] = &[
         help: "the loaded skills, or one skill in full",
     },
     Command {
+        name: "/refine",
+        args: "[name [kind] | revert <version>]",
+        help: "the learned function ledger; refine one function's prompt through the replay gate, before and after; or roll a version back",
+    },
+    Command {
         name: "/new",
         args: "",
         help: "start a new conversation; the next task does not see this one",
@@ -196,6 +201,11 @@ pub struct App {
     pub conversation: ConversationId,
     /// The stream's width in columns, for rules; set by the event loop.
     pub width: usize,
+    /// Ticks of the event loop (four a second), for the spinner.
+    pub tick: u64,
+    /// A task was sent from the prompt and the daemon has not started its
+    /// run yet; the stream shows a spinner under the input meanwhile.
+    pub awaiting_run: bool,
     /// The setup wizard while `/setup` has it open; it takes every key.
     pub setup: Option<SetupApp>,
     /// Where `/setup` reads and writes the config file.
@@ -224,6 +234,8 @@ impl Default for App {
             repl_session: SessionId::new(),
             conversation: ConversationId::new(),
             width: 100,
+            tick: 0,
+            awaiting_run: false,
             setup: None,
             config_path: ProviderSettings::path(),
         }
@@ -281,6 +293,7 @@ impl App {
         match &msg {
             ServerMessage::Event { traced, .. } => {
                 if let TraceEvent::RunStarted { run, .. } = &traced.event {
+                    self.awaiting_run = false;
                     if !self.entries.iter().any(|e| e == &Entry::Run(*run)) {
                         self.entries.push(Entry::Run(*run));
                     }
@@ -298,6 +311,21 @@ impl App {
                         .and_then(|r| r.first())
                         .cloned()
                         .unwrap_or_default();
+                    self.entries.push(Entry::Text(body));
+                } else if title == "refine" {
+                    // Before and after snapshots read better as blocks than
+                    // as cells.
+                    let body = rows
+                        .iter()
+                        .map(|r| {
+                            format!(
+                                "{}\n{}",
+                                r.first().cloned().unwrap_or_default(),
+                                r.get(1).cloned().unwrap_or_default()
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n\n");
                     self.entries.push(Entry::Text(body));
                 } else {
                     self.entries.push(Entry::Table {
@@ -330,6 +358,7 @@ impl App {
                 });
             }
             ServerMessage::Error { message } => {
+                self.awaiting_run = false;
                 self.entries.push(Entry::Notice(message.clone()));
             }
             ServerMessage::Ok { message } => {
@@ -363,6 +392,7 @@ impl App {
         }
         self.entries.push(Entry::Input(text.clone()));
         self.follow = None;
+        self.awaiting_run = true;
         Action::Send(ClientRequest::StartRun {
             task: text,
             workspace: self.workspace.clone(),
@@ -481,6 +511,44 @@ impl App {
             "mcp" => {
                 self.entries.push(Entry::Input(typed.to_string()));
                 self.mcp_command(arg)
+            }
+            "refine" => {
+                self.entries.push(Entry::Input(typed.to_string()));
+                let words: Vec<&str> = arg.split_whitespace().collect();
+                match words.as_slice() {
+                    [] => Action::Send(ClientRequest::Refine {
+                        name: None,
+                        kind: None,
+                        revert: None,
+                    }),
+                    ["revert", version] => match version.trim_start_matches('v').parse::<i64>() {
+                        Ok(v) => Action::Send(ClientRequest::Refine {
+                            name: None,
+                            kind: None,
+                            revert: Some(v),
+                        }),
+                        Err(_) => {
+                            self.entries.push(Entry::Notice(
+                                "usage: /refine revert <version>, a number from the ledger".into(),
+                            ));
+                            Action::None
+                        }
+                    },
+                    [name] | [name, _] if *name != "revert" => {
+                        Action::Send(ClientRequest::Refine {
+                            name: Some((*name).to_string()),
+                            kind: words.get(1).map(|k| (*k).to_string()),
+                            revert: None,
+                        })
+                    }
+                    _ => {
+                        self.entries.push(Entry::Notice(
+                            "usage: /refine, /refine <name> [kind], /refine revert <version>"
+                                .into(),
+                        ));
+                        Action::None
+                    }
+                }
             }
             "follow" => {
                 let found = self
@@ -808,7 +876,7 @@ async fn event_loop(
                 Some(Err(e)) => return Err(TuiError::Io(e)),
                 None => return Ok(()),
             },
-            _ = tick.tick() => {}
+            _ = tick.tick() => app.tick = app.tick.wrapping_add(1),
         }
     }
 }
@@ -929,6 +997,44 @@ mod tests {
         type_text(&mut app, "/nope");
         key(&mut app, KeyCode::Enter);
         assert!(matches!(app.entries.last(), Some(Entry::Notice(n)) if n.contains("unknown")));
+        type_text(&mut app, "/refine");
+        assert!(matches!(
+            key(&mut app, KeyCode::Enter),
+            Action::Send(ClientRequest::Refine {
+                name: None,
+                kind: None,
+                revert: None
+            })
+        ));
+        type_text(&mut app, "/refine verify logbook");
+        assert!(matches!(
+            key(&mut app, KeyCode::Enter),
+            Action::Send(ClientRequest::Refine { name: Some(n), kind: Some(k), revert: None }) if n == "verify" && k == "logbook"
+        ));
+        type_text(&mut app, "/refine revert v7");
+        assert!(matches!(
+            key(&mut app, KeyCode::Enter),
+            Action::Send(ClientRequest::Refine {
+                revert: Some(7),
+                ..
+            })
+        ));
+        type_text(&mut app, "/refine revert soon");
+        key(&mut app, KeyCode::Enter);
+        assert!(matches!(app.entries.last(), Some(Entry::Notice(n)) if n.contains("usage")));
+        app.apply(ServerMessage::Table {
+            columns: vec!["step".into(), "text".into()],
+            rows: vec![
+                vec!["before v3".into(), "CREATE FUNCTION a".into()],
+                vec!["after v4".into(), "CREATE FUNCTION b".into()],
+                vec!["adopted".into(), "4/4 solved".into()],
+            ],
+            tag: Some("refine".into()),
+        });
+        assert!(matches!(
+            app.entries.last(),
+            Some(Entry::Text(t)) if t == "before v3\nCREATE FUNCTION a\n\nafter v4\nCREATE FUNCTION b\n\nadopted\n4/4 solved"
+        ));
         type_text(&mut app, "/quit");
         assert_eq!(key(&mut app, KeyCode::Enter), Action::Detach);
         // Typing q is text, not detach; ctrl-c is.

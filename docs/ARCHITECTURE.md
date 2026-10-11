@@ -163,6 +163,8 @@ One DuckDB file (`.kleene/run.duckdb` by default) holds everything:
 | `kleene_columns` | store | planner (declared CallSQL types; JSON is stored as VARCHAR) |
 | `memo` | `LiveSink` | `LiveSink` (keyed by model and prompt fingerprint, across runs) |
 | `trace_runs`, `trace_sessions`, `trace_statements`, `trace_calls`, `trace_tool_calls`, `trace_rounds`, `trace_final` | `DuckDbTraceSink` from a background task | `kleene trace`, `/trace` in the TUI, `EXPLAIN`'s sampled selectivity |
+| `estimates` | `LiveSink` after every statement (selectivity and rows per call, keyed by template hash) | the next session's planner |
+| `calibrations` | `CALIBRATE` | `CREATE FUNCTION ... PROXY` without `THRESHOLDS` |
 | `kleene_sessions` | harness after every turn | `kleene resume` |
 | `tasks`, `task_ratings`, `solver_ratings`, `generator_state`, `playbook`, `playbook_evals`, `attempts`, view `trace_tasks` | `learn` | `learn board/report/playbook`, `/board` in the TUI |
 | `evals`, `bench_runs` | `bench` | `bench report/curve/csv` |

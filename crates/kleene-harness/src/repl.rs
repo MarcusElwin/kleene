@@ -167,12 +167,36 @@ impl Repl {
         if let Some(r) = self.sink.settings().await.max_recursion_rounds {
             cost.recursion_rounds = r as f64;
         }
-        // Sampled selectivity: the pass rate of every boolean call predicate
-        // this session has evaluated at least a few times.
+        // What earlier sessions learned (the store's `estimates` table),
+        // then this session's own sample on top: the pass rate of every
+        // boolean call predicate evaluated at least a few times, and the
+        // rows per call of every table function called at least a few times.
+        let (learned_sel, learned_branch) = self.sink.learned_estimates().await;
+        for (name, (sel, n)) in learned_sel {
+            if n >= 3 {
+                cost.call_selectivity
+                    .insert(name.clone(), sel.clamp(0.01, 0.99));
+                cost.learned.insert(name, n);
+            }
+        }
+        for (name, (branch, n)) in learned_branch {
+            if n >= 3 {
+                cost.call_branching.insert(name.clone(), branch.max(0.0));
+                cost.learned.insert(name, n);
+            }
+        }
         for (name, (yes, total)) in self.sink.call_stats().await {
             if total >= 3 {
                 cost.call_selectivity
-                    .insert(name, (yes as f64 / total as f64).clamp(0.01, 0.99));
+                    .insert(name.clone(), (yes as f64 / total as f64).clamp(0.01, 0.99));
+                cost.learned.insert(name, total);
+            }
+        }
+        for (name, (rows, calls)) in self.sink.branch_stats().await {
+            if calls >= 3 {
+                cost.call_branching
+                    .insert(name.clone(), rows as f64 / calls as f64);
+                cost.learned.insert(name, calls);
             }
         }
         cost
@@ -310,6 +334,10 @@ impl Repl {
         let after = self.sink.usage().await;
         let memo_after = self.sink.memo_hits().await;
         self.sink.set_statement(None).await;
+        // What this statement observed feeds the next session's estimates.
+        if let Err(e) = self.sink.persist_estimates().await {
+            tracing::warn!(error = %e, "could not record estimates");
+        }
         if let Some(t) = &self.tracer {
             t.emit(TraceEvent::StatementFinished {
                 statement: id,
@@ -358,6 +386,42 @@ impl Repl {
                 Ok(m) => Outcome::ok(m),
                 Err(e) => Outcome::err(e.to_string()),
             },
+            StatementKind::Calibrate {
+                function,
+                sample,
+                recall,
+                precision,
+                input,
+            } => {
+                // The sample: the first `sample` rows of the query, planned
+                // through the algebra like any other statement.
+                let sampled = Statement {
+                    sql: stmt.sql.clone(),
+                    kind: StatementKind::Query {
+                        plan: kleene_sql::LogicalPlan::Limit {
+                            input: Box::new(input.clone()),
+                            offset: 0,
+                            limit: Some(*sample),
+                        },
+                    },
+                };
+                let (sampled, _) = self.rewrite(&sampled).await;
+                let mut ctx = ExecContext::new(self.sink.clone());
+                ctx.max_recursion_rounds = self.sink.settings().await.max_recursion_rounds;
+                let rows = match execute_statement(&sampled, ctx).await {
+                    Ok(StatementResult::Rows(b)) => b.rows,
+                    Ok(_) => return Outcome::err("CALIBRATE: the query returned no rows".into()),
+                    Err(e) => return Outcome::err(format!("error: {e}")),
+                };
+                match self
+                    .sink
+                    .calibrate(function, &rows, *recall, *precision)
+                    .await
+                {
+                    Ok(m) => Outcome::ok(m),
+                    Err(e) => Outcome::err(e.to_string()),
+                }
+            }
             StatementKind::Explain { inner, analyze } => {
                 let explained = match self.explain(inner).await {
                     Ok(t) => t,
@@ -551,6 +615,8 @@ fn is_extension(stmt: &str) -> bool {
         || head.starts_with("CREATE AGENT")
         || head.starts_with("CALL ")
         || head == "CALL"
+        || head.starts_with("CALIBRATE ")
+        || head == "CALIBRATE"
 }
 
 /// Split a script on `;` outside quotes and comments; trimmed, non-empty
@@ -627,5 +693,6 @@ fn kind_name(k: &StatementKind) -> &'static str {
         StatementKind::Explain { .. } => "EXPLAIN",
         StatementKind::Set { .. } => "SET",
         StatementKind::Final { .. } => "FINAL",
+        StatementKind::Calibrate { .. } => "CALIBRATE",
     }
 }

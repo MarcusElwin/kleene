@@ -6,3 +6,6 @@ coding      | plain    | claude-opus-5-5 | 12    | 1        | 9.42           | 1
 memo-rubric | frozen   | claude-opus-5-5 | 20    | 0.5      | 5.3            | 1.2626  | 40086           | 0    
 memo-rubric | learning | claude-opus-5-5 | 20    | 0.2      | 5.35           | 1.2388  | 44064           | 0    
 memo-rubric | plain    | claude-opus-5-5 | 20    | 0.5      | 1              | 0.5542  | 5763            | 0    
+logbook-hard | frozen | claude-opus-5-5 | 10    | 1        | 8.5            | 1.4481  | 79296           | 0    
+logbook-hard | learning | claude-opus-5-5 | 10    | 1        | 6.7            | 1.431   | 66997           | 0    
+logbook-hard | plain | claude-opus-5-5 | 10    | 0.5      | 11.9           | 14.8191 | 801803          | 0    

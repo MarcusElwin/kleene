@@ -289,5 +289,8 @@ pub async fn execute_statement(
         StatementKind::CreateAgent { .. } => Err(ExecError::Eval(
             "CREATE AGENT is handled by the harness".into(),
         )),
+        StatementKind::Calibrate { .. } => Err(ExecError::Eval(
+            "CALIBRATE is handled by the harness".into(),
+        )),
     }
 }

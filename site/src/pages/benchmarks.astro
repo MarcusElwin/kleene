@@ -71,8 +71,8 @@ const PLOTS = [
         <li><b>The four original packs are saturated at the top.</b> Opus 5.5 solves every task of terminal, oolong-like, finance-synthetic and legal-synthetic in every mode, so they compare cost only, and the plain agent wins there: every context fits in one prompt, and the SQL abstraction pays for a catalog, a planner and rendered results on every turn.</li>
         <li><b>The playbook cuts calls.</b> Learning against frozen on Opus: terminal 2.2 to 1.3, oolong 4.9 to 3.9, finance 3.5 to 2.4, legal 12.7 to 10.6 calls a task. Only oolong and legal adopted entries; on terminal and finance the gate rejected every candidate, so their difference is run-to-run variance.</li>
         <li><b>The gate is the cost.</b> Each candidate is replayed on three earlier tasks in both arms. Those replays are recorded in <code>playbook_evals</code>, not here: about $34 of the Opus run's $44 on the original packs, and $9 on top of $7 for coding and memo-rubric.</li>
-        <li><b>The hard packs separate on accuracy.</b> Coding: Opus 12/12 in every mode, Luna 10 to 11, Haiku 2 to 4. Memo-rubric is the one pack where Opus trails Luna, and learning made Opus worse there (10 to 4 solved) while it made Luna better (8 to 18). Logbook-hard is where frozen Kleene beats plain outright: Luna 7/10 against 3/10.</li>
-        <li><b>Not run yet:</b> logbook-hard on Opus 5.5. The caveats in full are in <a href="/docs/writeup/#4-what-the-benchmarks-measured">the write-up</a>.</li>
+        <li><b>The hard packs separate on accuracy.</b> Coding: Opus 12/12 in every mode, Luna 10 to 11, Haiku 2 to 4. Memo-rubric is the one pack where Opus trails Luna, and learning made Opus worse there (10 to 4 solved) while it made Luna better (8 to 18). Logbook-hard is where frozen Kleene beats plain outright: Luna 7/10 against 3/10, Opus 10/10 against 5/10, and Opus does it for a tenth of what its own plain agent spends.</li>
+        <li><b>Caveats</b> in full are in <a href="/docs/writeup/#4-what-the-benchmarks-measured">the write-up</a>.</li>
       </ul>
     </details>
 

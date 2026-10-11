@@ -1,6 +1,7 @@
 //! The live [`CallSink`]: model calls, prompt-defined functions, tools, memo,
 //! budget and trace, over the store-backed sink.
 
+use crate::estimates::{builtin_hash, choose_thresholds, template_hash};
 use crate::sink::StoreSink;
 use crate::AgentRole;
 use kleene_core::{
@@ -9,7 +10,8 @@ use kleene_core::{
 };
 use kleene_exec::{BatchStream, CallSink, ExecError};
 use kleene_llm::{CompletionRequest, CompletionResponse, Message, Provider, ProviderOptions};
-use kleene_sql::{FunctionBody, Statement};
+use kleene_sql::{FunctionBody, ProxyClause, Statement};
+use kleene_store::duckdb::literal;
 use kleene_store::MemoEntry;
 use kleene_tools::{Tool, ToolContext, ToolRegistry};
 use kleene_trace::{TraceEvent, Tracer};
@@ -184,6 +186,23 @@ pub trait ChildRunner: Send + Sync {
         task: String,
         context: Option<String>,
     ) -> Result<Batch, ExecError>;
+    /// Start a child of `parent` without waiting for it (`spawn_async`).
+    /// Returns the handle row `(handle, session)`.
+    async fn spawn_async(
+        &self,
+        parent: &LiveSink,
+        agent: &str,
+        task: String,
+        context: Option<String>,
+    ) -> Result<Batch, ExecError>;
+    /// Wait for a child started with `spawn_async` and return its `FINAL`
+    /// relation (`await(handle)`).
+    async fn await_child(&self, parent: &LiveSink, handle: &str) -> Result<Batch, ExecError>;
+    /// Deliver a message from `from` to a child's handle or to `parent`
+    /// (`send(to, text)`).
+    async fn send(&self, from: &LiveSink, to: &str, text: String) -> Result<bool, ExecError>;
+    /// The messages sent to `me`, oldest first (`inbox()`).
+    async fn inbox(&self, me: &LiveSink) -> Result<Batch, ExecError>;
 }
 
 /// Budget state shared by every call of a session.
@@ -196,6 +215,10 @@ pub struct BudgetState {
     /// Calls served from the memo (free, not counted in `usage`).
     pub memo_hits: u64,
 }
+
+/// How much of a function's observations the store already holds:
+/// `(pass rate counts, rows-per-call counts)`.
+type Persisted = ((u64, u64), (u64, u64));
 
 /// Everything a statement's calls need.
 pub struct LiveSink {
@@ -218,6 +241,11 @@ pub struct LiveSink {
     cancelled: std::sync::atomic::AtomicBool,
     /// Pass rates of boolean call predicates: name -> (true, total).
     stats: RwLock<HashMap<String, (u64, u64)>>,
+    /// Rows produced by table calls: name -> (rows, calls).
+    branch_stats: RwLock<HashMap<String, (u64, u64)>>,
+    /// How much of `stats` and `branch_stats` the store already holds, by
+    /// name, so `persist_estimates` writes only what is new.
+    persisted: RwLock<HashMap<String, Persisted>>,
     /// Who to tell about calls as they happen.
     observer: RwLock<Option<Arc<dyn crate::Observer>>>,
 }
@@ -250,6 +278,8 @@ impl LiveSink {
             runner: RwLock::new(None),
             cancelled: std::sync::atomic::AtomicBool::new(false),
             stats: RwLock::new(HashMap::new()),
+            branch_stats: RwLock::new(HashMap::new()),
+            persisted: RwLock::new(HashMap::new()),
             observer: RwLock::new(None),
         }
     }
@@ -545,7 +575,10 @@ impl LiveSink {
         };
         let lower = name.to_ascii_lowercase();
         let proxy_spec = match proxy {
-            Some((pname, low, high)) => {
+            Some(ProxyClause {
+                function: pname,
+                thresholds,
+            }) => {
                 let cat = self.store.catalog();
                 let cat = cat.read().await;
                 let Some(pdef) = cat.function(pname) else {
@@ -567,22 +600,287 @@ impl LiveSink {
                         "only BOOLEAN predicates can have a PROXY".into(),
                     ));
                 }
-                Some(kleene_core::ProxySpec {
-                    function: pname.to_ascii_lowercase(),
-                    low: *low,
-                    high: *high,
-                })
+                drop(cat);
+                // Declared thresholds win; otherwise an earlier CALIBRATE of
+                // this template and proxy; otherwise the defaults.
+                let calibrated = match thresholds {
+                    Some(_) => None,
+                    None => {
+                        self.calibrated_thresholds(&lower, &defined.body, pname)
+                            .await
+                    }
+                };
+                let (low, high) = thresholds.or(calibrated).unwrap_or((0.2, 0.8));
+                Some((
+                    kleene_core::ProxySpec {
+                        function: pname.to_ascii_lowercase(),
+                        low,
+                        high,
+                    },
+                    calibrated.is_some(),
+                ))
             }
             None => None,
+        };
+        let note = match &proxy_spec {
+            Some((spec, true)) => format!(
+                " with calibrated thresholds ({:.2}, {:.2})",
+                spec.low, spec.high
+            ),
+            _ => String::new(),
         };
         {
             let catalog = self.store.catalog();
             let mut cat = catalog.write().await;
             cat.add_function(function_entry(&lower, &defined));
-            cat.set_proxy(&lower, proxy_spec);
+            cat.set_proxy(&lower, proxy_spec.map(|(spec, _)| spec));
         }
         self.functions.write().await.insert(lower, defined);
-        Ok(format!("defined function {name}"))
+        Ok(format!("defined function {name}{note}"))
+    }
+
+    /// Thresholds an earlier `CALIBRATE` chose for this template and proxy.
+    async fn calibrated_thresholds(
+        &self,
+        name: &str,
+        body: &FunctionBody,
+        proxy: &str,
+    ) -> Option<(f64, f64)> {
+        let hash = template_hash(name, body);
+        let b = self
+            .store
+            .store()
+            .query(&format!(
+                "SELECT low, high FROM calibrations WHERE function = {} AND template_hash = {} AND proxy = {}",
+                literal(&Value::Text(name.to_string())),
+                literal(&Value::Text(hash)),
+                literal(&Value::Text(proxy.to_ascii_lowercase()))
+            ))
+            .await
+            .ok()?;
+        let row = b.rows.first()?;
+        Some((row[0].as_f64()?, row[1].as_f64()?))
+    }
+
+    /// `CALIBRATE`: score `rows` (the predicate's argument tuples) with the
+    /// proxy and the oracle, choose the thresholds that meet the targets on
+    /// that sample, install them on the predicate's proxy and remember them
+    /// for later definitions of the same template. Returns the text the
+    /// model sees.
+    pub async fn calibrate(
+        &self,
+        function: &str,
+        rows: &[Vec<Value>],
+        recall: f64,
+        precision: f64,
+    ) -> Result<String, ExecError> {
+        let lower = function.to_ascii_lowercase();
+        let spec = self
+            .store
+            .catalog()
+            .read()
+            .await
+            .proxy(&lower)
+            .cloned()
+            .ok_or_else(|| {
+                ExecError::Eval(format!(
+                    "{function} has no proxy; declare one with CREATE OR REPLACE FUNCTION ... PROXY score_fn"
+                ))
+            })?;
+        let Some(def) = self.functions.read().await.get(&lower).cloned() else {
+            return Err(ExecError::Eval(format!(
+                "{function} is not a prompt-defined predicate"
+            )));
+        };
+        let mut samples = vec![];
+        let mut skipped = 0usize;
+        for row in rows {
+            if row.iter().any(Value::is_null) {
+                skipped += 1;
+                continue;
+            }
+            let score = self.scalar_call(&spec.function, row).await?;
+            let verdict = self.scalar_call(&lower, row).await?;
+            match (score.as_f64(), verdict) {
+                (Some(score), Value::Bool(ok)) => samples.push((score.clamp(0.0, 1.0), ok)),
+                _ => skipped += 1,
+            }
+        }
+        if samples.len() < 2 {
+            return Err(ExecError::Eval(format!(
+                "calibration needs at least 2 scored rows, got {} ({skipped} skipped: NULL arguments or answers)",
+                samples.len()
+            )));
+        }
+        let t = choose_thresholds(&samples, recall, precision);
+        {
+            let catalog = self.store.catalog();
+            let mut cat = catalog.write().await;
+            cat.set_proxy(
+                &lower,
+                Some(kleene_core::ProxySpec {
+                    function: spec.function.clone(),
+                    low: t.low,
+                    high: t.high,
+                }),
+            );
+        }
+        let hash = template_hash(&lower, &def.body);
+        let text = |v: &str| literal(&Value::Text(v.to_string()));
+        self.store
+            .store()
+            .execute(&format!(
+                "INSERT OR REPLACE INTO calibrations VALUES ({}, {}, {}, {}, {}, {}, {}, {}, now())",
+                text(&lower),
+                text(&hash),
+                text(&spec.function),
+                t.low,
+                t.high,
+                samples.len(),
+                t.precision,
+                t.recall
+            ))
+            .await
+            .map_err(|e| ExecError::Eval(e.to_string()))?;
+        let positives = samples.iter().filter(|(_, ok)| *ok).count();
+        Ok(format!(
+            "calibrated {lower}: PROXY {} THRESHOLDS ({:.2}, {:.2}) from {} sampled rows ({positives} true): {} accepted by the proxy alone, {} in the band ask the oracle, {} rejected; on the sample precision {:.2}, recall {:.2} (targets {precision:.2}, {recall:.2}){}",
+            spec.function,
+            t.low,
+            t.high,
+            samples.len(),
+            t.accepted,
+            t.asked,
+            t.rejected,
+            t.precision,
+            t.recall,
+            if skipped > 0 {
+                format!("; {skipped} rows skipped")
+            } else {
+                String::new()
+            }
+        ))
+    }
+
+    /// Write what this session observed since the last call into the
+    /// store's `estimates` table: pass rates of prompt-defined predicates
+    /// keyed by their template, rows per call of table functions keyed by
+    /// name. Weighted into what earlier sessions recorded.
+    pub async fn persist_estimates(&self) -> Result<(), ExecError> {
+        let stats = self.stats.read().await.clone();
+        let branch = self.branch_stats.read().await.clone();
+        let functions = self.functions.read().await.clone();
+        let mut persisted = self.persisted.write().await;
+        let store = self.store.store();
+        let text = |v: &str| literal(&Value::Text(v.to_string()));
+        let mut names: Vec<&String> = stats.keys().chain(branch.keys()).collect();
+        names.sort();
+        names.dedup();
+        for name in names {
+            let seen = persisted.entry(name.clone()).or_default();
+            let (yes, total) = stats.get(name).copied().unwrap_or((0, 0));
+            let (rows, calls) = branch.get(name).copied().unwrap_or((0, 0));
+            let d_total = total - seen.0 .1;
+            let d_yes = yes - seen.0 .0;
+            let d_calls = calls - seen.1 .1;
+            let d_rows = rows - seen.1 .0;
+            if d_total == 0 && d_calls == 0 {
+                continue;
+            }
+            let (hash, template) = match functions.get(name) {
+                Some(def) => (
+                    template_hash(name, &def.body),
+                    match &def.body {
+                        FunctionBody::Prompt { template, .. } => template.clone(),
+                        FunctionBody::Sql { query } => query.clone(),
+                        FunctionBody::Shell { command } => command.clone(),
+                    },
+                ),
+                None => (builtin_hash(name), String::new()),
+            };
+            let sel = (d_total > 0).then(|| d_yes as f64 / d_total as f64);
+            let br = (d_calls > 0).then(|| d_rows as f64 / d_calls as f64);
+            let n = d_total.max(d_calls);
+            let num = |v: Option<f64>| v.map(|x| x.to_string()).unwrap_or_else(|| "NULL".into());
+            store
+                .execute(&format!(
+                    "INSERT INTO estimates VALUES ({h}, {f}, {t}, {sel}, {br}, {n}, now())                      ON CONFLICT (template_hash) DO UPDATE SET                      sel = CASE WHEN excluded.sel IS NULL THEN estimates.sel WHEN estimates.sel IS NULL THEN excluded.sel ELSE (estimates.sel * estimates.n + excluded.sel * excluded.n) / (estimates.n + excluded.n) END,                      branch = CASE WHEN excluded.branch IS NULL THEN estimates.branch WHEN estimates.branch IS NULL THEN excluded.branch ELSE (estimates.branch * estimates.n + excluded.branch * excluded.n) / (estimates.n + excluded.n) END,                      n = estimates.n + excluded.n, updated_at = now()",
+                    h = text(&hash),
+                    f = text(name),
+                    t = text(&template),
+                    sel = num(sel),
+                    br = num(br),
+                ))
+                .await
+                .map_err(|e| ExecError::Eval(e.to_string()))?;
+            *seen = ((yes, total), (rows, calls));
+        }
+        Ok(())
+    }
+
+    /// What earlier sessions learned about the functions this session can
+    /// call: `(selectivity, n)` by predicate name and `(rows per call, n)`
+    /// by table function name, read from the store's `estimates` table.
+    /// A defined function matches only on its current template.
+    #[allow(clippy::type_complexity)]
+    pub async fn learned_estimates(
+        &self,
+    ) -> (HashMap<String, (f64, u64)>, HashMap<String, (f64, u64)>) {
+        let mut sel = HashMap::new();
+        let mut branch = HashMap::new();
+        let Ok(b) = self
+            .store
+            .store()
+            .query("SELECT template_hash, function, sel, branch, n FROM estimates WHERE n > 0")
+            .await
+        else {
+            return (sel, branch);
+        };
+        let functions = self.functions.read().await;
+        let catalog = self.store.catalog();
+        let catalog = catalog.read().await;
+        let defined: HashMap<String, String> = functions
+            .iter()
+            .map(|(name, def)| (template_hash(name, &def.body), name.clone()))
+            .collect();
+        for row in &b.rows {
+            let (Some(hash), Some(n)) = (row[0].as_text(), row[4].as_int()) else {
+                continue;
+            };
+            let name = match defined.get(hash) {
+                Some(name) => name.clone(),
+                None => {
+                    let Some(f) = row[1].as_text() else { continue };
+                    let f = f.to_ascii_lowercase();
+                    if functions.contains_key(&f)
+                        || catalog.function(&f).is_none()
+                        || builtin_hash(&f) != hash
+                    {
+                        continue;
+                    }
+                    f
+                }
+            };
+            if let Some(s) = row[2].as_f64() {
+                sel.insert(name.clone(), (s, n as u64));
+            }
+            if let Some(br) = row[3].as_f64() {
+                branch.insert(name, (br, n as u64));
+            }
+        }
+        (sel, branch)
+    }
+
+    /// Observed rows per call of table functions, by name: `(rows, calls)`.
+    pub async fn branch_stats(&self) -> HashMap<String, (u64, u64)> {
+        self.branch_stats.read().await.clone()
+    }
+
+    async fn record_branch(&self, name: &str, rows: usize) {
+        let mut stats = self.branch_stats.write().await;
+        let e = stats.entry(name.to_string()).or_insert((0, 0));
+        e.0 += rows as u64;
+        e.1 += 1;
     }
 
     /// Observed pass rates of boolean call predicates, by function name:
@@ -1309,13 +1607,97 @@ impl CallSink for LiveSink {
 
     async fn table_call(&self, name: &str, args: &[Value]) -> Result<Batch, ExecError> {
         let lower = name.to_ascii_lowercase();
+        if lower == "generate_series" {
+            return self.table_call_inner(&lower, args).await;
+        }
+        let out = self.table_call_inner(&lower, args).await;
+        if let Ok(b) = &out {
+            self.record_branch(&lower, b.len()).await;
+        }
+        out
+    }
+
+    async fn scan(&self, table: &str) -> Result<BatchStream, ExecError> {
+        self.store.scan(table).await
+    }
+
+    async fn create_table(
+        &self,
+        name: &str,
+        schema: Arc<Schema>,
+        if_not_exists: bool,
+    ) -> Result<bool, ExecError> {
+        self.store.create_table(name, schema, if_not_exists).await
+    }
+
+    async fn insert(&self, name: &str, batch: Batch) -> Result<(), ExecError> {
+        self.store.insert(name, batch).await
+    }
+
+    async fn drop_table(&self, name: &str, if_exists: bool) -> Result<(), ExecError> {
+        self.store.drop_table(name, if_exists).await
+    }
+}
+
+impl LiveSink {
+    async fn runner_for(&self, what: &str) -> Result<Arc<dyn ChildRunner>, ExecError> {
+        self.runner.read().await.clone().ok_or_else(|| {
+            ExecError::Call(format!(
+                "{what} needs a running harness (kleene run); the plain REPL cannot spawn sessions"
+            ))
+        })
+    }
+
+    async fn table_call_inner(&self, lower: &str, args: &[Value]) -> Result<Batch, ExecError> {
+        let text = |i: usize| args.get(i).and_then(|v| v.as_text()).map(str::to_string);
+        match lower {
+            "spawn_async" => {
+                let runner = self.runner_for(lower).await?;
+                if args.len() > 3 {
+                    return Err(ExecError::Call(format!(
+                        "spawn_async takes at most 3 arguments, got {}",
+                        args.len()
+                    )));
+                }
+                let (Some(agent), Some(task)) = (text(0), text(1)) else {
+                    return Err(ExecError::Call(
+                        "spawn_async: the agent name and the task must be text".into(),
+                    ));
+                };
+                return runner.spawn_async(self, &agent, task, text(2)).await;
+            }
+            "await" => {
+                let runner = self.runner_for(lower).await?;
+                let Some(handle) = text(0) else {
+                    return Err(ExecError::Call(
+                        "await: the handle must be the text spawn_async returned".into(),
+                    ));
+                };
+                return runner.await_child(self, &handle).await;
+            }
+            "inbox" => {
+                let runner = self.runner_for(lower).await?;
+                return runner.inbox(self).await;
+            }
+            "send" => {
+                let runner = self.runner_for(lower).await?;
+                let (Some(to), Some(body)) = (text(0), text(1)) else {
+                    return Err(ExecError::Call(
+                        "send(to, text): both arguments must be text ('parent' or a handle, and the message)".into(),
+                    ));
+                };
+                let delivered = runner.send(self, &to, body).await?;
+                let schema = Arc::new(Schema::new(vec![
+                    Field::not_null("to", DataType::Text),
+                    Field::not_null("delivered", DataType::Bool),
+                ]));
+                return Batch::try_new(schema, vec![vec![Value::Text(to), Value::Bool(delivered)]])
+                    .map_err(ExecError::from);
+            }
+            _ => {}
+        }
         if lower == "rlm" || lower == "spawn" {
-            let runner = self.runner.read().await.clone().ok_or_else(|| {
-                ExecError::Call(format!(
-                    "{lower} needs a running harness (kleene run); the plain REPL cannot spawn sessions"
-                ))
-            })?;
-            let text = |i: usize| args.get(i).and_then(|v| v.as_text()).map(str::to_string);
+            let runner = self.runner_for(lower).await?;
             let (agent, task, context, max) = if lower == "rlm" {
                 (None, text(0), text(1), 2)
             } else {
@@ -1396,9 +1778,9 @@ impl CallSink for LiveSink {
                 .collect();
             return Batch::try_new(schema, rows).map_err(ExecError::from);
         }
-        let Some(tool) = self.tools.get(&lower) else {
+        let Some(tool) = self.tools.get(lower) else {
             return Err(ExecError::Call(format!(
-                "no implementation for table function {name}"
+                "no implementation for table function {lower}"
             )));
         };
         self.check_cancelled()?;
@@ -1408,7 +1790,7 @@ impl CallSink for LiveSink {
         if let Some(t) = &self.tracer {
             t.emit(TraceEvent::ToolCall {
                 statement,
-                tool: lower.clone(),
+                tool: lower.to_string(),
                 args: args
                     .iter()
                     .map(Value::render)
@@ -1429,27 +1811,6 @@ impl CallSink for LiveSink {
             });
         }
         result.map_err(|e| ExecError::Call(e.to_string()))
-    }
-
-    async fn scan(&self, table: &str) -> Result<BatchStream, ExecError> {
-        self.store.scan(table).await
-    }
-
-    async fn create_table(
-        &self,
-        name: &str,
-        schema: Arc<Schema>,
-        if_not_exists: bool,
-    ) -> Result<bool, ExecError> {
-        self.store.create_table(name, schema, if_not_exists).await
-    }
-
-    async fn insert(&self, name: &str, batch: Batch) -> Result<(), ExecError> {
-        self.store.insert(name, batch).await
-    }
-
-    async fn drop_table(&self, name: &str, if_exists: bool) -> Result<(), ExecError> {
-        self.store.drop_table(name, if_exists).await
     }
 }
 

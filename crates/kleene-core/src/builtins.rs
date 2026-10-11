@@ -255,6 +255,74 @@ pub fn call_functions() -> Vec<FunctionDef> {
             volatility: Volatility::Stable,
             description: "spawn(agent, task [, context]): run a declared agent (CREATE AGENT) as a child session, one child per input row, concurrently".into(),
         },
+        FunctionDef {
+            name: "spawn_async".into(),
+            args: vec![Text, Text],
+            variadic: true,
+            returns: FunctionReturn::Table {
+                schema: Schema::new(vec![
+                    Field::not_null("handle", Text),
+                    Field::not_null("session", Text),
+                ]),
+            },
+            call_kind: CallKind::Recursive {
+                role: "agent".into(),
+            },
+            // Stable like `spawn` and `rlm`: a child session is priced as a
+            // call, not fenced as a side effect, so it can stand in FROM.
+            volatility: Volatility::Stable,
+            description: "spawn_async(agent, task [, context]): start a declared agent as a child session and return at once with its handle; await(handle) collects its FINAL rows, inbox() its messages".into(),
+        },
+        FunctionDef {
+            name: "await".into(),
+            args: vec![Text],
+            variadic: false,
+            returns: FunctionReturn::Table {
+                schema: Schema::new(vec![
+                    Field::new("answer", Text),
+                    Field::new("detail", Json),
+                    Field::new("session", Text),
+                ]),
+            },
+            call_kind: CallKind::Recursive {
+                role: "agent".into(),
+            },
+            volatility: Volatility::Stable,
+            description: "await(handle): wait for a spawn_async child and return its FINAL rows (answer, detail, session)".into(),
+        },
+        FunctionDef {
+            name: "inbox".into(),
+            args: vec![],
+            variadic: false,
+            returns: FunctionReturn::Table {
+                schema: Schema::new(vec![
+                    Field::not_null("from_session", Text),
+                    Field::not_null("ts", Text),
+                    Field::not_null("text", Text),
+                ]),
+            },
+            call_kind: CallKind::Tool {
+                tool: "inbox".into(),
+            },
+            volatility: Volatility::Stable,
+            description: "inbox(): messages sent to this session with send(...), oldest first: (from_session, ts, text)".into(),
+        },
+        FunctionDef {
+            name: "send".into(),
+            args: vec![Text, Text],
+            variadic: false,
+            returns: FunctionReturn::Table {
+                schema: Schema::new(vec![
+                    Field::not_null("to", Text),
+                    Field::not_null("delivered", Bool),
+                ]),
+            },
+            call_kind: CallKind::Tool {
+                tool: "send".into(),
+            },
+            volatility: Volatility::Volatile,
+            description: "CALL send(to, text): post a message to a child's handle, or to 'parent' from a child; it appears in that session's inbox(); one delivery row".into(),
+        },
     ]
 }
 
@@ -286,6 +354,26 @@ mod tests {
             panic!()
         };
         assert_eq!(schema.names(), ["answer", "detail", "session"]);
+        let handle = c.function("spawn_async").unwrap();
+        assert_eq!(handle.volatility, Volatility::Stable);
+        let FunctionReturn::Table { schema } = &handle.returns else {
+            panic!()
+        };
+        assert_eq!(schema.names(), ["handle", "session"]);
+        let awaited = c.function("await").unwrap();
+        let FunctionReturn::Table { schema } = &awaited.returns else {
+            panic!()
+        };
+        assert_eq!(schema.names(), ["answer", "detail", "session"]);
+        let inbox = c.function("inbox").unwrap();
+        assert!(inbox.args.is_empty() && inbox.volatility == Volatility::Stable);
+        let send = c.function("send").unwrap();
+        assert!(matches!(send.call_kind, CallKind::Tool { .. }));
+        assert_eq!(send.volatility, Volatility::Volatile);
+        let FunctionReturn::Table { schema } = &send.returns else {
+            panic!()
+        };
+        assert_eq!(schema.names(), ["to", "delivered"]);
     }
 
     #[test]
