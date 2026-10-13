@@ -58,8 +58,8 @@ export function aggregate(rows: Row[]): Cell[] {
   return cells.sort((a, b) => a.pack.localeCompare(b.pack) || modeIx(a.mode) - modeIx(b.mode) || a.label.localeCompare(b.label));
 }
 
-/** Pack order on the page: the first four Opus packs, then the harder ones. */
-export const PACK_ORDER = ["terminal", "oolong-like", "finance-synthetic", "legal-synthetic", "coding", "memo-rubric", "logbook-hard"];
+/** Pack order on the page: the first four Opus packs, then the harder ones, then the hard versions of the first four. */
+export const PACK_ORDER = ["terminal", "oolong-like", "finance-synthetic", "legal-synthetic", "coding", "memo-rubric", "logbook-hard", "terminal-hard", "oolong-hard", "finance-hard", "legal-hard"];
 
 export const fmt = {
   money: (x: number) => (x >= 1 ? `$${x.toFixed(2)}` : x >= 0.01 ? `$${x.toFixed(3)}` : `$${x.toFixed(4)}`),
