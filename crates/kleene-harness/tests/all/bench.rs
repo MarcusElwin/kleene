@@ -515,3 +515,75 @@ async fn plain_agent_uses_native_tool_calls_and_the_finish_check_gates_final() {
         && d.description
             .contains("patch(TEXT, TEXT, TEXT) -> (path, replaced, diff)")));
 }
+
+/// The three lazy hard packs under `tasks/` regenerate on load to contexts
+/// that cannot be read in one prompt, every task has a code oracle, and
+/// the terminal-hard graders accept a solution that drives the shell from
+/// SQL and reject the default answer.
+#[tokio::test]
+async fn hard_packs_load_lazily_and_terminal_hard_graders_judge_shell_solutions() {
+    let tasks = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tasks");
+    for (dir, generator, min_chars) in [
+        ("oolong-hard", "tracker", 80_000),
+        ("finance-hard", "ledger", 50_000),
+        ("legal-hard", "agreement", 40_000),
+    ] {
+        let pack = Pack::load(&tasks.join(dir)).unwrap();
+        assert_eq!(pack.tasks.len(), 20, "{dir}");
+        for t in &pack.tasks {
+            let from = t.from.as_ref().expect("lazy");
+            assert_eq!(from.generator, generator);
+            let g = pack.to_generated(&tasks.join(dir), t).unwrap();
+            let ctx = g.context.unwrap();
+            assert!(
+                ctx.len() >= min_chars,
+                "{dir}/{}: {} chars",
+                t.id,
+                ctx.len()
+            );
+            assert!(
+                matches!(g.verify.label(), "exact" | "number"),
+                "{dir}/{}: {}",
+                t.id,
+                g.verify.label()
+            );
+        }
+    }
+    let dir = tasks.join("terminal-hard");
+    let pack = Pack::load(&dir).unwrap();
+    assert_eq!(pack.tasks.len(), 8);
+    assert!(pack
+        .tasks
+        .iter()
+        .all(|t| t.workspace_from.is_some() && !t.setup.is_empty()));
+    let p = Arc::new(ScriptedProvider::new(
+        vec![
+            (
+                "How many distinct file contents",
+                "```sql\nCALL shell('find data -type f -exec sha256sum {} + | cut -c1-64 | sort -u | wc -l > answer.txt');\nFINAL FROM (SELECT CAST(trim(text) AS BIGINT) AS unique FROM read('answer.txt'))\n```",
+            ),
+            (
+                "Move every file to its new path",
+                "```sql\nCALL shell('python3 -c \"import csv,os,shutil\nfor r in csv.DictReader(open(\\\"manifest.csv\\\")):\n    os.makedirs(os.path.dirname(r[\\\"new\\\"]), exist_ok=True); shutil.move(r[\\\"old\\\"], r[\\\"new\\\"])\"');\nFINAL FROM (SELECT 150 AS moved)\n```",
+            ),
+        ],
+        "```sql\nFINAL FROM (SELECT 'no idea' AS answer)\n```",
+    ));
+    let store = DuckDbStore::in_memory().unwrap();
+    let l = learn(store, p).await;
+    let report = l.bench(&dir, &pack, Mode::Frozen, Some(4)).await.unwrap();
+    assert_eq!(report.rows.len(), 4, "{report:?}");
+    let by_id = |id: &str| report.rows.iter().find(|r| r.task == id).unwrap();
+    assert!(
+        by_id("unique-contents").solved,
+        "{:?}",
+        by_id("unique-contents")
+    );
+    assert!(
+        by_id("apply-manifest").solved,
+        "{:?}",
+        by_id("apply-manifest")
+    );
+    assert!(!by_id("errors-by-service").solved);
+    assert!(!by_id("top-countries").solved);
+}
