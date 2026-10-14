@@ -1,0 +1,14 @@
+pack          | mode     | model      | tasks | accuracy | calls_per_task | dollars | tokens_per_task | depth
+--------------+----------+------------+-------+----------+----------------+---------+-----------------+------
+finance-hard  | frozen   | gpt-6-luna | 20    | 0.4      | 447.25         | 0.815   | 1485152         | 0.7  
+finance-hard  | learning | gpt-6-luna | 20    | 0.4      | 88.35          | 0.2232  | 231533          | 0.2  
+finance-hard  | plain    | gpt-6-luna | 20    | 0.3      | 1.15           | 0.0413  | 24120           | 0    
+legal-hard    | frozen   | gpt-6-luna | 20    | 0.15     | 16.1           | 0.0477  | 90304           | 0.05 
+legal-hard    | learning | gpt-6-luna | 20    | 0.35     | 16.45          | 0.0582  | 64728           | 0    
+legal-hard    | plain    | gpt-6-luna | 20    | 0.2      | 1.5            | 0.0217  | 16878           | 0    
+oolong-hard   | frozen   | gpt-6-luna | 14    | 0.5      | 2032.21        | 2.966   | 5367039         | 0.93 
+oolong-hard   | learning | gpt-6-luna | 20    | 0.35     | 1156           | 2.6432  | 2202176         | 0.8  
+oolong-hard   | plain    | gpt-6-luna | 20    | 0        | 1.4            | 0.067   | 46279           | 0    
+terminal-hard | frozen   | gpt-6-luna | 8     | 0.5      | 3.25           | 0.0508  | 72152           | 0    
+terminal-hard | learning | gpt-6-luna | 8     | 0.5      | 1877.13        | 0.4769  | 329651          | 0    
+terminal-hard | plain    | gpt-6-luna | 8     | 0.625    | 5.88           | 0.0049  | 19196           | 0    
