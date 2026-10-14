@@ -157,6 +157,12 @@ run,pack,mode,model,seq,task,kind,solved,calls,tokens,dollars,depth,turns,wall_m
 01a13731-366b-738d-ac28-cb7e66a2dcbf,oolong-hard,frozen,gpt-6-luna,11,tracker-012,tracker_open_items_by_project,false,1693,5509777,0.16749434999999996,2,2,1422439
 01a13731-366b-738d-ac28-cb7e66a2dcbf,oolong-hard,frozen,gpt-6-luna,12,tracker-013,tracker_top_decisions_month,true,3,12226,0.00040242,0,3,9934
 01a13731-366b-738d-ac28-cb7e66a2dcbf,oolong-hard,frozen,gpt-6-luna,13,tracker-014,tracker_open_items_by_project,false,8751,19442036,0.7974492500000004,2,30,3000967
+01a13731-366b-738d-ac28-cb7e66a2dcbf,oolong-hard,frozen,gpt-6-luna,14,tracker-015,tracker_hours_by_project,false,7979,19144134,1.0900331599999995,2,7,2610572
+01a13731-366b-738d-ac28-cb7e66a2dcbf,oolong-hard,frozen,gpt-6-luna,15,tracker-016,tracker_top_decisions_month,true,9,43022,0.0008120000000000001,0,9,11477
+01a13731-366b-738d-ac28-cb7e66a2dcbf,oolong-hard,frozen,gpt-6-luna,16,tracker-017,tracker_open_items_by_project,true,1403,536322,0.07188591999999998,0,23,386664
+01a13731-366b-738d-ac28-cb7e66a2dcbf,oolong-hard,frozen,gpt-6-luna,17,tracker-018,tracker_items_closed_within_week,false,1,3707,0.00007125,0,1,1391
+01a13731-366b-738d-ac28-cb7e66a2dcbf,oolong-hard,frozen,gpt-6-luna,18,tracker-019,tracker_hours_by_project,false,11146,36369065,1.0195475499999986,2,9,7423569
+01a13731-366b-738d-ac28-cb7e66a2dcbf,oolong-hard,frozen,gpt-6-luna,19,tracker-020,tracker_open_items_by_project,false,4042,11988392,0.3193544900000002,2,16,2182759
 01a13731-3675-730a-98bf-bf73c72801ac,finance-hard,frozen,gpt-6-luna,0,ledger-001,ledger_top_segment,false,30,226140,0.00454086,0,30,40677
 01a13731-3675-730a-98bf-bf73c72801ac,finance-hard,frozen,gpt-6-luna,1,ledger-002,ledger_consolidated_revenue,true,16,102811,0.00264419,0,15,26673
 01a13731-3675-730a-98bf-bf73c72801ac,finance-hard,frozen,gpt-6-luna,2,ledger-003,ledger_top_quarter,true,2484,8015668,0.21512157999999992,2,2,1357075

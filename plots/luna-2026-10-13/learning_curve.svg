@@ -237,7 +237,7 @@
 <circle cx="696.0" cy="236.8" r="3" fill="#2ca02c"/>
 <rect x="496" y="206" width="10" height="10" fill="#2ca02c"/>
 <text x="510" y="215" fill="#222">oolong-hard learning</text>
-<polyline fill="none" stroke="#ff7f0e" stroke-width="2" points="64.0,368.0 97.3,368.0 130.5,258.7 163.8,204.0 197.1,171.2 230.3,171.2 263.6,171.2 296.8,171.2 330.1,171.2 363.4,171.2 396.6,171.2 429.9,171.2 463.2,171.2 496.4,236.8"/>
+<polyline fill="none" stroke="#ff7f0e" stroke-width="2" points="64.0,368.0 97.3,368.0 130.5,258.7 163.8,204.0 197.1,171.2 230.3,171.2 263.6,171.2 296.8,171.2 330.1,171.2 363.4,171.2 396.6,171.2 429.9,171.2 463.2,171.2 496.4,236.8 529.7,302.4 562.9,236.8 596.2,171.2 629.5,236.8 662.7,236.8 696.0,236.8"/>
 <circle cx="64.0" cy="368.0" r="3" fill="#ff7f0e"/>
 <circle cx="97.3" cy="368.0" r="3" fill="#ff7f0e"/>
 <circle cx="130.5" cy="258.7" r="3" fill="#ff7f0e"/>
@@ -252,6 +252,12 @@
 <circle cx="429.9" cy="171.2" r="3" fill="#ff7f0e"/>
 <circle cx="463.2" cy="171.2" r="3" fill="#ff7f0e"/>
 <circle cx="496.4" cy="236.8" r="3" fill="#ff7f0e"/>
+<circle cx="529.7" cy="302.4" r="3" fill="#ff7f0e"/>
+<circle cx="562.9" cy="236.8" r="3" fill="#ff7f0e"/>
+<circle cx="596.2" cy="171.2" r="3" fill="#ff7f0e"/>
+<circle cx="629.5" cy="236.8" r="3" fill="#ff7f0e"/>
+<circle cx="662.7" cy="236.8" r="3" fill="#ff7f0e"/>
+<circle cx="696.0" cy="236.8" r="3" fill="#ff7f0e"/>
 <rect x="496" y="222" width="10" height="10" fill="#ff7f0e"/>
 <text x="510" y="231" fill="#222">oolong-hard frozen</text>
 </svg>

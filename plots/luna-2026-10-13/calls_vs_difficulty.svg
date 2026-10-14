@@ -83,6 +83,8 @@
 <circle cx="595.2" cy="368.0" r="3" fill="#1f77b4"/>
 <circle cx="596.5" cy="360.1" r="3" fill="#1f77b4"/>
 <circle cx="683.7" cy="367.9" r="3" fill="#1f77b4"/>
+<circle cx="683.7" cy="367.8" r="3" fill="#1f77b4"/>
+<circle cx="683.7" cy="337.3" r="3" fill="#1f77b4"/>
 <rect x="496" y="46" width="10" height="10" fill="#1f77b4"/>
 <text x="510" y="55" fill="#222">solved</text>
 <circle cx="683.7" cy="368.0" r="3" fill="#d62728"/>
@@ -220,6 +222,10 @@
 <circle cx="693.9" cy="367.8" r="3" fill="#d62728"/>
 <circle cx="683.7" cy="331.0" r="3" fill="#d62728"/>
 <circle cx="683.7" cy="176.6" r="3" fill="#d62728"/>
+<circle cx="683.7" cy="193.5" r="3" fill="#d62728"/>
+<circle cx="683.7" cy="368.0" r="3" fill="#d62728"/>
+<circle cx="683.7" cy="124.2" r="3" fill="#d62728"/>
+<circle cx="683.7" cy="279.6" r="3" fill="#d62728"/>
 <rect x="496" y="62" width="10" height="10" fill="#d62728"/>
 <text x="510" y="71" fill="#222">failed</text>
 </svg>
