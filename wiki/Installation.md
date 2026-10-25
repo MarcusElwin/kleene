@@ -1,6 +1,6 @@
 # Installation
 
-Prebuilt binaries cover macOS (Apple silicon and Intel) and Linux (x86_64 and aarch64) and are attached to every tagged release. Pick one of the three.
+Prebuilt binaries cover macOS (Apple silicon and Intel), Linux (x86_64 and aarch64) and Windows (x86_64, as a zip: unzip it and put `kleene.exe` on your `PATH`) and are attached to every tagged release. Pick one of the three.
 
 ## curl
 

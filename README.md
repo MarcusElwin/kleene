@@ -44,8 +44,10 @@ tells you how many calls that is before you spend them.
 
 ## Install
 
-Pick one of the three. Prebuilt binaries cover macOS (Apple silicon, Intel)
-and Linux (x86_64, aarch64).
+Pick one of the three. Prebuilt binaries cover macOS (Apple silicon, Intel),
+Linux (x86_64, aarch64) and Windows (x86_64; a zip on the
+[releases page](https://github.com/MarcusElwin/kleene/releases), see
+[`docs/CLI.md`](docs/CLI.md#windows)).
 
 ```bash
 # curl: detects OS and architecture, verifies the SHA-256, installs to ~/.local/bin

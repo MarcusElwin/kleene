@@ -15,8 +15,9 @@ flags as compiled.
 
 ## Install
 
-Prebuilt binaries for macOS (Apple silicon and Intel) and Linux (x86_64 and
-aarch64) are attached to every tagged release. Pick one of the three.
+Prebuilt binaries for macOS (Apple silicon and Intel), Linux (x86_64 and
+aarch64) and Windows (x86_64) are attached to every tagged release. Pick one
+of the three below, or on Windows see [Windows](#windows).
 
 ### curl
 
@@ -42,7 +43,7 @@ Read it before piping it into a shell if that is your habit:
 
 Releases come from the workflow in `.github/workflows/release.yml`: a merge
 to `main` that bumps the workspace version (or a pushed `v*` tag) builds the
-four targets, attaches the tarballs and `SHA256SUMS`, and prints the values
+five targets, attaches the archives and `SHA256SUMS`, and prints the values
 the Homebrew formula needs.
 
 ### Homebrew
@@ -81,6 +82,26 @@ Other ways to install with cargo:
 cargo install --path crates/kleene                    # from a checkout you already have
 cargo install --git ssh://git@github.com/MarcusElwin/kleene kleene   # over SSH
 ```
+
+### Windows
+
+Each release carries `kleene-<version>-x86_64-pc-windows-msvc.zip`. Unzip
+it and put `kleene.exe` on your `PATH`; `SHA256SUMS` on the release lists
+its checksum (`Get-FileHash` prints the one to compare). `cargo install`
+works as well, with the MSVC build tools installed, and takes the same ten
+minutes for DuckDB.
+
+The engine, the REPL, the TUI and the model providers run natively. Two
+things differ from Unix:
+
+- The daemon listens on a named pipe instead of a Unix socket. `--socket`
+  still names it: the pipe is derived from the path, so two workspaces get
+  two daemons, and `kleene daemon` prints both.
+- The `shell` tool and the benchmark packs run commands through `sh`, so
+  they need one on the `PATH` (Git for Windows ships it) or WSL. `kleene`
+  runs without it; `shell` reports the missing `sh` when a query calls it.
+
+The installer script and the Homebrew formula are Unix only.
 
 ### Check
 
