@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/MarcusElwin/kleene/compare/v0.3.1...v0.4.0) (2026-10-25)
+
+
+### Features
+
+* **daemon:** named-pipe transport so the daemon builds on Windows ([9497b1c](https://github.com/MarcusElwin/kleene/commit/9497b1cb2f917e4b5468c7bbb302e3d059d2a142)), closes [#59](https://github.com/MarcusElwin/kleene/issues/59)
+
 ## [0.3.1](https://github.com/MarcusElwin/kleene/compare/v0.3.0...v0.3.1) (2026-10-11)
 
 
