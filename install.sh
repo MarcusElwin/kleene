@@ -28,6 +28,7 @@ arch="$(uname -m)"
 case "$os" in
   Linux) os_part="unknown-linux-gnu" ;;
   Darwin) os_part="apple-darwin" ;;
+  MINGW*|MSYS*|CYGWIN*) die "on Windows, download the x86_64-pc-windows-msvc zip from https://github.com/$REPO/releases and put kleene.exe on your PATH" ;;
   *) die "unsupported OS: $os (build from source with: cargo install --git https://github.com/$REPO kleene)" ;;
 esac
 case "$arch" in

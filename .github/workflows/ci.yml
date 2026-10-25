@@ -118,6 +118,31 @@ jobs:
           command -v sccache >/dev/null && sccache --show-stats
           df -h /
 
+  # Windows has no Unix sockets, so kleene-daemon reaches tokio's named
+  # pipes through its transport module, and the release workflow ships an
+  # x86_64-pc-windows-msvc binary (issue #59). This job is what keeps that
+  # compiling between releases: a check, not a test run, because the
+  # benchmark packs and the shell tool assume `sh`. Cold, the bundled DuckDB
+  # under MSVC is the whole of the time.
+  windows:
+    name: windows check
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: windows-check
+          cache-on-failure: true
+      - name: Check
+        run: cargo check --workspace --all-targets --all-features
+      - name: Cache stats
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: command -v sccache >/dev/null && sccache --show-stats
+
   test:
     name: test
     runs-on: ubuntu-24.04

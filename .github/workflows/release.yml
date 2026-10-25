@@ -1,9 +1,10 @@
 name: Release
 
-# Builds the `kleene` binary for macOS (Apple silicon and Intel) and Linux
-# (x86_64 and aarch64), attaches the tarballs and SHA-256 checksums to the
-# GitHub release for a tag, and commits the new version and checksums to
-# Formula/kleene.rb on main, so the tap serves the release at once.
+# Builds the `kleene` binary for macOS (Apple silicon and Intel), Linux
+# (x86_64 and aarch64) and Windows (x86_64, MSVC), attaches the archives
+# (tarballs, a zip for Windows) and SHA-256 checksums to the GitHub release
+# for a tag, and commits the new version and checksums to Formula/kleene.rb
+# on main, so the tap serves the release at once.
 #
 # Versions come from release-please (release-please.yml next to this file):
 # it keeps a release pull request open on main from the conventional
@@ -109,6 +110,14 @@ jobs:
             os: macos-15
           - target: x86_64-apple-darwin
             os: macos-15-intel
+          # Issue #59. The daemon talks over a named pipe here (see
+          # kleene-daemon's transport module); the binary is zipped, since
+          # Windows opens a zip and not a tarball out of the box, and it is
+          # not in the Homebrew formula, which update-formula.sh only reads
+          # the four Unix lines of SHA256SUMS for.
+          - target: x86_64-pc-windows-msvc
+            os: windows-2022
+            ext: .exe
     steps:
       - uses: actions/checkout@v4
         with:
@@ -122,9 +131,10 @@ jobs:
       - name: Build
         run: cargo build --release --locked -p kleene --target ${{ matrix.target }}
       - name: Smoke test
+        shell: bash
         run: |
-          ./target/${{ matrix.target }}/release/$BIN --version
-          ./target/${{ matrix.target }}/release/$BIN repl -c "SELECT 1 + 1 AS two"
+          ./target/${{ matrix.target }}/release/$BIN${{ matrix.ext }} --version
+          ./target/${{ matrix.target }}/release/$BIN${{ matrix.ext }} repl -c "SELECT 1 + 1 AS two"
       - name: Package
         id: package
         shell: bash
@@ -135,13 +145,20 @@ jobs:
           VERSION="${TAG#v}"
           NAME="$BIN-$VERSION-${{ matrix.target }}"
           mkdir -p "dist/$NAME"
-          cp "target/${{ matrix.target }}/release/$BIN" "dist/$NAME/"
+          cp "target/${{ matrix.target }}/release/$BIN${{ matrix.ext }}" "dist/$NAME/"
           cp README.md LICENSE* "dist/$NAME/" 2>/dev/null || true
           cp -r docs/DIALECT.md "dist/$NAME/" 2>/dev/null || true
-          tar -C dist -czf "dist/$NAME.tar.gz" "$NAME"
-          (cd dist && shasum -a 256 "$NAME.tar.gz" > "$NAME.tar.gz.sha256")
-          echo "asset=dist/$NAME.tar.gz" >> "$GITHUB_OUTPUT"
-          echo "checksum=dist/$NAME.tar.gz.sha256" >> "$GITHUB_OUTPUT"
+          if [ "$RUNNER_OS" = Windows ]; then
+            ARCHIVE="$NAME.zip"
+            (cd dist && 7z a -tzip "$ARCHIVE" "$NAME" >/dev/null)
+          else
+            ARCHIVE="$NAME.tar.gz"
+            tar -C dist -czf "dist/$ARCHIVE" "$NAME"
+          fi
+          # Git Bash on the Windows runner has sha256sum and no shasum.
+          (cd dist && { sha256sum "$ARCHIVE" 2>/dev/null || shasum -a 256 "$ARCHIVE"; } > "$ARCHIVE.sha256")
+          echo "asset=dist/$ARCHIVE" >> "$GITHUB_OUTPUT"
+          echo "checksum=dist/$ARCHIVE.sha256" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
@@ -168,7 +185,7 @@ jobs:
           cat SHA256SUMS >> notes.md
           echo '```' >> notes.md
           echo >> notes.md
-          echo "Install with \`curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh\` or \`brew install ${{ github.repository_owner }}/kleene/kleene\`." >> notes.md
+          echo "Install with \`curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh\` or \`brew install ${{ github.repository_owner }}/kleene/kleene\`. On Windows, unzip the \`x86_64-pc-windows-msvc\` asset and put \`kleene.exe\` on your PATH." >> notes.md
       - name: Checksum values
         run: cat dist/SHA256SUMS
       - uses: softprops/action-gh-release@v2
@@ -184,6 +201,7 @@ jobs:
           append_body: true
           files: |
             dist/*.tar.gz
+            dist/*.zip
             dist/SHA256SUMS
       - uses: actions/checkout@v4
         with:

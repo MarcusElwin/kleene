@@ -1,6 +1,8 @@
-//! The daemon: an event log every trace event is appended to, and a Unix
-//! socket serving the protocol to any number of clients.
+//! The daemon: an event log every trace event is appended to, and a
+//! listener (see [`crate::transport`]) serving the protocol to any number
+//! of clients.
 
+use crate::transport::{Listener, Stream};
 use crate::{ClientRequest, Cursor, DaemonError, ServerMessage, StatementOutput, PROTOCOL_VERSION};
 use kleene_core::{Budget, RunId, SessionId, StatementId};
 use kleene_harness::{Harness, HarnessConfig, Observer, Outcome, Repl, ReplConfig, SessionMeta};
@@ -12,7 +14,6 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{broadcast, mpsc};
 
 /// Append-only log of server messages with cursors, plus a live broadcast.
@@ -279,9 +280,9 @@ impl Daemon {
 
     /// Bind the socket (replacing a stale file) and serve forever.
     pub async fn serve(self: Arc<Self>, socket: &Path) -> Result<(), DaemonError> {
-        let listener = bind(socket)?;
+        let mut listener = Listener::bind(socket).await?;
         loop {
-            let (stream, _) = listener.accept().await?;
+            let stream = listener.accept().await?;
             let me = self.clone();
             tokio::spawn(async move {
                 if let Err(e) = me.handle(stream).await {
@@ -299,13 +300,13 @@ impl Daemon {
         socket: &Path,
         shutdown: impl std::future::Future<Output = ()>,
     ) -> Result<(), DaemonError> {
-        let listener = bind(socket)?;
+        let mut listener = Listener::bind(socket).await?;
         let mut shutdown = Box::pin(shutdown);
         loop {
             tokio::select! {
                 _ = &mut shutdown => return Ok(()),
                 accepted = listener.accept() => {
-                    let (stream, _) = accepted?;
+                    let stream = accepted?;
                     let me = self.clone();
                     tokio::spawn(async move {
                         let _ = me.handle(stream).await;
@@ -316,7 +317,7 @@ impl Daemon {
     }
 
     /// Handle one client until it detaches or disconnects.
-    pub async fn handle(self: Arc<Self>, stream: UnixStream) -> Result<(), DaemonError> {
+    pub async fn handle(self: Arc<Self>, stream: Stream) -> Result<(), DaemonError> {
         let (read, mut write) = stream.into_split();
         let (tx, mut rx) = mpsc::unbounded_channel::<ServerMessage>();
         let writer = tokio::spawn(async move {
@@ -785,23 +786,6 @@ fn answer_cells(answer: &kleene_core::Batch, max_rows: usize) -> (Vec<String>, V
         .map(|r| r.iter().map(kleene_core::Value::render).collect())
         .collect();
     (columns, rows)
-}
-
-fn bind(socket: &Path) -> Result<UnixListener, DaemonError> {
-    if socket.exists() {
-        // A live daemon would answer; a dead one leaves the file behind.
-        if std::os::unix::net::UnixStream::connect(socket).is_ok() {
-            return Err(DaemonError::Io(std::io::Error::new(
-                std::io::ErrorKind::AddrInUse,
-                format!("a daemon is already listening on {}", socket.display()),
-            )));
-        }
-        std::fs::remove_file(socket)?;
-    }
-    if let Some(parent) = socket.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    Ok(UnixListener::bind(socket)?)
 }
 
 #[cfg(test)]
