@@ -93,7 +93,7 @@ pub fn parse(fallback_name: &str, text: &str, source: &str, path: &str) -> Skill
 /// directory, in loading order (later replaces earlier).
 pub fn roots(workspace: &Path, config_dir: &Path) -> Vec<(PathBuf, &'static str)> {
     let mut out = vec![(config_dir.join("skills"), "user")];
-    if let Some(home) = std::env::var_os("HOME") {
+    if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
         out.push((PathBuf::from(home).join(".agents").join("skills"), "user"));
     }
     for d in [".kleene/skills", ".agents/skills", ".claude/skills"] {

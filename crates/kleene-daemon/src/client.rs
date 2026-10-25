@@ -1,14 +1,14 @@
-//! A client of the daemon socket: JSON lines in, JSON lines out.
+//! A client of the daemon: JSON lines in, JSON lines out, over
+//! [`crate::transport`].
 
+use crate::transport::{self, ReadHalf, WriteHalf};
 use crate::{ClientRequest, DaemonError, ServerMessage};
 use std::path::Path;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
-use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
-use tokio::net::UnixStream;
 
 /// The sending half of a connection.
 pub struct ClientWriter {
-    write: OwnedWriteHalf,
+    write: WriteHalf,
 }
 
 impl ClientWriter {
@@ -24,7 +24,7 @@ impl ClientWriter {
 
 /// The receiving half of a connection.
 pub struct ClientReader {
-    lines: Lines<BufReader<OwnedReadHalf>>,
+    lines: Lines<BufReader<ReadHalf>>,
 }
 
 impl ClientReader {
@@ -58,7 +58,7 @@ pub struct Client {
 impl Client {
     /// Connect and complete the handshake.
     pub async fn connect(socket: &Path) -> Result<Self, DaemonError> {
-        let stream = UnixStream::connect(socket).await?;
+        let stream = transport::connect(socket).await?;
         let (read, write) = stream.into_split();
         let mut reader = ClientReader {
             lines: BufReader::new(read).lines(),

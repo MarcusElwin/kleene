@@ -1183,7 +1183,7 @@ fn skills_command(cli: &Cli, name: Option<String>) -> anyhow::Result<()> {
 /// Connect to the daemon, spawning one in the background if the socket is
 /// not answering.
 async fn ensure_daemon(cli: &Cli, socket: &PathBuf) -> anyhow::Result<()> {
-    if tokio::net::UnixStream::connect(socket).await.is_ok() {
+    if kleene_daemon::transport::is_listening(socket).await {
         return Ok(());
     }
     let exe = std::env::current_exe()?;
@@ -1199,14 +1199,24 @@ async fn ensure_daemon(cli: &Cli, socket: &PathBuf) -> anyhow::Result<()> {
     if let Some(w) = &cli.workspace {
         cmd.arg("--workspace").arg(w);
     }
+    #[cfg(windows)]
+    {
+        // Outlive the console that started it, as the Unix daemon outlives
+        // its shell: DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP.
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0000_0008 | 0x0000_0200);
+    }
     cmd.spawn()?;
     for _ in 0..100 {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        if tokio::net::UnixStream::connect(socket).await.is_ok() {
+        if kleene_daemon::transport::is_listening(socket).await {
             return Ok(());
         }
     }
-    anyhow::bail!("daemon did not start listening on {}", socket.display())
+    anyhow::bail!(
+        "daemon did not start listening on {}",
+        kleene_daemon::transport::display(socket)
+    )
 }
 
 fn db_path(cli: &Cli) -> PathBuf {
@@ -1559,7 +1569,10 @@ async fn main() -> anyhow::Result<()> {
             let store = open_store(&cli)?;
             let cfg = daemon_config(&cli).await?;
             let daemon = kleene_daemon::server::Daemon::new(store, cfg).await?;
-            eprintln!("kleene daemon listening on {}", socket.display());
+            eprintln!(
+                "kleene daemon listening on {}",
+                kleene_daemon::transport::display(&socket)
+            );
             daemon.serve(&socket).await?;
             Ok(())
         }

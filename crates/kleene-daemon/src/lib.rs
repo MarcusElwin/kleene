@@ -1,7 +1,8 @@
 //! Daemon protocol, server and client.
 //!
 //! The engine runs as a daemon; the TUI and `--headless` clients attach over
-//! a Unix socket and exchange newline-delimited JSON. Every trace event the
+//! a Unix socket (a named pipe on Windows, see [`transport`]) and exchange
+//! newline-delimited JSON. Every trace event the
 //! engine emits is appended to an in-memory log with a [`Cursor`], so a
 //! reconnecting client resumes where it left off, and mirrored into the
 //! DuckDB store as before. [`server::Daemon`] serves the protocol;
@@ -11,6 +12,7 @@
 
 pub mod client;
 pub mod server;
+pub mod transport;
 
 use kleene_core::{ConversationId, RunId, SessionId, StatementId};
 use kleene_trace::Traced;
