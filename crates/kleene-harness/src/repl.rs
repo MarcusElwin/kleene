@@ -25,8 +25,11 @@ pub struct Repl {
 }
 
 enum Pending {
-    Planned(Statement),
     Ast(Box<sqlparser::ast::Statement>, String),
+    /// A CallSQL addition the parser does not know (`FINAL`, `CALL`,
+    /// `CREATE FUNCTION`, `CREATE AGENT`), kept as text and planned when its
+    /// turn comes.
+    Extension(String),
 }
 
 fn error(text: String) -> Rendered {
@@ -227,19 +230,10 @@ impl Repl {
         let mut pending = vec![];
         for piece in split_statements(sql) {
             if is_extension(&piece) {
-                // CallSQL additions the parser does not know are planned now,
-                // one statement at a time.
-                let catalog = self.sink.catalog().read().await.clone();
-                match plan_sql(&piece, &catalog) {
-                    Ok(stmts) => pending.extend(stmts.into_iter().map(Pending::Planned)),
-                    Err(e) => {
-                        let mut out = self.run_pending(pending).await;
-                        if out.last().is_none_or(|r| !r.is_error && !r.is_final) {
-                            out.push(self.failed_to_plan(&piece, &e));
-                        }
-                        return out;
-                    }
-                }
+                // CallSQL additions the parser does not know are planned
+                // when they run, like everything else, so a FINAL at the end
+                // of a reply reads the tables the reply created.
+                pending.push(Pending::Extension(piece));
                 continue;
             }
             let asts = match parse(&piece) {
@@ -267,28 +261,34 @@ impl Repl {
 
     async fn run_pending(&self, pending: Vec<Pending>) -> Vec<Rendered> {
         let mut out = vec![];
-        for item in pending {
-            let stmt = match item {
-                Pending::Planned(s) => s,
-                Pending::Ast(ast, text) => {
-                    let catalog = self.sink.catalog().read().await.clone();
-                    match plan(&ast, &catalog) {
-                        Ok(mut s) => {
-                            s.sql = text;
-                            s
-                        }
-                        Err(e) => {
-                            out.push(self.failed_to_plan(&text, &e));
-                            break;
-                        }
+        'items: for item in pending {
+            let catalog = self.sink.catalog().read().await.clone();
+            let stmts = match item {
+                Pending::Ast(ast, text) => match plan(&ast, &catalog) {
+                    Ok(mut s) => {
+                        s.sql = text;
+                        vec![s]
                     }
-                }
+                    Err(e) => {
+                        out.push(self.failed_to_plan(&text, &e));
+                        break;
+                    }
+                },
+                Pending::Extension(text) => match plan_sql(&text, &catalog) {
+                    Ok(stmts) => stmts,
+                    Err(e) => {
+                        out.push(self.failed_to_plan(&text, &e));
+                        break;
+                    }
+                },
             };
-            let rendered = self.run_one(&stmt).await;
-            let stop = rendered.is_error || rendered.is_final;
-            out.push(rendered);
-            if stop {
-                break;
+            for stmt in stmts {
+                let rendered = self.run_one(&stmt).await;
+                let stop = rendered.is_error || rendered.is_final;
+                out.push(rendered);
+                if stop {
+                    break 'items;
+                }
             }
         }
         out
