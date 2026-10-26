@@ -656,14 +656,27 @@ async fn the_recursion_depth_pack_records_the_depth_a_delegating_solver_reaches(
 /// The whole `tasks/recursion-depth` pack under the delegating solver, as an
 /// offline stand-in for a model run: prints one line per task with the depth
 /// reached, calls and tokens, then the report. Minutes long, so ignored by
-/// default: `cargo test --workspace --all-features -- --ignored sweep`.
+/// default: `cargo test --workspace --all-features -- --ignored sweep`
+/// (`KLEENE_SWEEP_PER_DEPTH=2` for a quicker look).
 #[tokio::test]
 #[ignore]
 async fn recursion_depth_pack_offline_sweep() {
     use kleene_harness::testing::NestSolver;
     let pack_dir =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tasks/recursion-depth");
-    let pack = Pack::load(&pack_dir).unwrap();
+    let mut pack = Pack::load(&pack_dir).unwrap();
+    // KLEENE_SWEEP_PER_DEPTH=N keeps the first N tasks of each depth.
+    if let Some(n) = std::env::var("KLEENE_SWEEP_PER_DEPTH")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+    {
+        let mut seen: std::collections::HashMap<String, usize> = Default::default();
+        pack.tasks.retain(|t| {
+            let c = seen.entry(t.id[..2].to_string()).or_default();
+            *c += 1;
+            *c <= n
+        });
+    }
     let store = DuckDbStore::in_memory().unwrap();
     let trace = store.trace_sink();
     let cfg = HarnessConfig {
