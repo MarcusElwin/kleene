@@ -18,13 +18,17 @@ What the modes, oracles, report columns and plots mean is in
 | `legal-synthetic/` | 20 synthetic contracts with planted clause categories, frozen from `contracts` | exact set of categories |
 | `logbook-hard/` | 30 work logs of about 1,650 dated entries each (about 30,000 tokens) with corrections and non-hour distractors, five question shapes, frozen lazily from `logbook` at dial 0.9 | exact rows |
 | `memo-rubric/` | 20 synthetic services agreements with an amendment and a rejected proposal; the task is a short memo on three of the terms, frozen lazily from `memo` at dial 0.8 | `judge` with a rubric naming each required fact and a reference memo |
+| `recursion-depth/` | 20 reporting trees, five each 3, 4, 5 and 6 levels deep (about 20, 40, 75 and 140 unit reports; 3k to 25k characters), with divested sub-units that drop whole subtrees and `Correction:` rows; one of five questions per depth (consolidated spend of the top or of a sub-unit, the largest sub-unit, units counted, levels), frozen lazily from `nest` at dials 0.4, 0.6, 0.8 and 1.0. The pack states `depth: 6`, so `bench run` lets child sessions nest that deep | number within 0.5, or exact rows |
 | `coding/` | four Python projects under `workspaces/`, three steps each (implement, extend, fix a bug report); later steps `continues` the earlier step's workspace; every step's `check` is `python3 -m unittest -q` | the grader's hidden unit tests (`.grader/run.sh N`) |
 
 Rebuild a frozen pack with `kleene bench build <dir> --from <generator>
 --count N --dial D --seed S`; the same seeds give the same tasks. With
 `--lazy` the pack stores only the generator, dial and seed per task and
-regenerates on load, which is how `logbook-hard` and `memo-rubric` are kept
-small. Import the real OOLONG with `kleene bench import-oolong
+regenerates on load, which is how `logbook-hard`, `memo-rubric` and
+`recursion-depth` are kept small. A pack whose tasks call for child sessions
+deeper than the harness default of two states the depth it needs in
+`depth`; `bench run` raises its maximum depth to at least that, and
+`--max-depth N` overrides either. Import the real OOLONG with `kleene bench import-oolong
 tasks/oolong-trec` (the `trec_coarse` 128k-token split the RLM paper uses,
 50 questions, `oolong` oracle; `--dataset`, `--context-len` and `--limit`
 pick another slice), UmaiTech's contract redlining sets with `kleene bench

@@ -31,6 +31,7 @@ themselves in the README's
 | `legal-synthetic` | 20 | a contract with planted clause categories | the categories present | `exact` | CUAD, Harvey LAB |
 | `logbook-hard` | 30 | 1,650 log entries (30k tokens), four phrasings, corrections | one of five aggregates | `exact` | OOLONG at scale |
 | `memo-rubric` | 20 | a 40-section agreement with an amendment and a rejected proposal | a short memo | `judge` | Harvey LAB drafting |
+| `recursion-depth` | 20 | a group's unit reports, a tree 3 to 6 levels deep, with divested subtrees and corrections | a consolidated figure, the largest sub-unit, a count or the depth | `number`, `exact` | recursion depth: how far child sessions nest |
 | `coding` | 12 | a small Python project with visible tests, in three-step episodes | files edited and a `FINAL` row | `shell`, hidden tests | SWE-bench |
 
 Every pack runs in three modes: **learning** (Kleene, playbook on),
@@ -70,6 +71,7 @@ prior. The schema is `Pack` and `PackTask` in
 | `tasks/legal-synthetic` | 20 | `ctx`: a synthetic contract, one clause per row, with planted clause categories among boilerplate, paraphrases and near-miss distractors | `FINAL` with one row per category present, out of six named categories | `exact`: the set of categories, spelled as given | CUAD / Harvey LAB-style clause classification |
 | `tasks/logbook-hard` | 30 | `ctx`: a work log of about 1,650 dated entries (about 118,000 characters, 30,000 tokens) in four phrasings, with entries about the same projects whose numbers are not hours, and `Correction:` entries that amend an earlier entry | `FINAL` answering one of five questions: hours per project, hours per person on one project, the top person, hours per project in one month, distinct people on a project | `exact` | OOLONG at a size that cannot be read once and answered: the context has to be filtered and aggregated |
 | `tasks/memo-rubric` | 20 | `ctx`: a synthetic services agreement of about 40 sections with six planted commercial terms, a rejected proposal in a schedule, and an amendment that supersedes one term | `FINAL` with one row holding a short written memo answering three questions about the terms | `judge`: a separate model grades the memo against a rubric naming each required fact and forbidding the superseded and rejected values, with a reference memo | Harvey LAB-style drafting graded by rubric |
+| `tasks/recursion-depth` | 20 | `ctx`: one report per unit of a group, shuffled, naming the unit, the unit it reports to, its direct spend in kEUR, distractor figures and its sub-units; some reports exclude one divested sub-unit with everything under it, and `Correction:` rows restate a unit's spend. Five tasks at each of 3, 4, 5 and 6 levels (about 20, 40, 75 and 140 units; 3k to 25k characters) | `FINAL` with the consolidated spend of the top unit or of a unit one level down, the sub-unit with the largest consolidated spend, the number of units consolidated, or the number of levels | `number` within 0.5, or `exact` | recursion depth: consolidation is a recursion as deep as the tree, so a run shows the depth the model chose (`evals.depth`) next to accuracy and cost as the depth a task calls for grows past the default of two |
 | `tasks/coding` | 12 | a small Python project in the workspace (four projects: a finance CSV library, word statistics, warehouse stock, day-interval scheduling), visible unit tests, and a task: implement a module, then extend it, then fix a bug report | files edited in place and a one-row `FINAL` | `shell`: the grader's own hidden unit tests for every step so far (visible tests plus edge cases the task text states) | SWE-bench-style code editing, in three-step episodes over one checkout |
 
 </details>
@@ -88,7 +90,7 @@ Freezing means the tasks are checked into the repository, so two runs, or two
 people, see the same tasks in the same order; `bench build <dir> --from
 <generator> --count N --dial D --seed S` regenerates a pack and the same
 arguments give byte-identical tasks. The first three packs are written out in
-full; `logbook-hard` and `memo-rubric` are built with `--lazy`, so their
+full; `logbook-hard`, `memo-rubric` and `recursion-depth` are built with `--lazy`, so their
 `pack.json` holds a generator, dial and seed per task (`from`) and the task
 is regenerated on load. The two forms load to the same task, because every
 generator is a pure function of its dial and seed; the lazy form keeps a
@@ -96,7 +98,9 @@ pack with 118,000-character contexts at a few kilobytes on disk. The dial is
 the generator's hardness knob in `[0, 1]`: it adds notes and distractors for
 `corpus`, years, line items and notes for `statements`, length and
 paraphrase for `contracts`, entries, phrasings, distractors and corrections
-for `logbook`, and length and the amendment for `memo`. The difficulty prior
+for `logbook`, length and the amendment for `memo`, and depth for `nest`
+(1 level at 0, 6 at 1: dials 0.4, 0.6, 0.8 and 1.0 give trees 3, 4, 5 and 6
+levels deep, where every other generator grows wider). The difficulty prior
 on every task is derived from the dial (800 rating points at 0, 1600 at 1, so
 1200 at 0.5); the terminal tasks carry the 1000 baseline and the coding
 steps 1150 to 1350.
@@ -422,6 +426,48 @@ The plan names four measurements; this is how each maps onto the commands.
 - **Damage control**: `playbook_evals` ties every adopted entry to the replay
   eval that admitted it, and `learn playbook` lists reverts, so a regression
   can be traced to the entry that caused it.
+
+## Recursion depth
+
+The other packs are flat: the models almost never spawned a child session
+on them (`evals.depth` is 0 in nearly every cell of the results table, and
+1 or 2 in the handful of exceptions), so they say nothing about how the
+harness behaves when sessions nest. `tasks/recursion-depth` is built for
+that question. Its generator, `nest`, grows deeper as the dial rises where
+every other generator grows wider: a reporting tree whose consolidated
+figures are a recursion exactly as deep as the tree, five tasks at each of
+3, 4, 5 and 6 levels. Nothing forces a model to recurse (a flat recursive
+CTE answers too), so a run records the depth the model chose next to
+whether it was right and what it spent. Group `evals` by the depth a task
+was built for, which its id carries (`k3-01` ... `k6-05`):
+
+```sql
+SELECT substr(task, 1, 2) AS built_for, mode,
+       COUNT(*) AS tasks, SUM(solved::INT) AS solved,
+       ROUND(AVG(depth), 1) AS depth_used, ROUND(AVG(calls), 1) AS calls,
+       ROUND(AVG(dollars), 3) AS dollars
+FROM evals WHERE pack = 'recursion-depth'
+GROUP BY 1, 2 ORDER BY 1, 2
+```
+
+Two harness settings matter here. The harness refuses a child beyond
+`max_depth`, which defaults to 2; the pack states `depth: 6` and `bench run`
+raises the maximum to at least a pack's `depth` (`--max-depth` overrides
+both), so the deepest tasks are not refused by construction. And a child
+gets `child_budget_fraction` (50%) of its parent's *remaining* budget, so
+under a bounded `budget.calls` the budget a session can spend falls
+geometrically with depth; the bench runs with no call budget, so this does
+not bite there, but a depth-6 run under `kleene run --budget-calls` would.
+
+The pack has an offline stand-in for a model: `NestSolver` in
+`kleene_harness::testing` reads the unit and the measure from the task text
+and delegates every sub-unit to a child with `rlm`, the same CallSQL at
+every level, so it reaches exactly the dialled depth and every task passes.
+It is what the integration test runs, and `cargo test --workspace
+--all-features -- --ignored sweep` runs it over the whole pack and prints
+one line per task with the depth reached, calls and tokens. It is not a
+model result; it shows what the harness records when a solver does recurse
+and that the oracles accept the recursion's answer.
 
 ## Recording and replaying
 
