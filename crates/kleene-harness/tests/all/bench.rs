@@ -515,3 +515,193 @@ async fn plain_agent_uses_native_tool_calls_and_the_finish_check_gates_final() {
         && d.description
             .contains("patch(TEXT, TEXT, TEXT) -> (path, replaced, diff)")));
 }
+
+/// The `nest` pack: a delegating solver reaches the dialled depth, the run
+/// records it, and the harness default of two refuses it.
+#[tokio::test]
+async fn the_recursion_depth_pack_records_the_depth_a_delegating_solver_reaches() {
+    use kleene_harness::learn::nest;
+    use kleene_harness::testing::NestSolver;
+    let ws = std::env::temp_dir();
+    // One task at each of depths 3 and 4, kept lazy, as tasks/recursion-depth is.
+    let mut pack = Pack::from_generator("recursion-depth", "nest", 1, 0.4, 1, &ws, true).unwrap();
+    let deeper = Pack::from_generator("recursion-depth", "nest", 1, 0.6, 11, &ws, true).unwrap();
+    for (i, t) in pack.tasks.iter_mut().enumerate() {
+        t.id = format!("k3-{:02}", i + 1);
+    }
+    for (i, mut t) in deeper.tasks.into_iter().enumerate() {
+        t.id = format!("k4-{:02}", i + 1);
+        pack.tasks.push(t);
+    }
+    pack.depth = Some(4);
+    let dir = tempfile::tempdir().unwrap();
+    pack.save(dir.path()).unwrap();
+    let loaded = Pack::load(dir.path()).unwrap();
+    assert_eq!(loaded.depth, Some(4));
+    assert_eq!(loaded.tasks.len(), 2);
+    assert_eq!(nest::levels(0.4), 3);
+    assert_eq!(nest::levels(0.6), 4);
+
+    let pack_dir = dir.path().to_path_buf();
+    let run = |max_depth: u32| {
+        let pack_dir = pack_dir.clone();
+        async move {
+            let store = DuckDbStore::in_memory().unwrap();
+            let trace = store.trace_sink();
+            let solver = Arc::new(NestSolver::new());
+            let cfg = HarnessConfig {
+                workspace: std::env::temp_dir(),
+                provider: Some(solver.clone()),
+                tracer: Some(kleene_trace::Tracer::new(Arc::new(trace.clone()))),
+                max_turns: 2,
+                child_max_turns: 2,
+                max_depth,
+                drop_session_tables: true,
+                ..HarnessConfig::default()
+            };
+            let l = Learn::new(
+                store.clone(),
+                cfg,
+                LearnConfig {
+                    replay_sample: 0,
+                    ..LearnConfig::default()
+                },
+            )
+            .await
+            .unwrap();
+            let loaded = Pack::load(&pack_dir).unwrap();
+            let report = l
+                .bench(&pack_dir, &loaded, Mode::Frozen, None)
+                .await
+                .unwrap();
+            trace.flush().await;
+            // A statement that failed is the first thing to read when a
+            // task did not pass.
+            let errors = store
+                .query("SELECT error, COUNT(*), MIN(sql) FROM trace_statements WHERE error IS NOT NULL GROUP BY error ORDER BY 2 DESC LIMIT 8")
+                .await
+                .unwrap();
+            for r in &errors.rows {
+                eprintln!(
+                    "{} x failed statement:\n{}\n-> {}",
+                    r[1].render(),
+                    r[2].render(),
+                    r[0].render()
+                );
+            }
+            let sessions = store
+                .query("SELECT depth, outcome, COUNT(*) FROM trace_sessions GROUP BY depth, outcome ORDER BY depth")
+                .await
+                .unwrap();
+            for r in &sessions.rows {
+                eprintln!(
+                    "depth {} {}: {}",
+                    r[0].render(),
+                    r[1].render(),
+                    r[2].render()
+                );
+            }
+            let depths = store
+                .query(&format!(
+                    "SELECT task, solved, depth, calls, kind FROM evals WHERE run = '{}' ORDER BY seq",
+                    report.run
+                ))
+                .await
+                .unwrap();
+            let rows: Vec<(String, bool, i64, i64, String)> = depths
+                .rows
+                .iter()
+                .map(|r| {
+                    (
+                        r[0].render(),
+                        r[1].render() == "true",
+                        r[2].render().parse().unwrap(),
+                        r[3].render().parse().unwrap(),
+                        r[4].render(),
+                    )
+                })
+                .collect();
+            (report, rows, solver.calls())
+        }
+    };
+
+    // With the pack's depth honoured every task is solved and the recorded
+    // depth is the dialled one: 3 for k3, 4 for k4.
+    let (report, rows, calls) = run(loaded.depth.unwrap()).await;
+    for r in &report.rows {
+        assert!(r.solved, "{} failed: {}", r.task, r.detail);
+    }
+    for (task, solved, depth, task_calls, kind) in &rows {
+        assert!(solved, "{task}");
+        let k: i64 = task[1..2].parse().unwrap();
+        // A question about a unit one level down needs one level less.
+        let expected = if kind == "nest_unit_total" { k - 1 } else { k };
+        assert_eq!(*depth, expected, "{task} ({kind}) ran {depth} deep");
+        // One call per unit, in one turn each, and at least one unit a
+        // level below the one asked about.
+        assert!(*task_calls > expected, "{task}: {task_calls} calls");
+    }
+    assert!(calls > 0);
+
+    // At the harness default of two the first child beyond it is refused,
+    // so no task that needs three levels is solved and the recorded depth
+    // never passes two.
+    let (_, rows, _) = run(2).await;
+    for (task, solved, depth, _, _) in &rows {
+        assert!(!solved, "{task} solved without the depth it needs");
+        assert!(*depth <= 2, "{task} ran {depth} deep");
+    }
+}
+
+/// The whole `tasks/recursion-depth` pack under the delegating solver, as an
+/// offline stand-in for a model run: prints one line per task with the depth
+/// reached, calls and tokens, then the report. Minutes long, so ignored by
+/// default: `cargo test --workspace --all-features -- --ignored sweep`.
+#[tokio::test]
+#[ignore]
+async fn recursion_depth_pack_offline_sweep() {
+    use kleene_harness::testing::NestSolver;
+    let pack_dir =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tasks/recursion-depth");
+    let pack = Pack::load(&pack_dir).unwrap();
+    let store = DuckDbStore::in_memory().unwrap();
+    let trace = store.trace_sink();
+    let cfg = HarnessConfig {
+        workspace: std::env::temp_dir(),
+        provider: Some(Arc::new(NestSolver::new())),
+        tracer: Some(kleene_trace::Tracer::new(Arc::new(trace.clone()))),
+        max_turns: 3,
+        child_max_turns: 3,
+        max_depth: pack.depth.unwrap_or(2),
+        drop_session_tables: true,
+        ..HarnessConfig::default()
+    };
+    let l = Learn::new(
+        store.clone(),
+        cfg,
+        LearnConfig {
+            replay_sample: 0,
+            ..LearnConfig::default()
+        },
+    )
+    .await
+    .unwrap();
+    let report = l.bench(&pack_dir, &pack, Mode::Frozen, None).await.unwrap();
+    trace.flush().await;
+    let rows = store
+        .query(&format!(
+            "SELECT task, kind, solved, depth, calls, tokens, turns, wall_ms FROM evals WHERE run = '{}' ORDER BY seq",
+            report.run
+        ))
+        .await
+        .unwrap();
+    println!("task,kind,solved,depth,calls,tokens,turns,wall_ms");
+    for r in &rows.rows {
+        println!(
+            "{}",
+            r.iter().map(|v| v.render()).collect::<Vec<_>>().join(",")
+        );
+    }
+    print!("{}", l.bench_summary().await.unwrap().render_table(200));
+    assert!(report.rows.iter().all(|r| r.solved), "{:?}", report.rows);
+}
