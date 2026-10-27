@@ -2,7 +2,7 @@
 
 use crate::adapters::{AnthropicProvider, OpenAiCompatProvider};
 use crate::config::ProviderSettings;
-use crate::router::{RoutedProvider, RouterConfig};
+use crate::router::{ModelPricing, RoutedProvider, RouterConfig};
 use crate::types::ProviderError;
 use crate::Provider;
 use std::collections::HashMap;
@@ -15,6 +15,12 @@ pub const ROUTER_TOML_ENV: &str = "KLEENE_ROUTER_TOML";
 pub const OPENAI_MODEL_ENV: &str = "OPENAI_MODEL";
 /// Fallback for [`OPENAI_MODEL_ENV`].
 pub const DEFAULT_OPENAI_MODEL: &str = "gpt-5.4-mini";
+/// Prices for models the rate cards do not know, layered over the router's
+/// `[pricing]` table: `model=input/output[/cache_read[/cache_write]]` in
+/// dollars per million tokens, several separated by `,`. The model name is
+/// everything before the first `=`, so names with a `/` in them work:
+/// `KLEENE_PRICING="deepseek/deepseek-v4.1-flash=0.28/0.42"`.
+pub const PRICING_ENV: &str = "KLEENE_PRICING";
 
 /// The message when nothing is configured; `kleene setup` is the fix.
 pub const NOT_CONFIGURED: &str = "no model provider configured: run `kleene setup`, or set \
@@ -113,7 +119,53 @@ pub fn provider_from_settings(
             RouterConfig::default_for_openai_compat(&model)
         }
     };
+    let mut config = config;
+    if let Ok(text) = std::env::var(PRICING_ENV) {
+        for (model, price) in parse_pricing(&text)? {
+            config.pricing.insert(&model, price);
+        }
+    }
     Ok(Arc::new(RoutedProvider::new(config, providers)))
+}
+
+/// Parse a [`PRICING_ENV`] value.
+pub fn parse_pricing(text: &str) -> Result<Vec<(String, ModelPricing)>, ProviderError> {
+    let bad = |entry: &str, why: &str| {
+        ProviderError::Other(format!(
+            "{PRICING_ENV}: {why} in {entry:?}; expected model=input/output[/cache_read[/cache_write]] in dollars per million tokens, entries separated by commas"
+        ))
+    };
+    let mut out = vec![];
+    for entry in text.split(',').map(str::trim).filter(|e| !e.is_empty()) {
+        let Some((model, rates)) = entry.split_once('=') else {
+            return Err(bad(entry, "missing ="));
+        };
+        let model = model.trim();
+        if model.is_empty() {
+            return Err(bad(entry, "empty model name"));
+        }
+        let nums: Vec<f64> = rates
+            .split('/')
+            .map(|n| {
+                n.trim()
+                    .parse::<f64>()
+                    .map_err(|_| bad(entry, "a rate is not a number"))
+            })
+            .collect::<Result<_, _>>()?;
+        if nums.len() < 2 || nums.len() > 4 || nums.iter().any(|n| *n < 0.0) {
+            return Err(bad(entry, "two to four non-negative rates"));
+        }
+        out.push((
+            model.to_string(),
+            ModelPricing {
+                input_per_mtok: nums[0],
+                output_per_mtok: nums[1],
+                cache_read_per_mtok: nums.get(2).copied().unwrap_or(0.0),
+                cache_write_per_mtok: nums.get(3).copied().unwrap_or(0.0),
+            },
+        ));
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -178,6 +230,23 @@ mod tests {
             assert_eq!(c[0].provider, "open_responses");
             assert_eq!(c[0].model, "gw-model");
         }
+    }
+
+    #[test]
+    fn pricing_env_parses_models_with_slashes() {
+        let v =
+            parse_pricing("deepseek/deepseek-v4.1-flash-1017=0.28/0.42, local=0/0/0/0").unwrap();
+        assert_eq!(v.len(), 2);
+        assert_eq!(v[0].0, "deepseek/deepseek-v4.1-flash-1017");
+        assert_eq!(v[0].1.input_per_mtok, 0.28);
+        assert_eq!(v[0].1.output_per_mtok, 0.42);
+        assert_eq!(v[0].1.cache_read_per_mtok, 0.0);
+        assert_eq!(v[1].0, "local");
+        for bad in ["model", "=1/2", "m=1", "m=1/2/3/4/5", "m=a/b", "m=-1/2"] {
+            let e = parse_pricing(bad).unwrap_err().to_string();
+            assert!(e.contains(PRICING_ENV), "{bad}: {e}");
+        }
+        assert!(parse_pricing("").unwrap().is_empty());
     }
 
     #[test]
