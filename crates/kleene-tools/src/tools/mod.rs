@@ -15,6 +15,8 @@ pub mod lines;
 pub mod mkdir;
 pub mod patch;
 pub mod read;
+pub mod read_csv;
+pub mod read_json;
 pub mod remove;
 pub mod search;
 pub mod shell;
