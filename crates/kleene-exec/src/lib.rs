@@ -212,6 +212,32 @@ pub async fn execute_statement(
         StatementKind::Final { plan } => Ok(StatementResult::Final(
             collect(execute(plan, ctx).await?).await?,
         )),
+        StatementKind::CreateTable {
+            name,
+            schema,
+            if_not_exists,
+        } => {
+            let created = ctx
+                .sink
+                .create_table(name, Arc::new(schema.clone()), *if_not_exists)
+                .await?;
+            Ok(StatementResult::Affected {
+                rows: 0,
+                message: if created {
+                    format!(
+                        "created table {name} ({}); fill it with INSERT INTO {name} VALUES (...) or INSERT INTO {name} SELECT ...",
+                        schema
+                            .fields
+                            .iter()
+                            .map(|f| format!("{} {}", f.name, f.data_type))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                } else {
+                    format!("table {name} already exists; left unchanged")
+                },
+            })
+        }
         StatementKind::CreateTableAs {
             name,
             plan,

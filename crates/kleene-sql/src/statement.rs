@@ -59,6 +59,17 @@ pub enum StatementKind {
         /// The plan.
         plan: LogicalPlan,
     },
+    /// `CREATE TABLE name (column TYPE, ...)`: an empty table with a
+    /// declared schema, filled by `INSERT`.
+    CreateTable {
+        /// New table name.
+        name: String,
+        /// Declared columns (`NOT NULL` is honoured, other constraints are
+        /// accepted and ignored).
+        schema: kleene_core::Schema,
+        /// `IF NOT EXISTS`.
+        if_not_exists: bool,
+    },
     /// `CREATE TABLE name AS SELECT ...`.
     CreateTableAs {
         /// New table name.
@@ -143,7 +154,8 @@ pub enum StatementKind {
         /// Value as text.
         value: String,
     },
-    /// `FINAL(expr)` or `FINAL FROM (query)`: end the session with an answer relation.
+    /// `FINAL(expr)`, `FINAL FROM (query)` or `FINAL SELECT ...`: end the
+    /// session with an answer relation.
     Final {
         /// The answer.
         plan: LogicalPlan,
