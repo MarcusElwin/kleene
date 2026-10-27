@@ -217,8 +217,17 @@ export OPENAI_MODEL=gpt-5.4-mini          # optional; the model every alias reso
 
 A local server needs only a URL: `OPENAI_BASE_URL=http://localhost:11434/v1`
 with no key. With only this configured, every alias resolves to
-`OPENAI_MODEL` (default `gpt-5.4-mini`) and nothing is priced, so dollar
-budgets and estimates read zero.
+`OPENAI_MODEL` (default `gpt-5.4-mini`), priced from OpenAI's rate card when
+the model is on it. A gateway that reports a cost in the response
+(`usage.cost`, as OpenRouter and the Vercel AI Gateway do) is priced from
+that. Any other model needs a price before a dollar budget can be set:
+
+```bash
+export KLEENE_PRICING="deepseek/deepseek-v4.1-flash-1017=0.28/0.42"   # $/Mtok in/out[/cache read[/cache write]], comma-separated entries
+```
+
+`--budget-dollars` and `SET budget.dollars` are refused with that hint when
+an alias's model has no price, instead of counting every call as $0.
 
 **Both, or your own routing**
 
@@ -373,7 +382,7 @@ kleene run <task|@file> [--context <file>] [--max-turns 30] [--max-depth 2]
 | `--context <file>` | Loaded as table `ctx(ordinal, text)`, one row per blank-line-separated paragraph |
 | `--max-turns` | Turn cap for the root session (default 30); `resume` grants more |
 | `--max-depth` | Deepest child session allowed (default 2); `0` disables `rlm` and `spawn` |
-| `--budget-calls`, `--budget-dollars` | Budget for the whole run including children; a statement whose estimate exceeds what is left is refused with its plan |
+| `--budget-calls`, `--budget-dollars` | Budget for the whole run including children; a statement whose estimate exceeds what is left is refused with its plan. A dollar budget needs a price for every alias's model (the provider's cost report, a rate card, `[pricing]` in the router TOML or `KLEENE_PRICING`) and is refused otherwise |
 | `--check <cmd>` | A shell command run in the workspace whenever the root session writes `FINAL`; a non-zero exit refuses the `FINAL`, renders the output back and the session continues. Give a code task its test command (`--check 'python3 -m unittest -q'`) and it cannot end red |
 | `-q` | Print only the final relation |
 
@@ -683,8 +692,17 @@ the statement makes no calls. `kleene setup --show` says what is configured
 and whether it came from the file or the environment.
 
 **Estimates and dollars are all zero** — the model is not in the pricing
-table. Only the Anthropic defaults come priced; add a `[pricing."model"]`
-section to your router TOML.
+table and the provider reports no cost. Set
+`KLEENE_PRICING="model=input/output"` (dollars per million tokens) or add a
+`[pricing."model"]` section to your router TOML; `--budget-dollars` refuses
+to run until one of them is there.
+
+**Token estimates are below the actuals** — `EXPLAIN` prices a statement's
+own calls (about 750 tokens for a scalar call, a whole agent loop for
+`rlm`/`spawn`); the turn that carries the statement adds its system prompt
+and transcript on top. `EXPLAIN ANALYZE` prints estimate and actual side by
+side, and the trace tables (`trace_sessions`, `trace_calls`) hold every
+actual for a per-model calibration.
 
 **A statement is refused with its plan** — the estimate exceeded the
 remaining call or dollar budget. Raise `--budget-*`, or narrow the query;

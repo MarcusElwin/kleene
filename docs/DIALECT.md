@@ -50,6 +50,19 @@ REC), the rules that fired, the join-order plan space and the alternatives
 priced. `EXPLAIN ANALYZE` also runs it and prints actuals. A statement whose
 estimate exceeds the remaining budget is refused with its plan.
 
+The estimate prices the statement's own calls: a scalar call such as
+`llm_bool(...)` is assumed to be about 600 tokens in and 150 out, and
+`rlm`/`spawn` a whole child session (see [Delegation](#delegation)). It does
+not include the turn that carries the statement itself, whose system
+prompt, catalog and transcript cost a few thousand tokens per turn: that
+is the session's overhead, shown in the budget line after each turn. Call
+counts are exact for scalar calls; tokens and dollars are a forecast, and
+`EXPLAIN ANALYZE` is the way to calibrate it: it prints the estimate and
+the actual side by side, and the measured selectivities and rows per call
+feed the next estimate. Dollars are only forecast and enforced for models
+with a price: the provider's own cost report, the Anthropic and OpenAI rate
+cards, a `[pricing]` section in the router TOML, or `KLEENE_PRICING`.
+
 ## Model calls
 
 Scalar builtins: `llm(prompt [, alias [, effort]]) -> TEXT`,
@@ -163,6 +176,26 @@ the output's tail, and the session continues.
 
 Depth is bounded by the session's `budget.depth`; children's spending rolls
 up into the parent.
+
+A child session is a whole agent loop, not one model call: every turn
+carries the agent system prompt and the child's context, so one `rlm` row
+typically costs several calls and ten thousand tokens or more. `EXPLAIN`
+prices `rlm`/`spawn` that way (a default of four calls and twelve thousand
+tokens per child, replaced by the store's own average once three children
+have finished; the `learned:` line says which) rather than as one call.
+Delegate once and keep the rows, then answer from the table:
+
+```sql
+CREATE TABLE results AS
+SELECT split_part(c.text, ' | ', 1) AS id, r.answer
+FROM ctx c
+CROSS JOIN LATERAL rlm('Summarise this thread in one line: ' || c.text) r;
+
+FINAL FROM (SELECT id, answer FROM results ORDER BY id);
+```
+
+A `FINAL` whose query calls `rlm` or `spawn` is refused with that pattern,
+because a `FINAL` that fails or runs out of budget would repeat every child.
 
 ## Planner rules
 
