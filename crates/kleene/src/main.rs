@@ -66,6 +66,13 @@ enum Command {
         /// Print only the final relation.
         #[arg(long, short = 'q')]
         quiet: bool,
+        /// Load a CSV or JSON file as a table before the first turn:
+        /// `name=path`, or just `path` (the table is named after the
+        /// file). Repeatable. The CSV header names the columns; a JSON
+        /// array of objects, an object holding one array, or JSON Lines
+        /// give one row per element; column types are inferred.
+        #[arg(long = "load", value_name = "NAME=PATH")]
+        load: Vec<String>,
     },
     /// Continue a run whose root session stopped at its turn cap or was
     /// interrupted (`kleene trace "SELECT run, outcome FROM trace_sessions"`).
@@ -85,6 +92,10 @@ enum Command {
         /// Execute this SQL instead of reading stdin.
         #[arg(short = 'c', long)]
         command: Option<String>,
+        /// Load a CSV or JSON file as a table first: `name=path` or
+        /// `path`. Repeatable; see `kleene run --help`.
+        #[arg(long = "load", value_name = "NAME=PATH")]
+        load: Vec<String>,
     },
     /// Print the call plan for a statement without executing it.
     Explain {
@@ -972,6 +983,55 @@ fn socket_path(cli: &Cli, socket: &Option<PathBuf>) -> PathBuf {
     })
 }
 
+/// Parse `--load name=path` (or `--load path`, named after the file's
+/// stem) and read each file as a typed table; unless `quiet`, each one is
+/// announced on stderr with its shape.
+fn load_tables(specs: &[String], quiet: bool) -> anyhow::Result<Vec<(String, kleene_core::Batch)>> {
+    use anyhow::Context;
+    let mut out = vec![];
+    for spec in specs {
+        let (name, path) = match spec.split_once('=') {
+            Some((n, p)) if !n.trim().is_empty() => (n.trim().to_string(), PathBuf::from(p)),
+            _ => {
+                let path = PathBuf::from(spec);
+                let stem = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(|s| {
+                        s.chars()
+                            .map(|c| if c.is_alphanumeric() { c } else { '_' })
+                            .collect::<String>()
+                    })
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "--load {spec}: cannot name a table after that path; use name=path"
+                        )
+                    })?;
+                (stem, path)
+            }
+        };
+        let batch = kleene_tools::tabular::batch_from_file(&path)
+            .with_context(|| format!("--load {spec}"))?;
+        if !quiet {
+            eprintln!(
+                "table {name} from {}: {} rows ({})",
+                path.display(),
+                batch.len(),
+                batch
+                    .schema
+                    .fields
+                    .iter()
+                    .map(|f| format!("{} {}", f.name, f.data_type))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
+        out.push((name, batch));
+    }
+    Ok(out)
+}
+
 fn read_task(task: &str) -> anyhow::Result<String> {
     Ok(match task.strip_prefix('@') {
         Some(path) => std::fs::read_to_string(path)?,
@@ -1295,6 +1355,7 @@ async fn open_harness(
     budget: kleene_core::Budget,
     finish_check: Option<String>,
     quiet: bool,
+    tables: Vec<(String, kleene_core::Batch)>,
 ) -> anyhow::Result<(
     std::sync::Arc<kleene_harness::Harness>,
     kleene_store::DuckDbTraceSink,
@@ -1327,6 +1388,7 @@ async fn open_harness(
         observer: Some(std::sync::Arc::new(pretty::Printer::new(quiet))),
         web_search: web_search_from_env(),
         finish_check,
+        tables,
         ..kleene_harness::HarnessConfig::default()
     };
     let cfg = kleene_harness::HarnessConfig {
@@ -1437,6 +1499,7 @@ async fn main() -> anyhow::Result<()> {
             budget_dollars,
             check,
             quiet,
+            load,
         }) => {
             let task_text = match task.strip_prefix('@') {
                 Some(path) => std::fs::read_to_string(path)?,
@@ -1451,8 +1514,17 @@ async fn main() -> anyhow::Result<()> {
                 dollars: *budget_dollars,
                 ..kleene_core::Budget::unbounded()
             };
-            let (harness, trace) =
-                open_harness(&cli, *max_turns, *max_depth, budget, check.clone(), *quiet).await?;
+            let tables = load_tables(load, *quiet)?;
+            let (harness, trace) = open_harness(
+                &cli,
+                *max_turns,
+                *max_depth,
+                budget,
+                check.clone(),
+                *quiet,
+                tables,
+            )
+            .await?;
             let report = harness.run(&task_text, context).await?;
             trace.flush().await;
             let code = pretty::report(&report);
@@ -1474,6 +1546,7 @@ async fn main() -> anyhow::Result<()> {
                 kleene_core::Budget::unbounded(),
                 None,
                 *quiet,
+                vec![],
             )
             .await?;
             let report = harness.resume(kleene_core::RunId(run_id)).await?;
@@ -1484,8 +1557,11 @@ async fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
-        Some(Command::Repl { command }) => {
+        Some(Command::Repl { command, load }) => {
             let Opened { repl, trace } = open_repl(&cli).await?;
+            for (name, batch) in load_tables(load, false)? {
+                repl.load_table(&name, batch).await?;
+            }
             let mut stdout = std::io::stdout();
             if let Some(sql) = command {
                 let mut failed = false;
