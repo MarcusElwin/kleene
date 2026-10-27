@@ -631,8 +631,12 @@ pub fn split_statements(sql: &str) -> Vec<String> {
                 // A quoted string or dollar-quoted body is copied whole; an
                 // unterminated one runs to the end of the script.
                 let len = kleene_sql::string_len(&sql[at..]).unwrap_or(sql.len() - at);
-                cur.push_str(&sql[at..at + len]);
-                for _ in 1..len {
+                let end = at + len;
+                cur.push_str(&sql[at..end]);
+                // `len` is in bytes and the iterator steps by char: skip
+                // until it has passed the literal, or a multi-byte literal
+                // (Japanese, accents, emoji) eats the SQL that follows it.
+                while chars.peek().is_some_and(|(i, _)| *i < end) {
                     chars.next();
                 }
             }
@@ -723,5 +727,27 @@ mod tests {
         assert_eq!(pieces[2], "FINAL(1)");
         // A dollar sign that opens no quote is ordinary text.
         assert_eq!(split_statements("SELECT 1 AS $x; SELECT 2").len(), 2);
+    }
+
+    #[test]
+    fn multi_byte_literals_keep_the_sql_after_them() {
+        // The literal's length is in bytes; the text after it must survive
+        // whole (a regression: the splitter once skipped that many chars).
+        let script = "SELECT 'ループエンジニアリング' AS a, text FROM ctx WHERE text LIKE '%予算%'; SELECT 'é' AS e, 2 AS n; CALL write_file('x.txt', $$日本語; テキスト$$)";
+        let pieces = split_statements(script);
+        assert_eq!(
+            pieces,
+            [
+                "SELECT 'ループエンジニアリング' AS a, text FROM ctx WHERE text LIKE '%予算%'",
+                "SELECT 'é' AS e, 2 AS n",
+                "CALL write_file('x.txt', $$日本語; テキスト$$)",
+            ]
+        );
+        let long = "あ".repeat(900);
+        let script =
+            format!("INSERT INTO t SELECT '{long}' AS text UNION ALL SELECT 'b'; SELECT 1");
+        let pieces = split_statements(&script);
+        assert_eq!(pieces.len(), 2, "{pieces:?}");
+        assert!(pieces[0].ends_with("UNION ALL SELECT 'b'"), "{}", pieces[0]);
     }
 }
