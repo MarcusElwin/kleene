@@ -699,3 +699,35 @@ fn batchable_functions_are_estimated_per_batch() {
     }];
     assert!((cost.calls_for(&plain, 41.0).calls - 41.0).abs() < 1e-9);
 }
+
+#[test]
+fn child_sessions_are_priced_as_agent_loops() {
+    let cost = CostModel::default();
+    let kinds = [CallKind::Recursive {
+        role: "self".into(),
+    }];
+    let est = cost.calls_for(&kinds, 3.0);
+    assert!((est.calls - 12.0).abs() < 1e-9, "{}", est.calls);
+    assert!((est.tokens - 36_000.0).abs() < 1e-9, "{}", est.tokens);
+    assert!(est.dollars > 0.0);
+    let note = cost.child_note();
+    assert!(note.contains("~4 calls, ~12000 tokens"), "{note}");
+    assert!(
+        note.contains("a default until a child session has run"),
+        "{note}"
+    );
+    let learned = CostModel {
+        child_calls: 4.3,
+        child_tokens: 11_700.0,
+        child_dollars: Some(0.01),
+        child_learned: 3,
+        ..CostModel::default()
+    };
+    assert!((learned.calls_for(&kinds, 1.0).dollars - 0.01).abs() < 1e-9);
+    assert!(learned
+        .child_note()
+        .contains("measured over 3 child sessions"));
+    let notes = learned.learned_notes(&["rlm".to_string()]);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(learned.learned_notes(&["verify".to_string()]).is_empty());
+}
