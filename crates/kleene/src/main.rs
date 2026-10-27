@@ -5,6 +5,10 @@
 mod hf;
 mod pretty;
 
+/// The dialect reference shipped in the binary (`kleene dialect`), so the
+/// documentation a user reads is the one that matches the build.
+const DIALECT: &str = include_str!("../../../docs/DIALECT.md");
+
 use clap::{Parser, Subcommand};
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
@@ -86,6 +90,10 @@ enum Command {
         #[arg(short = 'c', long)]
         command: Option<String>,
     },
+    /// Print the CallSQL dialect reference (docs/DIALECT.md of this
+    /// build): the statements, functions, tools and forms this binary
+    /// accepts. Pipe it to a file or a pager.
+    Dialect,
     /// Print the call plan for a statement without executing it.
     Explain {
         /// CallSQL text.
@@ -1536,6 +1544,14 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
             trace.flush().await;
+            Ok(())
+        }
+        Some(Command::Dialect) => {
+            // Raw bytes: the reference holds non-ASCII examples and must
+            // survive a redirect on a cp932 console.
+            let mut stdout = std::io::stdout().lock();
+            stdout.write_all(DIALECT.as_bytes())?;
+            stdout.flush()?;
             Ok(())
         }
         Some(Command::Explain { sql }) => {

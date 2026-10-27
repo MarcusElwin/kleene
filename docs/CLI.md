@@ -8,8 +8,8 @@ flags as compiled.
 - [Set up a model provider](#configuring-a-model-provider) (`kleene setup`)
 - [First run](#first-run)
 - [Global flags and files](#global-flags-and-files)
-- [Commands](#commands): `run`, `resume`, `repl`, `explain`, `trace`, `tui`,
-  `attach`, `daemon`, `learn`, `bench`
+- [Commands](#commands): `run`, `resume`, `repl`, `explain`, `dialect`,
+  `trace`, `tui`, `attach`, `daemon`, `learn`, `bench`
 - [Working from source](#working-from-source)
 - [Troubleshooting](#troubleshooting)
 
@@ -432,6 +432,14 @@ kleene explain "SELECT c FROM candidates WHERE llm_bool('Is ' || c || ' a real p
 ```
 
 `EXPLAIN ANALYZE <statement>` inside `repl` also runs it and prints actuals.
+
+### `kleene dialect`
+
+Print the CallSQL reference that matches this binary: a copy of
+[`DIALECT.md`](DIALECT.md) is compiled in, so `kleene dialect | less` (or
+`> dialect.md`) answers "is this statement supported in the version I have"
+without a trip to the repository. It is the page to hand an agent model that
+writes CallSQL for you.
 
 ### `kleene trace <sql>`
 
