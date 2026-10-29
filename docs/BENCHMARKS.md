@@ -464,6 +464,27 @@ FROM evals WHERE pack = 'recursion-depth'
 GROUP BY 1, 2 ORDER BY 1, 2
 ```
 
+The first real run, Claude Haiku 4.5 in frozen mode on 2026-10-29
+(`plots/haiku-recursion-2026-10-29/`, `--budget-dollars 1` per task,
+$3.66 in all):
+
+| built for | solved | depth used | calls per task | tokens per task | dollars |
+|---|---|---|---|---|---|
+| k3 | 2/5 | 0 | 14.6 | 339k | $0.95 |
+| k4 | 2/5 | 0 | 23.6 | 318k | $0.79 |
+| k5 | 1/5 | 0 | 19.0 | 457k | $1.13 |
+| k6 | 2/5 | 0 | 23.0 | 346k | $0.79 |
+
+Haiku never delegated: every task was flat SQL over `ctx`, right on the
+structural questions (levels, units counted) and wrong on the consolidated
+figures, where corrections and excluded subtrees have to be combined. The
+run also found the harness holes this pack was built to find: a
+`WITH RECURSIVE ... UNION ALL` with no bound grew to 14 GB inside the
+recursion loop before the OOM killer stopped the process (now a row cap
+and an error), a `FINAL` could not read a table its own reply had created,
+and child sessions nested on the thread stack (both fixed in the same
+change).
+
 Two harness settings matter here. The harness refuses a child beyond
 `max_depth`, which defaults to 2; the pack states `depth: 6` and `bench run`
 raises the maximum to at least a pack's `depth` (`--max-depth` overrides
