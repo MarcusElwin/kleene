@@ -48,6 +48,21 @@ pub struct CostModel {
     /// `call_selectivity` or `call_branching`, by function name; `EXPLAIN`
     /// lists them so the model knows which estimates are measured.
     pub learned: HashMap<String, u64>,
+    /// Model calls one child session (`rlm`, `spawn`) makes: every turn is
+    /// a call carrying the agent system prompt, plus the calls the child's
+    /// own statements make. The harness replaces the default with the
+    /// average over the store's finished child sessions once a few ran.
+    pub child_calls: f64,
+    /// Tokens one child session spends in all, system prompt, context and
+    /// replies included, which is why a child costs far more than one
+    /// `llm()` call.
+    pub child_tokens: f64,
+    /// Dollars one child session spends, when measured; `None` prices
+    /// `child_tokens` at this model's rates (85% input, 15% output).
+    pub child_dollars: Option<f64>,
+    /// Finished child sessions behind `child_calls` and `child_tokens`;
+    /// 0 means the defaults are in use.
+    pub child_learned: u64,
 }
 
 impl Default for CostModel {
@@ -68,6 +83,10 @@ impl Default for CostModel {
             alias_factor: HashMap::from([("proxy".to_string(), 0.1)]),
             call_branching: HashMap::new(),
             learned: HashMap::new(),
+            child_calls: 4.0,
+            child_tokens: 12_000.0,
+            child_dollars: None,
+            child_learned: 0,
         }
     }
 }
@@ -101,6 +120,36 @@ impl CostModel {
             .unwrap_or(1.0)
     }
 
+    /// Cost of one child session (`rlm`, `spawn`): its turns and their
+    /// tokens, measured when the store has seen children, else the defaults.
+    pub fn child_session(&self) -> Estimate {
+        let dollars = self.child_dollars.unwrap_or(
+            self.child_tokens
+                * (0.85 * self.usd_per_input_token + 0.15 * self.usd_per_output_token),
+        );
+        Estimate {
+            rows: 0.0,
+            calls: self.child_calls,
+            tokens: self.child_tokens,
+            dollars,
+            depth: 0,
+        }
+    }
+
+    /// The `EXPLAIN` note on how child sessions are priced.
+    pub fn child_note(&self) -> String {
+        let e = self.child_session();
+        let basis = if self.child_learned > 0 {
+            format!("measured over {} child sessions", self.child_learned)
+        } else {
+            "a default until a child session has run".to_string()
+        };
+        format!(
+            "rlm/spawn: ~{:.0} calls, ~{:.0} tokens and ~${:.4} per child session ({basis}); a child's turns each carry the agent prompt, so it costs more than one llm() call",
+            e.calls, e.tokens, e.dollars
+        )
+    }
+
     /// Cost of `n` invocations of each call in `kinds`.
     pub fn calls_for(&self, kinds: &[CallKind], n: f64) -> Estimate {
         let mut est = Estimate::default();
@@ -111,7 +160,17 @@ impl CostModel {
                 CallKind::LlmScalar { alias, .. } | CallKind::LlmTable { alias } => {
                     self.factor(&alias.0)
                 }
-                CallKind::Recursive { .. } => 1.0,
+                CallKind::Recursive { .. } => {
+                    let child = self.child_session();
+                    est = est.plus(Estimate {
+                        rows: 0.0,
+                        calls: n * child.calls,
+                        tokens: n * child.tokens,
+                        dollars: n * child.dollars,
+                        depth: 0,
+                    });
+                    continue;
+                }
             };
             // A batchable prompt answers `batch` tuples per call.
             let n = match k {
@@ -144,6 +203,12 @@ impl CostModel {
     pub fn learned_notes(&self, call_names: &[String]) -> Vec<String> {
         let mut seen: Vec<&String> = vec![];
         let mut out = vec![];
+        if call_names
+            .iter()
+            .any(|n| matches!(n.as_str(), "rlm" | "spawn" | "spawn_async"))
+        {
+            out.push(self.child_note());
+        }
         for name in call_names {
             if seen.contains(&name) {
                 continue;

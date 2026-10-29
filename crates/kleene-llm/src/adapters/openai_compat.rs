@@ -483,6 +483,10 @@ struct ChatUsage {
     #[serde(default)]
     completion_tokens: u64,
     prompt_tokens_details: Option<PromptTokensDetails>,
+    /// Gateways (OpenRouter, Vercel AI Gateway) add the call's cost in
+    /// dollars under `usage.cost`; OpenAI itself sends none.
+    #[serde(default, alias = "cost_usd")]
+    cost: Option<f64>,
 }
 
 #[derive(Deserialize, Default, Clone, Copy)]
@@ -501,7 +505,7 @@ impl ChatUsage {
             output_tokens: self.completion_tokens,
             cache_read_tokens: cached,
             cache_write_tokens: 0,
-            cost_usd: None,
+            cost_usd: self.cost,
         }
     }
 }

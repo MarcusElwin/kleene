@@ -491,7 +491,11 @@ impl LiveSink {
                 self.budget.lock().await.budget.tokens = Some(value.parse().map_err(|_| bad("expects an integer"))?);
             }
             "budget.dollars" => {
-                self.budget.lock().await.budget.dollars = Some(value.parse().map_err(|_| bad("expects a number"))?);
+                let dollars: f64 = value.parse().map_err(|_| bad("expects a number"))?;
+                if let Some(why) = self.provider.as_deref().and_then(unpriced) {
+                    return Err(bad(&why));
+                }
+                self.budget.lock().await.budget.dollars = Some(dollars);
             }
             "budget.depth" => {
                 self.budget.lock().await.budget.max_depth = Some(value.parse().map_err(|_| bad("expects an integer"))?);
@@ -1842,6 +1846,50 @@ pub fn is_side_effect(def: &FunctionDef) -> bool {
 }
 
 #[cfg(test)]
+mod unpriced_tests {
+    use super::*;
+    use kleene_llm::{Capabilities, CompletionRequest, CompletionResponse, ProviderError};
+
+    struct Silent {
+        priced: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for Silent {
+        fn name(&self) -> &str {
+            "silent"
+        }
+        fn capabilities(&self) -> Capabilities {
+            Capabilities {
+                cost_reported: self.priced,
+                ..Capabilities::default()
+            }
+        }
+        fn model_for(&self, alias: &str) -> Option<String> {
+            (alias == "root" || alias == "worker").then(|| "mystery/model-1".to_string())
+        }
+        async fn complete(
+            &self,
+            _: CompletionRequest,
+        ) -> Result<CompletionResponse, ProviderError> {
+            Err(ProviderError::Other("unused".into()))
+        }
+    }
+
+    #[test]
+    fn an_unpriced_alias_names_the_model_and_the_fix() {
+        let why = unpriced(&Silent { priced: false }).expect("unpriced");
+        assert!(why.contains("alias root (model mystery/model-1)"), "{why}");
+        assert!(
+            why.contains("KLEENE_PRICING=\"mystery/model-1=<input>/<output>\""),
+            "{why}"
+        );
+        assert!(why.contains("--budget-calls"), "{why}");
+        assert!(unpriced(&Silent { priced: true }).is_none());
+    }
+}
+
+#[cfg(test)]
 mod batch_tests {
     use super::*;
 
@@ -1899,4 +1947,23 @@ mod batch_tests {
         assert_eq!(def(Some(5)).batch(), Some(5));
         assert_eq!(def(Some(1)).batch(), None);
     }
+}
+
+/// Why a dollar budget cannot be enforced on `provider`, if it cannot: an
+/// alias whose model neither reports cost nor has a price would be charged
+/// $0 per call, which is the silent failure the message prevents. The four
+/// standard aliases are checked; one with no candidates is skipped.
+pub fn unpriced(provider: &dyn Provider) -> Option<String> {
+    for alias in ["root", "worker", "proxy", "judge"] {
+        let Some(model) = provider.model_for(alias) else {
+            continue;
+        };
+        if provider.cost_known(alias) {
+            continue;
+        }
+        return Some(format!(
+            "budget.dollars cannot be enforced: calls through alias {alias} (model {model}) report no cost and no price is configured, so every call would count as $0. Set KLEENE_PRICING=\"{model}=<input>/<output>\" (dollars per million tokens), add [pricing.\"{model}\"] to the router TOML, or budget by calls (budget.calls, --budget-calls) instead"
+        ));
+    }
+    None
 }

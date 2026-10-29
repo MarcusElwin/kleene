@@ -275,6 +275,27 @@ async fn spawn_runs_declared_agents_with_restricted_tools() {
 }
 
 #[tokio::test]
+async fn final_that_delegates_is_refused_with_the_pattern() {
+    let bad = sql("FINAL FROM (SELECT answer FROM rlm('q', 'c'))");
+    let fin = sql("FINAL(1)");
+    let f = fixture(
+        vec![
+            ("refused: FINAL would start child sessions", fin.as_str()),
+            ("# Task", bad.as_str()),
+        ],
+        |_| {},
+    )
+    .await;
+    let report = f.harness.run("Delegate then answer.", None).await.unwrap();
+    let text = &report.root.transcript[0].results[0].text;
+    assert!(text.contains("CREATE TABLE results AS"), "{text}");
+    assert!(text.contains("rlm/spawn: ~4 calls"), "{text}");
+    assert_eq!(final_rows(&report), vec![vec![kleene_core::Value::Int(1)]]);
+    // No child ran.
+    assert_eq!(f.provider.calls(), 2);
+}
+
+#[tokio::test]
 async fn depth_and_budgets_are_enforced() {
     // Depth 0: rlm is refused with a clear error.
     let try_rlm = sql("SELECT * FROM rlm('q', 'c')");
@@ -308,16 +329,14 @@ async fn depth_and_budgets_are_enforced() {
     assert_eq!(report.root.turns, 2);
     assert_eq!(f.provider.calls(), 1);
 
-    // A child that would get zero calls is refused up front, with the
-    // parent's remaining budget in the message, instead of dying on its
-    // first call.
+    // A child that the remaining budget cannot pay for is refused up front
+    // by the estimate (a child session is priced as an agent loop, four
+    // calls by default), with the plan and the remaining budget in the
+    // message, instead of dying on its first call.
     let try_rlm = sql("SELECT * FROM rlm('q', 'c')");
     let fin = sql("FINAL(0)");
     let f = fixture(
-        vec![
-            ("Statement failed", fin.as_str()),
-            ("# Task", try_rlm.as_str()),
-        ],
+        vec![("refused:", fin.as_str()), ("# Task", try_rlm.as_str())],
         |c| {
             c.budget = Budget {
                 calls: Some(2),
@@ -328,9 +347,10 @@ async fn depth_and_budgets_are_enforced() {
     .await;
     let report = f.harness.run("Delegate.", None).await.unwrap();
     let text = &report.root.transcript[0].results[0].text;
-    assert!(text.contains("rlm refused"), "{text}");
-    assert!(text.contains("1 of budget.calls 2 remain"), "{text}");
-    assert!(text.contains("SET budget.calls"), "{text}");
+    assert!(text.contains("estimated at ~4 calls"), "{text}");
+    assert!(text.contains("remaining budget is 1 calls"), "{text}");
+    assert!(text.contains("per child session"), "{text}");
+    assert_eq!(final_rows(&report), vec![vec![kleene_core::Value::Int(0)]]);
 
     // A child's slice is bounded by the role budget and rolls up.
     let declare = sql("CREATE AGENT tiny BUDGET (calls 1) PROMPT 'x';\nCREATE TABLE r AS SELECT answer, detail FROM spawn('tiny', 'Do the tiny job.') s;\nSELECT answer, detail FROM r");
