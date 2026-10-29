@@ -37,6 +37,10 @@ indicatif = "0.18"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-native-roots"] }
 parquet = { version = "60", default-features = false }
 
+[target.'cfg(windows)'.dependencies]
+# The console code-page calls in src/console.rs (issue #72).
+windows-sys = { version = "0.61", features = ["Win32_System_Console"] }
+
 [features]
 default = ["gateway"]
 # The Open Responses gateway adapter and its page in the setup wizard.

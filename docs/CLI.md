@@ -107,20 +107,27 @@ Text in and out is UTF-8. A context or task file written by an editor or
 by PowerShell's `Set-Content -Encoding utf8` loads as is (a byte-order mark
 is fine); a file in the console code page (cp932, cp1252, ...) is refused
 with a message naming the fix, never loaded as mojibake. Output written to
-the console displays correctly whatever the code page. Output that is
-redirected or piped (`kleene run ... > log.txt`, `| Tee-Object`) is raw
-UTF-8 bytes, which PowerShell decodes with the console code page unless it
-is told otherwise, so Japanese and box-drawing characters in a log look
-garbled while the data itself is intact. Set the console to UTF-8 once per
-session before piping:
+the console displays correctly whatever the code page.
+
+Output that is redirected or piped (`kleene run ... > log.txt`, `|
+Tee-Object`) is raw UTF-8 bytes, which PowerShell decodes with the console
+code page. So that Japanese and box-drawing characters survive the trip,
+`kleene` switches the console it is attached to from its code page (932,
+1252, ...) to UTF-8 (65001) when it starts and puts the old one back when
+it exits, the way `chcp 65001` would; `kleene setup --show` prints the
+code page it found. When that switch is not possible (no console attached,
+or the call refused) and non-ASCII text is about to go down a pipe, one
+hint on stderr names the code page and the fix. For output of other
+programs in the same session, or to make the setting permanent, set the
+console to UTF-8 yourself:
 
 ```powershell
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 ```
 
-or `chcp 65001` in `cmd.exe`, or write the final relation to a file with
-`kleene run ... --out answer.json`, which is UTF-8 regardless of the console.
+or `chcp 65001` in `cmd.exe`. `kleene run ... --json` and `--out
+answer.json` write UTF-8 regardless of the console.
 
 ### Check
 
