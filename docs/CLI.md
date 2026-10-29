@@ -103,6 +103,25 @@ things differ from Unix:
 
 The installer script and the Homebrew formula are Unix only.
 
+Text in and out is UTF-8. A context or task file written by an editor or
+by PowerShell's `Set-Content -Encoding utf8` loads as is (a byte-order mark
+is fine); a file in the console code page (cp932, cp1252, ...) is refused
+with a message naming the fix, never loaded as mojibake. Output written to
+the console displays correctly whatever the code page. Output that is
+redirected or piped (`kleene run ... > log.txt`, `| Tee-Object`) is raw
+UTF-8 bytes, which PowerShell decodes with the console code page unless it
+is told otherwise, so Japanese and box-drawing characters in a log look
+garbled while the data itself is intact. Set the console to UTF-8 once per
+session before piping:
+
+```powershell
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+```
+
+or `chcp 65001` in `cmd.exe`, or write the final relation to a file with
+`kleene run ... --out answer.json`, which is UTF-8 regardless of the console.
+
 ### Check
 
 ```bash
@@ -366,17 +385,20 @@ streamed.
 ```
 kleene run <task|@file> [--context <file>] [--load name=file.csv ...] [--max-turns 30]
               [--max-depth 2] [--budget-calls N] [--budget-dollars X] [--check <cmd>] [-q|--quiet]
+              [--json] [--out <file>]
 ```
 
 | Flag | Meaning |
 |---|---|
-| `--context <file>` | Loaded as table `ctx(ordinal, text)`, one row per blank-line-separated paragraph |
+| `--context <file>` | Loaded as table `ctx(ordinal, text)`, one row per blank-line-separated paragraph (a file without blank lines is one row). UTF-8 with or without a byte-order mark, or UTF-16 with one; CRLF and LF both work. The run prints what it loaded (bytes, paragraphs, characters, tokens) on stderr, and a file in another encoding is refused with the fix |
 | `--load name=path` | Load a CSV or JSON file as table `name` before the first turn (`--load path` names it after the file); repeatable. The CSV header names the columns; a JSON array of objects, an object holding one array, or JSON Lines give one row per element; column types are inferred (`BIGINT`, `DOUBLE`, `BOOLEAN`, `JSON`, else `TEXT`; an empty CSV field is `NULL`). Files are UTF-8 (a byte-order mark is fine). `kleene repl --load` takes the same |
 | `--max-turns` | Turn cap for the root session (default 30); `resume` grants more |
 | `--max-depth` | Deepest child session allowed (default 2); `0` disables `rlm` and `spawn` |
 | `--budget-calls`, `--budget-dollars` | Budget for the whole run including children; a statement whose estimate exceeds what is left is refused with its plan |
 | `--check <cmd>` | A shell command run in the workspace whenever the root session writes `FINAL`; a non-zero exit refuses the `FINAL`, renders the output back and the session continues. Give a code task its test command (`--check 'python3 -m unittest -q'`) and it cannot end red |
 | `-q` | Print only the final relation |
+| `--json` | Print the result as JSON on stdout instead of a table (implies `-q`): the final relation as an array of objects keyed by column, or `{"run", "outcome", "detail"}` with exit code 3 when there was no `FINAL`. Written as UTF-8 bytes, so it survives a redirect on any console |
+| `--out <file>` | Also write the final relation to a file: CSV when the name ends in `.csv`, else a JSON array of objects. UTF-8 regardless of the console |
 
 The run id is printed with the result and stored in `trace_runs`. The
 session's earlier turns are folded into the table `turns(run, n, sql, result)`

@@ -540,6 +540,55 @@ pub fn report(report: &kleene_harness::RunReport) -> i32 {
     }
 }
 
+/// The `--json` report: on stdout, the final relation as a JSON array of
+/// objects, or `{"run": ..., "outcome": ..., "detail": ...}` when there was
+/// no FINAL. Spending goes to stderr. Returns the exit code.
+pub fn report_json(report: &kleene_harness::RunReport) -> i32 {
+    let (value, code) = match &report.root.outcome {
+        Outcome::Final { answer } => (answer.to_json(), 0),
+        other => {
+            let detail = match other {
+                Outcome::BudgetExhausted { detail } => detail.clone(),
+                Outcome::TurnsExhausted => {
+                    format!(
+                        "turn cap reached; `kleene resume {}` continues it",
+                        report.run
+                    )
+                }
+                Outcome::Failed { error } => error.clone(),
+                Outcome::Cancelled => "cancelled".into(),
+                Outcome::Final { .. } => unreachable!(),
+            };
+            (
+                serde_json::json!({
+                    "run": report.run.to_string(),
+                    "outcome": other.tag(),
+                    "detail": detail,
+                }),
+                3,
+            )
+        }
+    };
+    let text = serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string());
+    // Bytes, not a console write, so the output is UTF-8 on every platform
+    // and survives a redirect; the console's own code page is not involved.
+    use std::io::Write as _;
+    let mut stdout = std::io::stdout().lock();
+    let _ = stdout.write_all(text.as_bytes());
+    let _ = stdout.write_all(b"\n");
+    let _ = stdout.flush();
+    eprintln!(
+        "run {} · {} · {} turns · {} calls · {} tok · ${:.4}",
+        report.run,
+        report.root.outcome.tag(),
+        report.root.turns,
+        report.root.usage.calls,
+        human(report.root.usage.tokens),
+        report.root.usage.dollars
+    );
+    code
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -45,6 +45,10 @@ pub struct ContextSummary {
     pub rows: u64,
     /// Characters across all rows.
     pub chars: u64,
+    /// Approximate tokens ([`crate::approx_tokens`]): a character outside
+    /// ASCII counts as one, so Japanese text is not under-counted four to
+    /// one.
+    pub tokens: u64,
     /// Digest of the context text, so two sessions with the same task over
     /// different contexts never share a memo entry or a cached transcript.
     pub digest: u64,
@@ -60,6 +64,7 @@ impl ContextSummary {
         Self {
             rows,
             chars: text.chars().count() as u64,
+            tokens: crate::approx_tokens(text),
             digest: u64::from_be_bytes(bytes),
         }
     }
@@ -409,7 +414,7 @@ pub fn task_message(
             "\nThe context is loaded as table ctx(ordinal, text): {} row{}, about {} tokens, digest {:016x}. Peek and partition it; do not SELECT it whole.\n",
             c.rows,
             if c.rows == 1 { "" } else { "s" },
-            c.chars / 4,
+            c.tokens,
             c.digest
         );
     }
@@ -711,6 +716,7 @@ mod tests {
             Some(&ContextSummary {
                 rows: 12,
                 chars: 4000,
+                tokens: 1000,
                 digest: 0xabc,
             }),
             None,

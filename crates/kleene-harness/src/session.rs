@@ -1473,7 +1473,7 @@ fn child_relation(report: &SessionReport, with_session: bool) -> Batch {
             .map(|r| {
                 let mut obj = serde_json::Map::new();
                 for (f, v) in answer.schema.fields.iter().zip(r) {
-                    obj.insert(f.name.clone(), value_json(v));
+                    obj.insert(f.name.clone(), v.to_json());
                 }
                 let first = match r.first() {
                     Some(Value::Null) | None => Value::Null,
@@ -1506,24 +1506,6 @@ fn child_relation(report: &SessionReport, with_session: bool) -> Batch {
         }
     };
     Batch::try_new(schema.clone(), rows).unwrap_or_else(|_| Batch::empty(schema))
-}
-
-fn value_json(v: &Value) -> serde_json::Value {
-    match v {
-        Value::Null => serde_json::Value::Null,
-        Value::Bool(b) => serde_json::Value::Bool(*b),
-        Value::Int(i) => serde_json::Value::from(*i),
-        Value::Float(f) => serde_json::Number::from_f64(*f)
-            .map(serde_json::Value::Number)
-            .unwrap_or_else(|| serde_json::Value::String(f.to_string())),
-        Value::Text(s) => serde_json::Value::String(s.clone()),
-        Value::Json(j) => j.clone(),
-        Value::Vector(v) => serde_json::Value::Array(
-            v.iter()
-                .map(|x| serde_json::Value::from(f64::from(*x)))
-                .collect(),
-        ),
-    }
 }
 
 /// Split a context into paragraphs (blank-line separated, trimmed, non-empty);
