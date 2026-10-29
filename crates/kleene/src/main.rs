@@ -7,7 +7,7 @@ mod pretty;
 
 use clap::{Parser, Subcommand};
 use std::io::{BufRead, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// The wordmark shown by `kleene --help` and by `kleene` outside a terminal.
@@ -66,6 +66,16 @@ enum Command {
         /// Print only the final relation.
         #[arg(long, short = 'q')]
         quiet: bool,
+        /// Print the result as JSON on stdout instead of a table: the final
+        /// relation as an array of objects keyed by column, or, without a
+        /// FINAL, an object naming the outcome. Implies --quiet.
+        #[arg(long)]
+        json: bool,
+        /// Also write the final relation to this file, UTF-8 whatever the
+        /// console's code page: JSON (an array of objects), or CSV when
+        /// the name ends in .csv.
+        #[arg(long)]
+        out: Option<PathBuf>,
     },
     /// Continue a run whose root session stopped at its turn cap or was
     /// interrupted (`kleene trace "SELECT run, outcome FROM trace_sessions"`).
@@ -911,7 +921,7 @@ async fn run_learn(cli: &Cli, action: &LearnAction) -> anyhow::Result<()> {
             check,
         } => {
             let context = match context {
-                Some(p) => Some(std::fs::read_to_string(p)?),
+                Some(p) => Some(read_context(p, true)?),
                 None => None,
             };
             let verify = match (expect, check) {
@@ -987,9 +997,58 @@ fn socket_path(cli: &Cli, socket: &Option<PathBuf>) -> PathBuf {
 
 fn read_task(task: &str) -> anyhow::Result<String> {
     Ok(match task.strip_prefix('@') {
-        Some(path) => std::fs::read_to_string(path)?,
+        Some(path) => kleene_harness::read_text_file(Path::new(path))?,
         None => task.to_string(),
     })
+}
+
+/// Write a run's final relation to `path`: CSV when the name ends in
+/// `.csv`, else a JSON array of objects. A run without a FINAL writes
+/// nothing and says so on stderr.
+fn write_answer(path: &Path, report: &kleene_harness::RunReport) -> anyhow::Result<()> {
+    use anyhow::Context;
+    let kleene_harness::Outcome::Final { answer } = &report.root.outcome else {
+        eprintln!(
+            "kleene: no FINAL ({}), nothing written to {}",
+            report.root.outcome.tag(),
+            path.display()
+        );
+        return Ok(());
+    };
+    let csv = path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("csv"));
+    let text = if csv {
+        answer.render_csv()
+    } else {
+        let mut t = serde_json::to_string_pretty(&answer.to_json())?;
+        t.push('\n');
+        t
+    };
+    std::fs::write(path, text).with_context(|| format!("writing {}", path.display()))?;
+    Ok(())
+}
+
+/// Read a `--context` file (UTF-8 with or without a BOM, or UTF-16 with
+/// one) and, unless `quiet`, say on stderr what was loaded: bytes,
+/// paragraphs and characters, so a wrong encoding or a missing blank line
+/// shows up before the model sees it.
+fn read_context(path: &Path, quiet: bool) -> anyhow::Result<String> {
+    use anyhow::Context;
+    let bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    let text = kleene_harness::read_text_file(path)
+        .with_context(|| format!("reading context {}", path.display()))?;
+    if !quiet {
+        let rows = kleene_harness::paragraphs(&text).len();
+        eprintln!(
+            "context {}: {bytes} bytes, {rows} paragraph{} (blank-line separated), {} chars, about {} tokens",
+            path.display(),
+            if rows == 1 { "" } else { "s" },
+            text.chars().count(),
+            kleene_harness::approx_tokens(&text)
+        );
+    }
+    Ok(text)
 }
 
 fn start_request(
@@ -1001,7 +1060,7 @@ fn start_request(
         return Ok(None);
     };
     let context = match context {
-        Some(p) => Some(std::fs::read_to_string(p)?),
+        Some(p) => Some(read_context(p, true)?),
         None => None,
     };
     Ok(Some(kleene_daemon::ClientRequest::StartRun {
@@ -1450,13 +1509,13 @@ async fn main() -> anyhow::Result<()> {
             budget_dollars,
             check,
             quiet,
+            json,
+            out,
         }) => {
-            let task_text = match task.strip_prefix('@') {
-                Some(path) => std::fs::read_to_string(path)?,
-                None => task.clone(),
-            };
+            let quiet = *quiet || *json;
+            let task_text = read_task(task)?;
             let context = match context {
-                Some(p) => Some(std::fs::read_to_string(p)?),
+                Some(p) => Some(read_context(p, quiet)?),
                 None => None,
             };
             let budget = kleene_core::Budget {
@@ -1465,10 +1524,17 @@ async fn main() -> anyhow::Result<()> {
                 ..kleene_core::Budget::unbounded()
             };
             let (harness, trace) =
-                open_harness(&cli, *max_turns, *max_depth, budget, check.clone(), *quiet).await?;
+                open_harness(&cli, *max_turns, *max_depth, budget, check.clone(), quiet).await?;
             let report = harness.run(&task_text, context).await?;
             trace.flush().await;
-            let code = pretty::report(&report);
+            if let Some(path) = out {
+                write_answer(path, &report)?;
+            }
+            let code = if *json {
+                pretty::report_json(&report)
+            } else {
+                pretty::report(&report)
+            };
             if code != 0 {
                 std::process::exit(code);
             }

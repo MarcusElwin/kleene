@@ -58,6 +58,53 @@ impl Batch {
         self.rows.iter().map(move |r| &r[idx])
     }
 
+    /// The rows as a JSON array of objects keyed by column name, in column
+    /// order; the shape `kleene run --json` and `--out file.json` write.
+    pub fn to_json(&self) -> serde_json::Value {
+        let names = self.schema.names();
+        serde_json::Value::Array(
+            self.rows
+                .iter()
+                .map(|r| {
+                    let mut obj = serde_json::Map::new();
+                    for (name, v) in names.iter().zip(r) {
+                        obj.insert(name.to_string(), v.to_json());
+                    }
+                    serde_json::Value::Object(obj)
+                })
+                .collect(),
+        )
+    }
+
+    /// Render as CSV (RFC 4180: a header line, `\r\n` line ends, a field
+    /// quoted when it holds a comma, a quote or a line break, quotes
+    /// doubled). `NULL` is an empty field; JSON is written compact.
+    pub fn render_csv(&self) -> String {
+        fn field(s: &str) -> String {
+            if s.contains([',', '"', '\n', '\r']) {
+                format!("\"{}\"", s.replace('"', "\"\""))
+            } else {
+                s.to_string()
+            }
+        }
+        let mut out = String::new();
+        let header: Vec<String> = self.schema.names().iter().map(|n| field(n)).collect();
+        out.push_str(&header.join(","));
+        out.push_str("\r\n");
+        for row in &self.rows {
+            let cells: Vec<String> = row
+                .iter()
+                .map(|v| match v {
+                    Value::Null => String::new(),
+                    other => field(&other.render()),
+                })
+                .collect();
+            out.push_str(&cells.join(","));
+            out.push_str("\r\n");
+        }
+        out
+    }
+
     /// Render as a fixed-width text table, the form results take in prompts.
     /// At most `max_rows` rows are shown; a trailing line reports the rest.
     pub fn render_table(&self, max_rows: usize) -> String {
@@ -145,5 +192,22 @@ mod tests {
         let s = b.render_table(2);
         assert!(s.starts_with("id | name"));
         assert!(s.contains("... 3 more rows (5 total)"));
+    }
+
+    #[test]
+    fn json_and_csv_keep_text_whole() {
+        let rows = vec![
+            vec![Value::Int(1), Value::from("ループ, \"予算\"")],
+            vec![Value::Null, Value::from("plain")],
+        ];
+        let b = Batch::try_new(schema(), rows).unwrap();
+        assert_eq!(
+            b.to_json().to_string(),
+            r#"[{"id":1,"name":"ループ, \"予算\""},{"id":null,"name":"plain"}]"#
+        );
+        assert_eq!(
+            b.render_csv(),
+            "id,name\r\n1,\"ループ, \"\"予算\"\"\"\r\n,plain\r\n"
+        );
     }
 }
