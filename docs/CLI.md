@@ -487,7 +487,13 @@ kleene trace "SELECT depth, role, outcome, turns, calls, dollars FROM trace_sess
 kleene trace "SELECT alias, model, memo_hit, cost_usd FROM trace_calls ORDER BY started_at DESC LIMIT 20"
 kleene trace "SELECT tool, args, elapsed_ms FROM trace_tool_calls"
 kleene trace "SELECT cte, round, delta_rows FROM trace_rounds"
+kleene trace --json "SELECT sum(input_tokens) AS input_tokens, sum(cost_usd) AS dollars FROM trace_calls"
 ```
+
+`--json` prints the rows as a JSON array of objects keyed by column, the
+shape `run --json` writes, instead of the table and row count; a script
+reading usage out of the store (the Harbor adapter in `adapters/` does)
+gets one `[{"input_tokens": 1234, "dollars": 0.0123}]` line to parse.
 
 Tables: `trace_runs`, `trace_sessions`, `trace_statements`, `trace_calls`,
 `trace_tool_calls`, `trace_rounds`, `trace_final`, `memo`,
