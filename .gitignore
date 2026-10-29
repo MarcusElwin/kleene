@@ -11,6 +11,7 @@
 # imported benchmark packs (downloaded on demand, not redistributed)
 /tasks/oolong-*/
 !/tasks/oolong-like/
+!/tasks/oolong-hard/
 /tasks/harvey-lab/
 /tasks/redlining-*/
 # recorded model replies from bench runs; re-record with bench run --record

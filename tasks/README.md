@@ -18,13 +18,17 @@ What the modes, oracles, report columns and plots mean is in
 | `legal-synthetic/` | 20 synthetic contracts with planted clause categories, frozen from `contracts` | exact set of categories |
 | `logbook-hard/` | 30 work logs of about 1,650 dated entries each (about 30,000 tokens) with corrections and non-hour distractors, five question shapes, frozen lazily from `logbook` at dial 0.9 | exact rows |
 | `memo-rubric/` | 20 synthetic services agreements with an amendment and a rejected proposal; the task is a short memo on three of the terms, frozen lazily from `memo` at dial 0.8 | `judge` with a rubric naming each required fact and a reference memo |
+| `oolong-hard/` | 20 project trackers of about 1,300 dated entries (25,000 tokens) with time in mixed units, action items closed by id, decisions and corrections; five question shapes, frozen lazily from `tracker` at dial 0.9 | exact rows |
+| `finance-hard/` | 20 quarterly statements by segment over six years (about 1,100 figures, 16,000 tokens) with restatements and a discontinued segment; totals, growth, ratios, top segment and top quarter, frozen lazily from `ledger` at dial 0.9 | number within tolerance, or exact |
+| `legal-hard/` | 20 agreements of about 350 sections (12,000 tokens) with planted categories, a near miss per category, cross-references and amendments; categories present, sections of a category, or a defined-term count, frozen lazily from `agreement` at dial 0.9 | exact rows |
+| `terminal-hard/` | eight shell tasks over generated workspaces (log files, CSV joins, duplicates, a rename manifest, a file tree, JSON configs, ledgers, events); `workspaces/<task>/.gen/make.py` builds the files at setup and is removed before the model starts | hidden graders that recompute the answer from the files |
 | `coding/` | four Python projects under `workspaces/`, three steps each (implement, extend, fix a bug report); later steps `continues` the earlier step's workspace; every step's `check` is `python3 -m unittest -q` | the grader's hidden unit tests (`.grader/run.sh N`) |
 
 Rebuild a frozen pack with `kleene bench build <dir> --from <generator>
 --count N --dial D --seed S`; the same seeds give the same tasks. With
 `--lazy` the pack stores only the generator, dial and seed per task and
-regenerates on load, which is how `logbook-hard` and `memo-rubric` are kept
-small. Import the real OOLONG with `kleene bench import-oolong
+regenerates on load, which is how `logbook-hard`, `memo-rubric` and the
+three `*-hard` packs are kept small. Import the real OOLONG with `kleene bench import-oolong
 tasks/oolong-trec` (the `trec_coarse` 128k-token split the RLM paper uses,
 50 questions, `oolong` oracle; `--dataset`, `--context-len` and `--limit`
 pick another slice), UmaiTech's contract redlining sets with `kleene bench

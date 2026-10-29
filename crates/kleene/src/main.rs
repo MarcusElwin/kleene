@@ -276,12 +276,16 @@ enum BenchAction {
         /// the first task it has no row for; its recorded rows are kept.
         #[arg(long)]
         resume: Option<String>,
+        /// Stop a task once it has spent this many dollars (every mode; the
+        /// task then counts as unsolved with `budget_exhausted` in its detail).
+        #[arg(long)]
+        budget_dollars: Option<f64>,
     },
     /// Freeze tasks from a generator into a pack directory.
     Build {
         /// Output directory, e.g. tasks/oolong-like.
         out: PathBuf,
-        /// Generator: sat3, graph, puzzle, corpus, repo, statements, contracts, logbook, memo.
+        /// Generator: sat3, graph, puzzle, corpus, repo, statements, contracts, logbook, memo, tracker, ledger, agreement.
         #[arg(long)]
         from: String,
         /// How many tasks.
@@ -598,7 +602,14 @@ async fn run_bench(cli: &Cli, action: &BenchAction) -> anyhow::Result<()> {
     // so a run's prompts do not grow with every session before it and a
     // recorded run replays from its own fixtures.
     cfg.drop_session_tables = true;
-    if let BenchAction::Run { record, replay, .. } = action {
+    if let BenchAction::Run {
+        record,
+        replay,
+        budget_dollars,
+        ..
+    } = action
+    {
+        cfg.budget.dollars = *budget_dollars;
         if let Some(dir) = replay {
             cfg.provider = Some(Arc::new(kleene_llm::ReplayProvider::new(dir.clone())));
         } else if let Some(dir) = record {

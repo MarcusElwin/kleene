@@ -1,0 +1,14 @@
+pack          | mode     | model                     | tasks | accuracy | calls_per_task | dollars | tokens_per_task | depth
+--------------+----------+---------------------------+-------+----------+----------------+---------+-----------------+------
+finance-hard  | frozen   | claude-haiku-4-5-20251001 | 20    | 0.65     | 14.65          | 2.8706  | 264156          | 0.05 
+finance-hard  | learning | claude-haiku-4-5-20251001 | 20    | 0.75     | 9.1            | 1.5462  | 134760          | 0    
+finance-hard  | plain    | claude-haiku-4-5-20251001 | 20    | 0.95     | 15.65          | 3.9266  | 559397          | 0    
+legal-hard    | frozen   | claude-haiku-4-5-20251001 | 20    | 0.5      | 26.9           | 3.1269  | 231769          | 0.15 
+legal-hard    | learning | claude-haiku-4-5-20251001 | 20    | 0.35     | 29.15          | 3.2039  | 187058          | 0.2  
+legal-hard    | plain    | claude-haiku-4-5-20251001 | 20    | 0.55     | 4.6            | 1.2618  | 70256           | 0    
+oolong-hard   | frozen   | claude-haiku-4-5-20251001 | 20    | 0.3      | 20.9           | 2.4476  | 173324          | 0    
+oolong-hard   | learning | claude-haiku-4-5-20251001 | 20    | 0.35     | 138.05         | 2.8544  | 143092          | 0    
+oolong-hard   | plain    | claude-haiku-4-5-20251001 | 20    | 0.3      | 20.8           | 7.3571  | 1047281         | 0    
+terminal-hard | frozen   | claude-haiku-4-5-20251001 | 8     | 0.625    | 25.25          | 0.43    | 59899           | 0    
+terminal-hard | learning | claude-haiku-4-5-20251001 | 8     | 0.875    | 58             | 0.4795  | 53659           | 0    
+terminal-hard | plain    | claude-haiku-4-5-20251001 | 8     | 0.875    | 16.88          | 0.3599  | 83295           | 0    
