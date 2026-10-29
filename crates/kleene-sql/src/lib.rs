@@ -52,7 +52,8 @@ pub fn plan(stmt: &sqlparser::ast::Statement, catalog: &Catalog) -> Result<State
 
 /// Parse, validate and resolve every statement in `sql`.
 ///
-/// `FINAL(expr)`, `FINAL FROM (query)`, `CREATE FUNCTION ... AS PROMPT/SQL/SHELL`
+/// `FINAL(expr)`, `FINAL FROM (query)`, `FINAL SELECT ...` (also `WITH`,
+/// `VALUES`), `CREATE FUNCTION ... AS PROMPT/SQL/SHELL`
 /// and `CALL tool(args) [FROM query]` are recognised here before parsing,
 /// because they are CallSQL additions the parser does not know. Such a
 /// statement must be the only statement in the text.
@@ -60,8 +61,15 @@ pub fn plan_sql(sql: &str, catalog: &Catalog) -> Result<Vec<Statement>, SqlError
     let trimmed = sql.trim().trim_end_matches(';').trim();
     if let Some(rest) = strip_keyword(trimmed, "FINAL") {
         let rest = rest.trim();
+        let is_query = ["SELECT", "WITH", "VALUES"]
+            .iter()
+            .any(|kw| strip_keyword(rest, kw).is_some());
         let rewritten = if let Some(q) = strip_keyword(rest, "FROM") {
             format!("SELECT * FROM {} AS final", q.trim())
+        } else if is_query {
+            // `FINAL SELECT ...`, `FINAL WITH ... SELECT ...`, `FINAL VALUES
+            // (...)`: the query itself is the answer.
+            rest.to_string()
         } else {
             format!("SELECT {} AS answer", rest)
         };
@@ -69,7 +77,7 @@ pub fn plan_sql(sql: &str, catalog: &Catalog) -> Result<Vec<Statement>, SqlError
         let [only] = stmts.as_slice() else {
             return Err(SqlError::Parse {
                 message: "FINAL takes one expression or one query".into(),
-                hint: Some("FINAL(expr) or FINAL FROM (SELECT ...)".into()),
+                hint: Some("FINAL(expr), FINAL SELECT ..., or FINAL FROM (SELECT ...)".into()),
             });
         };
         let planned = plan(only, catalog)?;

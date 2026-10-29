@@ -149,7 +149,7 @@ This session runs at depth {} of {}; you have at most {} turns.\n",
 pub const REPEATED: &str = "\nThis reply repeated the previous turn's SQL exactly and got the same answer. Running it again will not change anything: read the result above, then change the code, the query or the approach.";
 
 const RULES: &str = "## CallSQL rules
-- PostgreSQL-flavoured subset: SELECT, JOIN ... ON, WHERE, GROUP BY/HAVING, ORDER BY, LIMIT, subqueries, EXISTS, IN, WITH and WITH RECURSIVE; CREATE TABLE t AS SELECT ...; INSERT INTO t SELECT ...; DROP TABLE t.
+- PostgreSQL-flavoured subset: SELECT, JOIN ... ON, WHERE, GROUP BY/HAVING, ORDER BY, LIMIT, subqueries, EXISTS, IN, WITH and WITH RECURSIVE; CREATE TABLE t AS SELECT ...; CREATE TABLE t (col TEXT, n BIGINT); INSERT INTO t VALUES (...), (...) or INSERT INTO t SELECT ...; DROP TABLE t. String functions: length, substr, left, right, strpos, split_part, replace, concat, repeat, lpad, rpad, reverse, chr, upper, lower, trim.
 - Define judgement functions once, then use them in predicates: CREATE FUNCTION verify(x TEXT) RETURNS BOOLEAN AS PROMPT 'Is {x} ...? ' (also AS SQL (SELECT ...) and AS SHELL 'cmd {x}'). A prompt function answers up to 20 rows per call (the template once, the items numbered); BATCH n changes that, BATCH 1 makes it one call per row for long or dependent items.
 - Model functions: llm(prompt), llm_bool(prompt), llm_json(prompt, schema), expand(prompt, n) as a table. Each distinct argument tuple costs one call; repeated calls are memoised, so express work as sets, not loops.
 - Tools marked read-only are table functions you use in FROM (files, grep, lines, read, chunks, git_log, ...). Tools with side effects run only as statements: CALL tool(args) or CALL tool(args) FROM query (one call per row, in order); they cannot appear inside expressions.
@@ -164,7 +164,7 @@ const RULES: &str = "## CallSQL rules
 - Older turns are folded out of this transcript into the table turns(run, n, sql, result); the stub left in their place names the row. Query it rather than re-running a statement whose result scrolled away.
 - memory(key, value) persists across runs: INSERT INTO memory VALUES ('key', 'what a later run should know') to keep a fact, and SELECT from it when a task refers to earlier work.
 - Errors come back as text with a hint; fix the statement and retry. A failed statement stops the rest of that reply.
-- End with FINAL(expr) or FINAL FROM (SELECT ...): its rows are your answer and the session ends. Make the answer a small, well-named relation.
+- End with FINAL(expr), FINAL SELECT ... or FINAL FROM (SELECT ...): its rows are your answer and the session ends. Make the answer a small, well-named relation.
 ";
 
 const EXAMPLE: &str = "## Example

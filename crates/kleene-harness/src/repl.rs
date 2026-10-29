@@ -700,6 +700,7 @@ fn call_footer(before: &BudgetUsage, after: &BudgetUsage, memo_hits: u64) -> Str
 fn kind_name(k: &StatementKind) -> &'static str {
     match k {
         StatementKind::Query { .. } => "SELECT",
+        StatementKind::CreateTable { .. } => "CREATE TABLE",
         StatementKind::CreateTableAs { .. } => "CREATE TABLE AS",
         StatementKind::Insert { .. } => "INSERT",
         StatementKind::DropTable { .. } => "DROP TABLE",

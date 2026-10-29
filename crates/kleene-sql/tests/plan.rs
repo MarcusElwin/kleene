@@ -425,6 +425,24 @@ fn insert_create_drop_explain_set() {
         SqlError::Type { message } => assert!(message.contains("expects 2 columns")),
         other => panic!("{other:?}"),
     }
+    let s = one("CREATE TABLE t (id BIGINT NOT NULL, name TEXT, score DOUBLE, tags JSON)");
+    match s.kind {
+        StatementKind::CreateTable {
+            name,
+            schema,
+            if_not_exists: false,
+        } => {
+            assert_eq!(name, "t");
+            assert_eq!(schema.names(), ["id", "name", "score", "tags"]);
+            assert!(!schema.fields[0].nullable);
+            assert!(schema.fields[1].nullable);
+            assert_eq!(schema.fields[2].data_type, DataType::Float);
+            assert_eq!(schema.fields[3].data_type, DataType::Json);
+        }
+        other => panic!("{other:?}"),
+    }
+    let e = err("CREATE TABLE t (id INTERVAL)");
+    assert!(e.to_string().contains("INTERVAL"), "{e}");
     let s = one("CREATE TABLE IF NOT EXISTS t AS SELECT id FROM nodes");
     assert!(matches!(
         s.kind,
@@ -470,6 +488,21 @@ fn final_forms() {
         panic!()
     };
     assert_eq!(names(&plan), ["id"]);
+    // A bare query after FINAL is the answer, no FROM (...) wrapper needed.
+    for sql in [
+        "FINAL SELECT 'yes' AS answer",
+        "FINAL WITH c AS (SELECT 'yes' AS answer) SELECT answer FROM c",
+        "FINAL VALUES ('yes')",
+        "final select 'yes' as answer;",
+    ] {
+        let s = one(sql);
+        let StatementKind::Final { plan } = s.kind else {
+            panic!("{sql}")
+        };
+        assert_eq!(plan.schema().len(), 1, "{sql}");
+    }
+    let e = err("FINAL SELECT 1; SELECT 2");
+    assert!(e.to_string().contains("one expression or one query"), "{e}");
 }
 
 #[test]
