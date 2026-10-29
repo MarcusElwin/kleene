@@ -40,6 +40,7 @@ pub const GENERATORS: &[&str] = &[
     "tracker",
     "ledger",
     "agreement",
+    "nest",
 ];
 
 /// A small deterministic PRNG (xorshift64*), so tasks are reproducible.
@@ -97,6 +98,7 @@ pub fn generate(
         "tracker" => super::hard::tracker(dial, &mut rng),
         "ledger" => super::hard::ledger(dial, &mut rng),
         "agreement" => super::hard::agreement(dial, &mut rng),
+        "nest" => super::nest::nest(dial, &mut rng),
         _ => return None,
     })
 }
@@ -750,7 +752,7 @@ fn memo(dial: f64, rng: &mut Rng) -> GeneratedTask {
     }
 }
 
-fn difficulty_prior(dial: f64) -> f64 {
+pub(super) fn difficulty_prior(dial: f64) -> f64 {
     // 0 -> 800 (easy), 1 -> 1600 (hard).
     800.0 + 800.0 * dial
 }

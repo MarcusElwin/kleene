@@ -1261,7 +1261,16 @@ impl ChildRunner for Arc<Harness> {
         let what = if agent.is_some() { "spawn" } else { "rlm" };
         let spec = self.child_spec(parent, what, agent, task, context).await?;
         let child = spec.meta.id;
-        let report = self.run_session(spec).await;
+        // The child runs as its own task, not inside the parent's poll: a
+        // session's future is large, and nesting one per level overflows a
+        // 2 MiB thread stack at a depth of five or so.
+        let harness = self.clone();
+        let report = match tokio::spawn(async move { harness.run_session(spec).await }).await {
+            Ok(r) => r,
+            Err(e) => Err(HarnessError::Config(format!(
+                "child session {child} stopped: {e}"
+            ))),
+        };
         self.forget_session(child);
         let report = report.map_err(|e| ExecError::Call(e.to_string()))?;
         parent.charge_child(&report.usage).await;

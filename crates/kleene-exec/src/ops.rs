@@ -2,7 +2,9 @@
 
 use crate::agg::Accumulator;
 use crate::eval::eval_expr;
-use crate::{builtins, BatchStream, CallSink, ExecContext, ExecError, RECURSION_HARD_CAP};
+use crate::{
+    builtins, BatchStream, CallSink, ExecContext, ExecError, RECURSION_HARD_CAP, RECURSION_ROW_CAP,
+};
 use async_recursion::async_recursion;
 use futures::{StreamExt, TryStreamExt};
 use kleene_core::{Batch, Row, Schema, Value};
@@ -621,6 +623,11 @@ pub(crate) async fn eval_plan(
                 }
                 tracing::debug!(cte = %name, round, delta_rows = new.len(), total_rows = total.len() + new.len(), "recursion round");
                 total.extend(new.iter().cloned());
+                if total.len() > RECURSION_ROW_CAP {
+                    return Err(ExecError::Eval(format!(
+                        "recursive CTE {name} grew past {RECURSION_ROW_CAP} rows in round {round} without reaching a fixpoint; bound it with a depth column (WHERE d < n), use UNION instead of UNION ALL, or SET max_recursion_rounds"
+                    )));
+                }
                 delta = new;
             }
             let e = env.bind(name, Arc::new(total));
