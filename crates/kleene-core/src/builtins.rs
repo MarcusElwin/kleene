@@ -38,6 +38,13 @@ fn scalar(
 /// | `replace` | `(TEXT, TEXT, TEXT) -> TEXT` | |
 /// | `starts_with`, `contains` | `(TEXT, TEXT) -> BOOLEAN` | |
 /// | `split_part` | `(TEXT, TEXT, BIGINT) -> TEXT` | 1-based; empty string when out of range |
+/// | `strpos` | `(TEXT, TEXT) -> BIGINT` | 1-based position of the first match, 0 when absent |
+/// | `left`, `right` | `(TEXT, BIGINT) -> TEXT` | the first / last n characters |
+/// | `repeat` | `(TEXT, BIGINT) -> TEXT` | |
+/// | `reverse` | `(TEXT) -> TEXT` | by character |
+/// | `lpad`, `rpad` | `(TEXT, BIGINT [, TEXT]) -> TEXT` | pad to n characters, with spaces unless given |
+/// | `chr` | `(BIGINT) -> TEXT` | the character with that code point; `chr(10)` is a newline |
+/// | `ascii` | `(TEXT) -> BIGINT` | code point of the first character, 0 for the empty string |
 /// | `coalesce` | `(ANY, ...) -> ANY` | first non-`NULL` |
 /// | `nullif` | `(ANY, ANY) -> ANY` | |
 /// | `greatest`, `least` | `(ANY, ...) -> ANY` | `NULL`s ignored |
@@ -97,6 +104,51 @@ pub fn standard_functions() -> Vec<FunctionDef> {
             false,
             Text,
             "1-based field of a split string",
+        ),
+        scalar(
+            "strpos",
+            &[Text, Text],
+            false,
+            Int,
+            "1-based position of the first match, 0 when absent",
+        ),
+        scalar("left", &[Text, Int], false, Text, "the first n characters"),
+        scalar("right", &[Text, Int], false, Text, "the last n characters"),
+        scalar("repeat", &[Text, Int], false, Text, "the string n times"),
+        scalar(
+            "reverse",
+            &[Text],
+            false,
+            Text,
+            "characters in reverse order",
+        ),
+        scalar(
+            "lpad",
+            &[Text, Int],
+            true,
+            Text,
+            "pad on the left to n characters (optional fill, spaces by default)",
+        ),
+        scalar(
+            "rpad",
+            &[Text, Int],
+            true,
+            Text,
+            "pad on the right to n characters (optional fill, spaces by default)",
+        ),
+        scalar(
+            "chr",
+            &[Int],
+            false,
+            Text,
+            "the character with that code point (chr(10) is a newline)",
+        ),
+        scalar(
+            "ascii",
+            &[Text],
+            false,
+            Int,
+            "code point of the first character, 0 for an empty string",
         ),
         scalar("coalesce", &[Any], true, Any, "first non-NULL argument"),
         scalar(

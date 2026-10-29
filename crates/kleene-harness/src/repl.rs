@@ -173,6 +173,26 @@ impl Repl {
         if let Some(r) = self.sink.settings().await.max_recursion_rounds {
             cost.recursion_rounds = r as f64;
         }
+        // What child sessions cost here: the finished children in the
+        // trace, once there are a few, replace the defaults.
+        if let Ok(b) = store
+            .query(
+                "SELECT COUNT(*), AVG(calls), AVG(tokens), AVG(dollars) FROM trace_sessions WHERE depth > 0 AND finished_at IS NOT NULL",
+            )
+            .await
+        {
+            if let Some(row) = b.rows.first() {
+                let n = row[0].as_int().unwrap_or(0);
+                if n >= 3 {
+                    if let (Some(calls), Some(tokens)) = (row[1].as_f64(), row[2].as_f64()) {
+                        cost.child_calls = calls.max(1.0);
+                        cost.child_tokens = tokens.max(0.0);
+                        cost.child_dollars = row[3].as_f64().filter(|d| *d > 0.0);
+                        cost.child_learned = n as u64;
+                    }
+                }
+            }
+        }
         // What earlier sessions learned (the store's `estimates` table),
         // then this session's own sample on top: the pass rate of every
         // boolean call predicate evaluated at least a few times, and the
@@ -474,6 +494,15 @@ impl Repl {
                 // what the remaining budget cannot pay for.
                 let (stmt, planned) = self.rewrite(stmt).await;
                 if let Some(cp) = &planned {
+                    if matches!(stmt.kind, StatementKind::Final { .. }) && cp.root.starts_children()
+                    {
+                        return Outcome::err(format!(
+                            "refused: FINAL would start child sessions (rlm/spawn) while answering, ~{:.0} calls and ~${:.4}, and a FINAL that fails or runs out of budget repeats all of it. Run the delegation first and keep its rows, then answer from the table:\n  CREATE TABLE results AS SELECT c.ordinal, r.answer FROM ctx c CROSS JOIN LATERAL rlm('...', c.text) r;\n  FINAL FROM (SELECT ordinal, answer FROM results ORDER BY ordinal);\n{}",
+                            cp.total.calls,
+                            cp.total.dollars,
+                            kleene_algebra::explain(cp)
+                        ));
+                    }
                     let (budget, used) = self.sink.budget_state().await;
                     let remaining = budget.remaining(&used);
                     let over_calls = remaining
@@ -706,6 +735,7 @@ fn call_footer(before: &BudgetUsage, after: &BudgetUsage, memo_hits: u64) -> Str
 fn kind_name(k: &StatementKind) -> &'static str {
     match k {
         StatementKind::Query { .. } => "SELECT",
+        StatementKind::CreateTable { .. } => "CREATE TABLE",
         StatementKind::CreateTableAs { .. } => "CREATE TABLE AS",
         StatementKind::Insert { .. } => "INSERT",
         StatementKind::DropTable { .. } => "DROP TABLE",

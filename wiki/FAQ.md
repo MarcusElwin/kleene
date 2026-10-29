@@ -14,7 +14,7 @@
 
 **What does "refused with its plan" mean?** The planner estimated more calls or dollars than the remaining budget allows, so the statement did not run. The model sees the plan and the estimate and writes a narrower one. Raise `--budget-calls` or `--budget-dollars` if the estimate is what you meant to spend.
 
-**Why are my dollar figures zero?** Only the Anthropic defaults come priced. On an OpenAI-compatible endpoint, add a `[pricing."model"]` section to a router file.
+**Why are my dollar figures zero?** The model has no price and the provider reports no cost. Set `KLEENE_PRICING="model=input/output"` (dollars per million tokens) or add a `[pricing."model"]` section to a router file; a dollar budget is refused until one of them is there.
 
 **Where does everything live?** In one DuckDB file, `.kleene/run.duckdb` under the current directory: tables, memo, trace, sessions, learning state and benchmark results. Query it with `kleene trace` or `/trace` in the TUI.
 

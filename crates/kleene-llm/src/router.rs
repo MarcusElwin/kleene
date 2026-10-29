@@ -520,6 +520,20 @@ impl Provider for RoutedProvider {
             .map(|c| c.model.clone())
     }
 
+    /// True when every candidate of `alias` is priced: its backend reports
+    /// cost, or the pricing table has its model. An alias with no
+    /// candidates is not priced.
+    fn cost_known(&self, alias: &str) -> bool {
+        let candidates = self.router.candidates(&ModelAlias(alias.to_string()));
+        !candidates.is_empty()
+            && candidates.iter().all(|c| {
+                self.providers
+                    .get(&c.provider)
+                    .is_some_and(|p| p.capabilities().cost_reported)
+                    || self.pricing.get(&c.model).is_some()
+            })
+    }
+
     /// The intersection of the registered backends' capabilities, except
     /// that cost is reported whenever the pricing table is non-empty.
     fn capabilities(&self) -> Capabilities {
@@ -940,6 +954,37 @@ mod tests {
             None
         );
         assert!(!routed.capabilities().cost_reported);
+    }
+
+    #[tokio::test]
+    async fn cost_known_is_per_alias() {
+        let silent = Canned::new();
+        let mut cfg = RouterConfig::default()
+            .with_alias(
+                "root",
+                vec![Candidate::new("canned", "priced-model")],
+                ProviderOptions::default(),
+            )
+            .with_alias(
+                "worker",
+                vec![Candidate::new("canned", "mystery-model")],
+                ProviderOptions::default(),
+            );
+        cfg.pricing.insert(
+            "priced-model",
+            ModelPricing {
+                input_per_mtok: 1.0,
+                output_per_mtok: 2.0,
+                ..ModelPricing::default()
+            },
+        );
+        let routed = RoutedProvider::new(cfg, HashMap::from([("canned".to_string(), silent as _)]));
+        assert!(routed.cost_known("root"));
+        assert!(
+            !routed.cost_known("worker"),
+            "unpriced model on a silent backend"
+        );
+        assert!(!routed.cost_known("judge"), "no candidates");
     }
 
     #[tokio::test]

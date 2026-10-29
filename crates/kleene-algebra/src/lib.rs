@@ -104,6 +104,14 @@ pub struct CallNode {
 }
 
 impl CallNode {
+    /// Whether this subtree starts child sessions (`rlm`, `spawn`).
+    pub fn starts_children(&self) -> bool {
+        self.calls
+            .iter()
+            .any(|c| matches!(c, CallKind::Recursive { .. }))
+            || self.children.iter().any(CallNode::starts_children)
+    }
+
     /// Total estimate for this subtree.
     pub fn total(&self) -> Estimate {
         let mut t = self.estimate;

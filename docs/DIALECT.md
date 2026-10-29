@@ -3,7 +3,9 @@
 CallSQL is the PostgreSQL-flavoured subset Kleene executes, plus the
 statements and functions that make model calls, tools, delegation, budgets
 and planning first-class. Everything the model does in a session is one or
-more CallSQL statements inside a single ```sql fence.
+more CallSQL statements inside a single ```sql fence. `kleene dialect`
+prints the copy of this page compiled into the binary, so it always
+describes the build you have.
 
 ## Relational core
 
@@ -11,7 +13,11 @@ Statements: `SELECT` (with `WITH`, `WITH RECURSIVE`, `JOIN ... ON`, `CROSS
 JOIN`, `CROSS JOIN LATERAL`, `WHERE`, `GROUP BY` / `HAVING`, `ORDER BY`,
 `LIMIT` / `OFFSET`, `DISTINCT`, `UNION [ALL]`, `EXISTS` / `NOT EXISTS`, `IN`,
 scalar subqueries, `CASE`, `CAST`), `VALUES`, `CREATE TABLE t AS SELECT ...`,
-`CREATE TABLE t (...)`, `INSERT INTO t SELECT ...`, `DROP TABLE [IF EXISTS] t`.
+`CREATE TABLE t (col TYPE [NOT NULL], ...)` (an empty table; other column
+constraints are accepted and ignored), `INSERT INTO t VALUES (...), (...)`,
+`INSERT INTO t SELECT ...`, `DROP TABLE [IF EXISTS] t`. Several statements
+go in one reply separated by `;`, `CREATE FUNCTION` and `FINAL` included;
+execution stops at the first error.
 
 Types: `BOOLEAN`, `BIGINT`, `DOUBLE`, `TEXT`, `JSON`, `VECTOR`. Three-valued
 logic with `AND` / `OR` short-circuiting left to right, which the planner
@@ -27,17 +33,36 @@ previous round's delta. `UNION` (set) terminates when a round adds nothing new;
 (`SET max_recursion_rounds = n`). A trailing `ORDER BY ... LIMIT k` inside a
 recursive CTE keeps the best `k` new rows of each round: a beam of width `k`.
 
-Builtins include the usual string, numeric, null and JSON functions and
-`generate_series(a, b)`. The relational core is tested differentially against
-DuckDB.
+Builtins: `upper`, `lower`, `trim`, `ltrim`, `rtrim`, `length`, `substr`,
+`left`, `right`, `strpos`, `split_part`, `replace`, `concat` (and `||`),
+`repeat`, `lpad`, `rpad`, `reverse`, `chr`, `ascii`, `starts_with`,
+`contains`, `LIKE` / `ILIKE`, `coalesce`, `nullif`, `greatest`, `least`,
+`abs`, `round`, `floor`, `ceil`, `mod`, `json_extract`,
+`json_extract_string`, the aggregates `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`,
+`STRING_AGG`, and the table function `generate_series(a, b)`. Lengths and
+positions count characters, not bytes, so Japanese text measures as
+written. Anything else is `unknown function`; DuckDB's `read_csv_auto`
+and friends are not part of CallSQL (load files with `--context`, or the
+`read` and `lines` tools). The relational core is tested differentially
+against DuckDB.
 
 ## Sessions
 
-Every run starts with `ctx(ordinal, text)` when a context is supplied, one
-row per paragraph (blank-line separated). Tables created in a session persist
-in the store; a child session gets its own namespace.
+Every run starts with `ctx(ordinal, text)` when a context is supplied
+(`kleene run --context file`), one row per paragraph: paragraphs are
+separated by a blank line, and a file with no blank line is a single row,
+so put one record per paragraph when each should be its own row. Tables
+created in a session persist in the store; a child session gets its own
+namespace.
 
-`FINAL FROM (query)` ends the session with that relation as the answer.
+`FINAL` ends the session with an answer relation, in three forms:
+`FINAL(expr)` (one row, column `answer`), `FINAL SELECT ...` (also `FINAL
+WITH ... SELECT ...` and `FINAL VALUES (...)`), and `FINAL FROM (query)`.
+`FINAL` is one statement: `FINAL SELECT 1; SELECT 2` is an error.
+
+`rlm`, `spawn` and the other delegation functions need a running harness
+(`kleene run`, the TUI): `kleene repl` executes CallSQL against the store
+without one and reports `rlm needs a running harness` instead.
 
 `SET key = value`: `effort`, `model.default`, `max_tokens`, `memo` (on/off),
 `cache_prefix`, `max_recursion_rounds`, `budget.calls`, `budget.tokens`,
@@ -49,6 +74,19 @@ recursive, `tool`), volatility fences, the complexity fragment (CQ / FO /
 REC), the rules that fired, the join-order plan space and the alternatives
 priced. `EXPLAIN ANALYZE` also runs it and prints actuals. A statement whose
 estimate exceeds the remaining budget is refused with its plan.
+
+The estimate prices the statement's own calls: a scalar call such as
+`llm_bool(...)` is assumed to be about 600 tokens in and 150 out, and
+`rlm`/`spawn` a whole child session (see [Delegation](#delegation)). It does
+not include the turn that carries the statement itself, whose system
+prompt, catalog and transcript cost a few thousand tokens per turn: that
+is the session's overhead, shown in the budget line after each turn. Call
+counts are exact for scalar calls; tokens and dollars are a forecast, and
+`EXPLAIN ANALYZE` is the way to calibrate it: it prints the estimate and
+the actual side by side, and the measured selectivities and rows per call
+feed the next estimate. Dollars are only forecast and enforced for models
+with a price: the provider's own cost report, the Anthropic and OpenAI rate
+cards, a `[pricing]` section in the router TOML, or `KLEENE_PRICING`.
 
 ## Model calls
 
@@ -179,6 +217,26 @@ the output's tail, and the session continues.
 
 Depth is bounded by the session's `budget.depth`; children's spending rolls
 up into the parent.
+
+A child session is a whole agent loop, not one model call: every turn
+carries the agent system prompt and the child's context, so one `rlm` row
+typically costs several calls and ten thousand tokens or more. `EXPLAIN`
+prices `rlm`/`spawn` that way (a default of four calls and twelve thousand
+tokens per child, replaced by the store's own average once three children
+have finished; the `learned:` line says which) rather than as one call.
+Delegate once and keep the rows, then answer from the table:
+
+```sql
+CREATE TABLE results AS
+SELECT split_part(c.text, ' | ', 1) AS id, r.answer
+FROM ctx c
+CROSS JOIN LATERAL rlm('Summarise this thread in one line: ' || c.text) r;
+
+FINAL FROM (SELECT id, answer FROM results ORDER BY id);
+```
+
+A `FINAL` whose query calls `rlm` or `spawn` is refused with that pattern,
+because a `FINAL` that fails or runs out of budget would repeat every child.
 
 ## Planner rules
 

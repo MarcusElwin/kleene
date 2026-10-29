@@ -485,6 +485,11 @@ impl Harness {
                 task: task.to_string(),
             });
         }
+        if self.cfg.budget.dollars.is_some() {
+            if let Some(why) = self.cfg.provider.as_deref().and_then(crate::live::unpriced) {
+                return Err(HarnessError::Config(why));
+            }
+        }
         let role = AgentRole::root();
         let meta = SessionMeta {
             id: SessionId::new(),
