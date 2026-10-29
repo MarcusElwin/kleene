@@ -171,7 +171,11 @@ read in this session; returns the unified diff), `CALL mkdir(path)`,
 `CALL remove(path)`, `CALL web_fetch(url)`, `CALL web_search(q [, n])`. A
 tool's output relation is rendered back to the model; the full table with
 columns and volatility is in `kleene-tools`'s crate docs. Roles restrict
-which tools a session may use.
+which tools a session may use, and so does the run's capability profile
+(`kleene run --read-only`, `--no-shell`, `--no-web`, `--tools a,b`): a
+withheld tool is absent from the catalog and the prompt lists it under
+"Tools withheld"; a child's role can narrow the profile, never widen it,
+and `CREATE FUNCTION ... AS SHELL` is refused where `shell` is withheld.
 
 Tools of a connected MCP server (`kleene mcp`) appear as `<server>_<tool>`
 with the same split: a tool the server marks read-only is a table function,

@@ -23,6 +23,7 @@ async fn repl(provider: Arc<ScriptedProvider>) -> Fixture {
             provider: Some(provider),
             tracer,
             web_search: None,
+            profile: Default::default(),
         },
     )
     .await
@@ -376,6 +377,7 @@ async fn repl_on(store: DuckDbStore, provider: Arc<ScriptedProvider>) -> Fixture
             provider: Some(provider),
             tracer,
             web_search: None,
+            profile: Default::default(),
         },
     )
     .await

@@ -61,6 +61,9 @@ pub struct ReplConfig {
     pub tracer: Option<Tracer>,
     /// The service behind `web_search`, if any.
     pub web_search: Option<WebSearchBackend>,
+    /// Which tools the session may use (`--read-only`, `--no-shell`,
+    /// `--no-web`, `--tools`).
+    pub profile: kleene_core::ToolProfile,
 }
 
 impl Repl {
@@ -74,6 +77,7 @@ impl Repl {
                 provider: None,
                 tracer: None,
                 web_search: None,
+                profile: kleene_core::ToolProfile::default(),
             },
         )
         .await
@@ -84,9 +88,14 @@ impl Repl {
         store: DuckDbStore,
         cfg: ReplConfig,
     ) -> Result<Self, kleene_store::StoreError> {
-        let store_sink = StoreSink::new(store, kleene_core::standard_catalog()).await?;
+        let mut catalog = kleene_core::standard_catalog();
+        cfg.profile.apply(&mut catalog);
+        let store_sink = StoreSink::new(store, catalog).await?;
         let tools = Arc::new(standard_tools());
-        let entries = catalog_entries(&tools);
+        let entries: Vec<_> = catalog_entries(&tools)
+            .into_iter()
+            .filter(|e| cfg.profile.allows(e))
+            .collect();
         let live = LiveSink::new(
             store_sink,
             cfg.provider,

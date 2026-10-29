@@ -15,7 +15,7 @@ use crate::sink::StoreSink;
 use crate::{AgentRole, Outcome, RenderOptions};
 use kleene_core::{
     Batch, Budget, BudgetUsage, CallId, CallKind, Catalog, ConversationId, DataType, Field,
-    FunctionDef, RunId, Schema, SessionId, StatementId, TableSource, Value,
+    FunctionDef, RunId, Schema, SessionId, StatementId, TableSource, ToolProfile, Value,
 };
 use kleene_exec::CallSink;
 use kleene_exec::ExecError;
@@ -125,6 +125,10 @@ pub struct HarnessConfig {
     /// --load`), by name; each replaces a table of that name left by an
     /// earlier run, like `ctx`.
     pub tables: Vec<(String, Batch)>,
+    /// Which tools the root session, and every child under it, may use
+    /// (`--read-only`, `--no-shell`, `--no-web`, `--tools`). A child's
+    /// role can narrow this further, never widen it.
+    pub profile: ToolProfile,
 }
 
 impl Default for HarnessConfig {
@@ -153,6 +157,7 @@ impl Default for HarnessConfig {
             config_dir: None,
             instructions: None,
             tables: vec![],
+            profile: ToolProfile::default(),
         }
     }
 }
@@ -283,7 +288,10 @@ pub struct Harness {
     store: DuckDbStore,
     cfg: HarnessConfig,
     tools: Arc<ToolRegistry>,
+    /// The tools the profile allows, as catalog entries.
     tool_entries: Vec<FunctionDef>,
+    /// The tools the profile withheld, sorted, for the prompt.
+    withheld: Vec<String>,
     /// What connecting each MCP server produced.
     mcp_status: Vec<McpStatus>,
     /// The skills every session can read.
@@ -349,7 +357,25 @@ impl Harness {
             registry.register(t);
         }
         let tools = Arc::new(registry);
-        let tool_entries = catalog_entries(&tools);
+        let (tool_entries, withheld) = {
+            let mut all = catalog_entries(&tools);
+            let mut withheld: Vec<String> = all
+                .iter()
+                .filter(|e| !cfg.profile.allows(e))
+                .map(|e| e.name.clone())
+                .collect();
+            all.retain(|e| cfg.profile.allows(e));
+            // The builtins that are tools too (`send`), judged the same way.
+            withheld.extend(
+                kleene_core::standard_catalog()
+                    .functions()
+                    .filter(|f| !cfg.profile.allows(f))
+                    .map(|f| f.name.clone()),
+            );
+            withheld.sort();
+            withheld.dedup();
+            (all, withheld)
+        };
         let config_dir = cfg
             .config_dir
             .clone()
@@ -370,6 +396,7 @@ impl Harness {
             cfg,
             tools,
             tool_entries,
+            withheld,
             mcp_status,
             skills,
             instructions,
@@ -442,10 +469,16 @@ impl Harness {
     /// store holds (added by the sink on refresh).
     fn root_catalog(&self) -> Catalog {
         let mut c = kleene_core::standard_catalog();
+        self.cfg.profile.apply(&mut c);
         for e in &self.tool_entries {
             c.add_function(e.clone());
         }
         c
+    }
+
+    /// The tools the profile withholds from every session, sorted.
+    pub fn withheld_tools(&self) -> &[String] {
+        &self.withheld
     }
 
     /// Run a task to completion in a fresh root session.
@@ -508,7 +541,13 @@ impl Harness {
                 .map_err(|e| HarnessError::Config(format!("learned function: {e}")))?;
             let (name, def) = crate::live::DefinedFunction::from_statement(&stmt)
                 .map_err(|e| HarnessError::Config(format!("learned function: {e}")))?;
-            base_catalog.add_function(crate::live::function_entry(&name, &def));
+            let entry = crate::live::function_entry(&name, &def);
+            if !self.cfg.profile.allows(&entry) {
+                // A learned `AS SHELL` function under --no-shell: left out,
+                // like the tool it needs.
+                continue;
+            }
+            base_catalog.add_function(entry);
             functions.insert(name, def);
         }
         let record = SessionRecord {
@@ -699,6 +738,8 @@ impl Harness {
             playbook: &self.cfg.playbook,
             skills: &self.skills,
             instructions: self.instructions.as_deref(),
+            profile: &self.cfg.profile,
+            withheld: &self.withheld,
         });
         let check = (meta.depth == 0)
             .then(|| self.cfg.finish_check.as_deref())

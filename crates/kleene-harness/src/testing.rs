@@ -12,6 +12,8 @@ pub struct ScriptedProvider {
     rules: Vec<(String, String)>,
     fallback: String,
     calls: AtomicU64,
+    /// The system prefix of the most recent request.
+    last_system: std::sync::Mutex<String>,
 }
 
 impl ScriptedProvider {
@@ -24,12 +26,21 @@ impl ScriptedProvider {
                 .collect(),
             fallback: fallback.to_string(),
             calls: AtomicU64::new(0),
+            last_system: std::sync::Mutex::new(String::new()),
         }
     }
 
     /// Calls served so far.
     pub fn calls(&self) -> u64 {
         self.calls.load(Ordering::SeqCst)
+    }
+
+    /// The system prefix of the most recent request (a session's prompt).
+    pub fn last_system(&self) -> String {
+        self.last_system
+            .lock()
+            .map(|s| s.clone())
+            .unwrap_or_default()
     }
 }
 
@@ -52,6 +63,9 @@ impl Provider for ScriptedProvider {
 
     async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse, ProviderError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        if let Ok(mut s) = self.last_system.lock() {
+            s.clone_from(&req.system);
+        }
         let prompt = req
             .messages
             .last()
