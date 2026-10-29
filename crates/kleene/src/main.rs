@@ -126,6 +126,10 @@ enum Command {
         /// `trace_statements`, `trace_calls`, `trace_tool_calls`,
         /// `trace_rounds`, `trace_final`, `memo`).
         sql: String,
+        /// Print the rows as a JSON array of objects keyed by column (the
+        /// shape `run --json` writes) instead of a table and a row count.
+        #[arg(long)]
+        json: bool,
     },
     /// Benchmarks: run task packs under learning / frozen / plain modes,
     /// build and import packs, report accuracy, cost and learning curves.
@@ -1720,9 +1724,13 @@ async fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
-        Some(Command::Trace { sql }) => {
+        Some(Command::Trace { sql, json }) => {
             let store = open_store(&cli)?;
             let batch = store.query(sql).await?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&batch.to_json())?);
+                return Ok(());
+            }
             print!("{}", batch.render_table(200));
             println!(
                 "{} row{}",
