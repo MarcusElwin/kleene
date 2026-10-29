@@ -19,6 +19,7 @@ pub mod repl;
 pub mod session;
 pub mod sink;
 pub mod testing;
+pub mod text;
 
 /// A playbook entry: SQL that solved a task of some kind, shown to later
 /// sessions on the same kind as a learned example.
@@ -39,9 +40,11 @@ pub struct PlaybookExample {
 pub use live::{ChildRunner, LiveSink, ModelSettings, SessionMeta};
 pub use repl::{Rendered, Repl, ReplConfig};
 pub use session::{
-    Harness, HarnessConfig, HarnessError, Observer, RunReport, SessionReport, SessionStatus, Turn,
+    paragraphs, Harness, HarnessConfig, HarnessError, Observer, RunReport, SessionReport,
+    SessionStatus, Turn,
 };
 pub use sink::StoreSink;
+pub use text::{approx_tokens, decode_text, read_text_file};
 
 use kleene_core::{Budget, Catalog, ModelAlias, SessionId};
 use serde::{Deserialize, Serialize};
