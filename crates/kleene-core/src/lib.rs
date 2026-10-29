@@ -14,6 +14,7 @@ pub mod builtins;
 pub mod catalog;
 pub mod error;
 pub mod ids;
+pub mod profile;
 pub mod value;
 
 pub use batch::{Batch, Row};
@@ -25,4 +26,5 @@ pub use catalog::{
 };
 pub use error::CoreError;
 pub use ids::{CallId, ConversationId, RunId, SessionId, StatementId};
+pub use profile::ToolProfile;
 pub use value::{DataType, Field, Schema, Value};
