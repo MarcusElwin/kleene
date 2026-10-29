@@ -392,14 +392,15 @@ plain. Child sessions (`rlm`, `spawn`) are summarised one level in, not
 streamed.
 
 ```
-kleene run <task|@file> [--context <file>] [--max-turns 30] [--max-depth 2]
-              [--budget-calls N] [--budget-dollars X] [--check <cmd>] [-q|--quiet]
+kleene run <task|@file> [--context <file>] [--load name=file.csv ...] [--max-turns 30]
+              [--max-depth 2] [--budget-calls N] [--budget-dollars X] [--check <cmd>] [-q|--quiet]
               [--json] [--out <file>]
 ```
 
 | Flag | Meaning |
 |---|---|
 | `--context <file>` | Loaded as table `ctx(ordinal, text)`, one row per blank-line-separated paragraph (a file without blank lines is one row). UTF-8 with or without a byte-order mark, or UTF-16 with one; CRLF and LF both work. The run prints what it loaded (bytes, paragraphs, characters, tokens) on stderr, and a file in another encoding is refused with the fix |
+| `--load name=path` | Load a CSV or JSON file as table `name` before the first turn (`--load path` names it after the file); repeatable. The CSV header names the columns; a JSON array of objects, an object holding one array, or JSON Lines give one row per element; column types are inferred (`BIGINT`, `DOUBLE`, `BOOLEAN`, `JSON`, else `TEXT`; an empty CSV field is `NULL`). Files are UTF-8 (a byte-order mark is fine). `kleene repl --load` takes the same |
 | `--max-turns` | Turn cap for the root session (default 30); `resume` grants more |
 | `--max-depth` | Deepest child session allowed (default 2); `0` disables `rlm` and `spawn` |
 | `--budget-calls`, `--budget-dollars` | Budget for the whole run including children; a statement whose estimate exceeds what is left is refused with its plan. A dollar budget needs a price for every alias's model (the provider's cost report, a rate card, `[pricing]` in the router TOML or `KLEENE_PRICING`) and is refused otherwise |
@@ -439,6 +440,10 @@ An interactive CallSQL REPL against the store. Reads statements from stdin,
 one per line or terminated by `;`, plans each just before running it, and
 prints the rendered rows with a footer of calls, tokens and dollars when a
 statement made calls.
+
+`kleene repl --load threads.csv` loads a CSV or JSON file as a table first
+(see `run --load`), and `read_csv(path)` / `read_json(path)` in a query read
+one from the workspace as `(row, record JSON)`.
 
 ```bash
 kleene repl                                   # interactive

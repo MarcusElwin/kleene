@@ -5,8 +5,8 @@ use crate::live::LiveSink;
 use crate::sink::StoreSink;
 use crate::RenderOptions;
 use kleene_algebra::{plan as plan_calls, CostModel};
-use kleene_core::{BudgetUsage, Catalog, SessionId, StatementId};
-use kleene_exec::{execute_statement, ExecContext, StatementResult};
+use kleene_core::{Batch, BudgetUsage, Catalog, SessionId, StatementId};
+use kleene_exec::{execute_statement, ExecContext, ExecError, StatementResult};
 use kleene_llm::Provider;
 use kleene_sql::{parse, plan, plan_sql, render_error, Statement, StatementKind};
 use kleene_store::{DuckDbStore, Store};
@@ -122,6 +122,12 @@ impl Repl {
     /// The live sink (settings, budget, functions).
     pub fn sink(&self) -> &Arc<LiveSink> {
         &self.sink
+    }
+
+    /// Create `name` from `batch` (`kleene repl --load`), replacing a table
+    /// of that name.
+    pub async fn load_table(&self, name: &str, batch: Batch) -> Result<(), ExecError> {
+        crate::session::load_table(&self.sink, name, batch).await
     }
 
     /// The live catalog.

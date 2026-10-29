@@ -143,11 +143,27 @@ model and prompt fingerprint) across sessions and runs.
 ## Tools
 
 Pure table functions usable in `FROM`: `files(glob)`, `lines(path [, from,
-to])`, `read(path)`, `grep(pattern [, glob])`, `search(query [, glob, n])`
-(files ranked by BM25 against the query's words, with the best line of
-each), `chunks(text, size [, overlap])`, `env(name)`, `git_log([n])`,
-`git_diff([ref])`, `git_blame(path)`, `skill(name)` (the body of a loaded
-skill). Volatile tools run as statements: `CALL shell('cmd' [, cwd,
+to])`, `read(path)`, `read_csv(path)`, `read_json(path)`, `grep(pattern [,
+glob])`, `search(query [, glob, n])` (files ranked by BM25 against the
+query's words, with the best line of each), `chunks(text, size [,
+overlap])`, `env(name)`, `git_log([n])`, `git_diff([ref])`,
+`git_blame(path)`, `skill(name)` (the body of a loaded skill).
+
+`read_csv` and `read_json` return `(row, record JSON)`, one record per CSV
+line (keyed by the header) or JSON element (an array, an object holding one
+array, or JSON Lines); pick columns with `json_extract_string`:
+
+```sql
+CREATE TABLE threads AS
+SELECT json_extract_string(record, '$.id') AS id,
+       json_extract_string(record, '$.text') AS text
+FROM read_csv('threads.csv');
+```
+
+`kleene run --load threads=threads.csv` (also `kleene repl --load`) does
+the same before the first turn with typed columns (`BIGINT`, `DOUBLE`,
+`BOOLEAN`, `JSON` or `TEXT`, inferred per column), so the model starts with
+the table in its catalog. Files are UTF-8; a byte-order mark is fine. Volatile tools run as statements: `CALL shell('cmd' [, cwd,
 timeout_ms]) [FROM query]`, `CALL write_file(path, text)`,
 `CALL append_file(path, text)`, `CALL patch(path, old, new)` (one occurrence,
 exact or else ignoring whitespace and typographic quotes, after the file was

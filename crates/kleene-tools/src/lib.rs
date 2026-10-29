@@ -15,6 +15,8 @@
 //! | `lines` | `(path TEXT)` | `lineno, text` | STABLE |
 //! | `grep` | `(pattern TEXT [, glob TEXT])` | `path, lineno, text` | STABLE |
 //! | `read` | `(path TEXT)` | `text` | STABLE |
+//! | `read_csv` | `(path TEXT)` | `row, record` | STABLE |
+//! | `read_json` | `(path TEXT)` | `row, record` | STABLE |
 //! | `chunks` | `(text TEXT, size BIGINT [, overlap BIGINT])` | `ordinal, text, tokens` | IMMUTABLE |
 //! | `env` | `(name TEXT)` | `value` | STABLE |
 //! | `git_log` | `([n BIGINT])` | `sha, author, date, message` | STABLE |
@@ -31,7 +33,10 @@
 //! | `search` | `(query TEXT [, glob TEXT, n BIGINT])` | `path, score, lineno, snippet` | STABLE |
 //! | `skill` | `(name TEXT)` | `name, source, text` | STABLE |
 //!
-//! `lines` also takes an optional `from, to` range; `patch` returns the
+//! `read_csv` and `read_json` return one `record` (a JSON object keyed by
+//! column) per CSV line or JSON element, to pick columns from with
+//! `json_extract_string(record, '$.name')`; `kleene run --load` loads the
+//! same files as typed tables. `lines` also takes an optional `from, to` range; `patch` returns the
 //! unified diff of what it changed and falls back to a whitespace- and
 //! quote-insensitive line match when the exact text is not found.
 //!
@@ -53,6 +58,7 @@
 pub mod mcp;
 pub mod paths;
 pub mod skills;
+pub mod tabular;
 pub mod tools;
 
 mod args;
@@ -283,6 +289,8 @@ pub fn standard_tools() -> ToolRegistry {
         Arc::new(tools::lines::Lines),
         Arc::new(tools::grep::Grep),
         Arc::new(tools::read::Read),
+        Arc::new(tools::read_csv::ReadCsv),
+        Arc::new(tools::read_json::ReadJson),
         Arc::new(tools::chunks::Chunks),
         Arc::new(tools::env::Env),
         Arc::new(tools::git_log::GitLog),
@@ -352,7 +360,7 @@ mod tests {
         let reg = standard_tools();
         let defs = catalog_entries(&reg);
         assert_eq!(defs.len(), reg.len());
-        assert_eq!(reg.len(), 19);
+        assert_eq!(reg.len(), 21);
         for def in &defs {
             let tool = reg.get(&def.name).expect("entry names a tool");
             assert_eq!(def.volatility, tool.volatility(), "{}", def.name);
