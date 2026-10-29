@@ -41,6 +41,55 @@ struct Cli {
     command: Option<Command>,
 }
 
+/// Capability profile flags: which tools the run's sessions may use. The
+/// flags narrow the `[profile]` section of the config file; a child's
+/// `CREATE AGENT ... TOOLS (...)` role narrows further, never widens.
+#[derive(clap::Args, Debug, Clone, Default)]
+struct ProfileArgs {
+    /// No tool with side effects: the model can read files, grep, search
+    /// and load data, but not change the workspace, run commands or reach
+    /// the network (shell, write_file, append_file, patch, mkdir, remove,
+    /// web_fetch, web_search, send and writable MCP tools are withheld).
+    #[arg(long)]
+    read_only: bool,
+    /// Withhold `shell` (and `CREATE FUNCTION ... AS SHELL`).
+    #[arg(long)]
+    no_shell: bool,
+    /// Withhold `web_fetch` and `web_search`.
+    #[arg(long)]
+    no_web: bool,
+    /// Only these tools, comma-separated (`--tools files,grep,read`); the
+    /// other flags still apply to the list.
+    #[arg(long, value_name = "NAMES", value_delimiter = ',')]
+    tools: Vec<String>,
+}
+
+impl ProfileArgs {
+    /// The flags as a profile.
+    fn profile(&self) -> kleene_core::ToolProfile {
+        kleene_core::ToolProfile {
+            read_only: self.read_only,
+            no_shell: self.no_shell,
+            no_web: self.no_web,
+            tools: (!self.tools.is_empty()).then(|| {
+                self.tools
+                    .iter()
+                    .map(|t| t.trim().to_string())
+                    .filter(|t| !t.is_empty())
+                    .collect()
+            }),
+        }
+    }
+
+    /// The flags narrowing the config file's `[profile]`.
+    fn resolve(&self) -> kleene_core::ToolProfile {
+        let file = kleene_llm::ProviderSettings::effective()
+            .map(|s| s.profile())
+            .unwrap_or_default();
+        file.intersect(&self.profile())
+    }
+}
+
 #[derive(Subcommand, Debug)]
 enum Command {
     /// Run a task to completion: the model writes CallSQL turn by turn until
@@ -87,6 +136,8 @@ enum Command {
         /// give one row per element; column types are inferred.
         #[arg(long = "load", value_name = "NAME=PATH")]
         load: Vec<String>,
+        #[command(flatten)]
+        profile: ProfileArgs,
     },
     /// Continue a run whose root session stopped at its turn cap or was
     /// interrupted (`kleene trace "SELECT run, outcome FROM trace_sessions"`).
@@ -110,6 +161,8 @@ enum Command {
         /// `path`. Repeatable; see `kleene run --help`.
         #[arg(long = "load", value_name = "NAME=PATH")]
         load: Vec<String>,
+        #[command(flatten)]
+        profile: ProfileArgs,
     },
     /// Print the CallSQL dialect reference (docs/DIALECT.md of this
     /// build): the statements, functions, tools and forms this binary
@@ -145,6 +198,8 @@ enum Command {
         /// Daemon socket. Default: `.kleene/daemon.sock`.
         #[arg(long)]
         socket: Option<PathBuf>,
+        #[command(flatten)]
+        profile: ProfileArgs,
     },
     /// Attach to the daemon and print every event as a JSON line (headless
     /// mode). With `--run`, exits when that run finishes.
@@ -158,6 +213,8 @@ enum Command {
         /// Daemon socket. Default: `.kleene/daemon.sock`.
         #[arg(long)]
         socket: Option<PathBuf>,
+        #[command(flatten)]
+        profile: ProfileArgs,
     },
     /// The continual, self-learning loop: generated and user tasks, code
     /// oracles, ratings, curriculum and a replay-gated playbook.
@@ -1121,6 +1178,7 @@ fn start_request(
     run: &Option<String>,
     context: &Option<PathBuf>,
     workspace: &Option<PathBuf>,
+    profile: &kleene_core::ToolProfile,
 ) -> anyhow::Result<Option<kleene_daemon::ClientRequest>> {
     let Some(task) = run else {
         return Ok(None);
@@ -1140,6 +1198,7 @@ fn start_request(
         max_depth: None,
         budget_calls: None,
         check: None,
+        profile: profile.clone(),
         conversation: None,
     }))
 }
@@ -1178,6 +1237,7 @@ async fn daemon_config(cli: &Cli) -> anyhow::Result<kleene_harness::HarnessConfi
         workspace,
         provider,
         web_search: web_search_from_env(),
+        profile: ProfileArgs::default().resolve(),
         ..kleene_harness::HarnessConfig::default()
     })
 }
@@ -1426,18 +1486,34 @@ struct Opened {
     trace: kleene_store::DuckDbTraceSink,
 }
 
-async fn open_harness(
-    cli: &Cli,
+/// What one `kleene run` (or `resume`) asks of the harness beyond the
+/// global flags.
+struct RunSettings {
     max_turns: u32,
     max_depth: u32,
     budget: kleene_core::Budget,
     finish_check: Option<String>,
     quiet: bool,
     tables: Vec<(String, kleene_core::Batch)>,
+    profile: kleene_core::ToolProfile,
+}
+
+async fn open_harness(
+    cli: &Cli,
+    settings: RunSettings,
 ) -> anyhow::Result<(
     std::sync::Arc<kleene_harness::Harness>,
     kleene_store::DuckDbTraceSink,
 )> {
+    let RunSettings {
+        max_turns,
+        max_depth,
+        budget,
+        finish_check,
+        quiet,
+        tables,
+        profile,
+    } = settings;
     let store = open_store(cli)?;
     let workspace = cli
         .workspace
@@ -1467,6 +1543,7 @@ async fn open_harness(
         web_search: web_search_from_env(),
         finish_check,
         tables,
+        profile,
         ..kleene_harness::HarnessConfig::default()
     };
     let cfg = kleene_harness::HarnessConfig {
@@ -1479,10 +1556,17 @@ async fn open_harness(
             eprintln!("kleene: mcp server {}: {}", m.server, m.state);
         }
     }
+    if !quiet && !harness.withheld_tools().is_empty() {
+        eprintln!(
+            "kleene: {}: tools withheld: {}",
+            harness.config().profile.describe(),
+            harness.withheld_tools().join(", ")
+        );
+    }
     Ok((harness, trace))
 }
 
-async fn open_repl(cli: &Cli) -> anyhow::Result<Opened> {
+async fn open_repl(cli: &Cli, profile: kleene_core::ToolProfile) -> anyhow::Result<Opened> {
     let store = open_store(cli)?;
     let workspace = cli
         .workspace
@@ -1506,6 +1590,7 @@ async fn open_repl(cli: &Cli) -> anyhow::Result<Opened> {
             provider,
             tracer,
             web_search: web_search_from_env(),
+            profile,
         },
     )
     .await?;
@@ -1532,7 +1617,13 @@ async fn main() -> anyhow::Result<()> {
             }
             let socket = socket_path(&cli, &None);
             ensure_daemon(&cli, &socket).await?;
-            kleene_tui::run(&socket, None, workspace_string(&cli)).await?;
+            kleene_tui::run(
+                &socket,
+                None,
+                workspace_string(&cli),
+                kleene_core::ToolProfile::default(),
+            )
+            .await?;
             Ok(())
         }
         None => {
@@ -1580,6 +1671,7 @@ async fn main() -> anyhow::Result<()> {
             json,
             out,
             load,
+            profile,
         }) => {
             let quiet = *quiet || *json;
             let task_text = read_task(task)?;
@@ -1595,12 +1687,15 @@ async fn main() -> anyhow::Result<()> {
             let tables = load_tables(load, quiet)?;
             let (harness, trace) = open_harness(
                 &cli,
-                *max_turns,
-                *max_depth,
-                budget,
-                check.clone(),
-                quiet,
-                tables,
+                RunSettings {
+                    max_turns: *max_turns,
+                    max_depth: *max_depth,
+                    budget,
+                    finish_check: check.clone(),
+                    quiet,
+                    tables,
+                    profile: profile.resolve(),
+                },
             )
             .await?;
             let report = harness.run(&task_text, context).await?;
@@ -1626,12 +1721,15 @@ async fn main() -> anyhow::Result<()> {
             let run_id: uuid::Uuid = run.parse()?;
             let (harness, trace) = open_harness(
                 &cli,
-                *max_turns,
-                2,
-                kleene_core::Budget::unbounded(),
-                None,
-                *quiet,
-                vec![],
+                RunSettings {
+                    max_turns: *max_turns,
+                    max_depth: 2,
+                    budget: kleene_core::Budget::unbounded(),
+                    finish_check: None,
+                    quiet: *quiet,
+                    tables: vec![],
+                    profile: ProfileArgs::default().resolve(),
+                },
             )
             .await?;
             let report = harness.resume(kleene_core::RunId(run_id)).await?;
@@ -1642,8 +1740,12 @@ async fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
-        Some(Command::Repl { command, load }) => {
-            let Opened { repl, trace } = open_repl(&cli).await?;
+        Some(Command::Repl {
+            command,
+            load,
+            profile,
+        }) => {
+            let Opened { repl, trace } = open_repl(&cli, profile.resolve()).await?;
             for (name, batch) in load_tables(load, false)? {
                 repl.load_table(&name, batch).await?;
             }
@@ -1708,7 +1810,7 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Some(Command::Explain { sql }) => {
-            let Opened { repl, trace } = open_repl(&cli).await?;
+            let Opened { repl, trace } = open_repl(&cli, ProfileArgs::default().resolve()).await?;
             let mut failed = false;
             for r in repl.submit(&format!("EXPLAIN {sql}")).await {
                 println!("{}", r.text);
@@ -1749,6 +1851,7 @@ async fn main() -> anyhow::Result<()> {
             run,
             context,
             socket,
+            profile,
         }) => {
             // First start with nothing configured: run the wizard before the
             // daemon comes up, so the daemon reads the keys it writes.
@@ -1759,18 +1862,20 @@ async fn main() -> anyhow::Result<()> {
             }
             let socket = socket_path(&cli, socket);
             ensure_daemon(&cli, &socket).await?;
-            let start = start_request(run, context, &cli.workspace)?;
-            kleene_tui::run(&socket, start, workspace_string(&cli)).await?;
+            let profile = profile.profile();
+            let start = start_request(run, context, &cli.workspace, &profile)?;
+            kleene_tui::run(&socket, start, workspace_string(&cli), profile).await?;
             Ok(())
         }
         Some(Command::Attach {
             run,
             context,
             socket,
+            profile,
         }) => {
             let socket = socket_path(&cli, socket);
             ensure_daemon(&cli, &socket).await?;
-            let start = start_request(run, context, &cli.workspace)?;
+            let start = start_request(run, context, &cli.workspace, &profile.profile())?;
             kleene_tui::headless(&socket, start).await?;
             Ok(())
         }

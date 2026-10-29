@@ -96,6 +96,7 @@ async fn run_is_streamed_and_replayable() {
             max_depth: None,
             budget_calls: None,
             check: None,
+            profile: Default::default(),
             conversation: None,
         })
         .await
@@ -246,6 +247,7 @@ async fn cancel_run_stops_it() {
             max_depth: None,
             budget_calls: None,
             check: None,
+            profile: Default::default(),
             conversation: None,
         })
         .await
@@ -260,4 +262,62 @@ async fn cancel_run_stops_it() {
     assert!(matches!(ok, ServerMessage::Ok { .. }), "{ok:?}");
     let runs = c.call(&ClientRequest::ListRuns).await.unwrap();
     assert_eq!(runs, ServerMessage::Runs { runs: vec![] });
+}
+
+#[tokio::test]
+async fn a_client_profile_narrows_the_run() {
+    // `kleene tui --no-shell`: the run's catalog has no shell, so the model's
+    // CALL fails, and the next turn answers.
+    let try_shell = sql("CALL shell('ls')");
+    let fin = sql("FINAL('done')");
+    let live = start(vec![
+        ("turn 1/", fin.as_str()),
+        ("# Task", try_shell.as_str()),
+    ])
+    .await;
+    let mut c = Client::connect(&live.socket).await.unwrap();
+    c.send(&ClientRequest::Subscribe { after: None })
+        .await
+        .unwrap();
+    let mut starter = Client::connect(&live.socket).await.unwrap();
+    let accepted = starter
+        .call(&ClientRequest::StartRun {
+            task: "List.".into(),
+            workspace: String::new(),
+            context: None,
+            max_turns: None,
+            max_depth: None,
+            budget_calls: None,
+            check: None,
+            profile: kleene_core::ToolProfile {
+                no_shell: true,
+                ..Default::default()
+            },
+            conversation: None,
+        })
+        .await
+        .unwrap();
+    assert!(
+        matches!(accepted, ServerMessage::RunAccepted { .. }),
+        "{accepted:?}"
+    );
+    let mut errors = vec![];
+    loop {
+        match next(&mut c).await {
+            ServerMessage::Event { traced, .. } => {
+                if let kleene_trace::TraceEvent::StatementFinished { error: Some(e), .. } =
+                    traced.event
+                {
+                    errors.push(e);
+                }
+            }
+            ServerMessage::RunFinished { outcome, .. } => {
+                assert_eq!(outcome, "final", "{errors:?}");
+                break;
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].contains("shell"), "{errors:?}");
 }
