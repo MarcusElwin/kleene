@@ -16,3 +16,4 @@
 /tasks/redlining-*/
 # recorded model replies from bench runs; re-record with bench run --record
 /fixtures/
+__pycache__/

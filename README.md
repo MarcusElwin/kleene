@@ -453,6 +453,7 @@ with a [technical overview](https://kleene.sh/overview/) and
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | the crates, [the path of a statement](docs/ARCHITECTURE.md#the-path-of-one-statement), [sessions](docs/ARCHITECTURE.md#sessions-and-delegation), [the store and trace tables](docs/ARCHITECTURE.md#store-and-trace), [the daemon protocol](docs/ARCHITECTURE.md#processes), [the planner](docs/ARCHITECTURE.md#planner), [testing](docs/ARCHITECTURE.md#testing-strategy) |
 | [`docs/PLAN.md`](docs/PLAN.md) | the design and its rationale, milestone by milestone |
 | [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) | the benchmark harness: the eleven packs, the learning / frozen / plain modes, the oracles, what `bench report` and the five plots measure |
+| [`adapters/README.md`](adapters/README.md) | running kleene as an agent inside Harbor, the Terminal-Bench 2.0 runner |
 | [`docs/WRITEUP.md`](docs/WRITEUP.md) | the claim, the algebra, [what has been measured](docs/WRITEUP.md#3-what-was-measured-deterministically) and [how to reproduce it](docs/WRITEUP.md#6-reproduce) |
 | [`docs/RESEARCH.md`](docs/RESEARCH.md) | the sources: recursive language models, SQL as an LLM interface, complexity results, benchmarks |
 | [`demos/`](demos/README.md) | runnable demos: long context, reviewer agents, the planner, the continual loop, benchmarks |
