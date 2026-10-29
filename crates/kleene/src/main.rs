@@ -257,6 +257,10 @@ enum BenchAction {
         /// the first task it has no row for; its recorded rows are kept.
         #[arg(long)]
         resume: Option<String>,
+        /// Stop a task once it has spent this many dollars (every mode; the
+        /// task then counts as unsolved with `budget_exhausted` in its detail).
+        #[arg(long)]
+        budget_dollars: Option<f64>,
         /// Deepest child session allowed. Without it the harness default (2)
         /// applies, raised to the pack's `depth` when the pack states one.
         #[arg(long)]
@@ -592,7 +596,14 @@ async fn run_bench(cli: &Cli, action: &BenchAction) -> anyhow::Result<()> {
         let wanted = Pack::load(pack)?.depth.unwrap_or(0);
         cfg.max_depth = max_depth.unwrap_or(cfg.max_depth.max(wanted));
     }
-    if let BenchAction::Run { record, replay, .. } = action {
+    if let BenchAction::Run {
+        record,
+        replay,
+        budget_dollars,
+        ..
+    } = action
+    {
+        cfg.budget.dollars = *budget_dollars;
         if let Some(dir) = replay {
             cfg.provider = Some(Arc::new(kleene_llm::ReplayProvider::new(dir.clone())));
         } else if let Some(dir) = record {
