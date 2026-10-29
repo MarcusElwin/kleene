@@ -59,6 +59,13 @@ pub trait Provider: Send + Sync {
     fn model_for(&self, _alias: &str) -> Option<String> {
         None
     }
+    /// Whether every call through `alias` will carry a dollar cost: the
+    /// backend reports one, or a pricing table knows the model. A dollar
+    /// budget can only be enforced when this is true; the default answers
+    /// from [`Capabilities::cost_reported`].
+    fn cost_known(&self, _alias: &str) -> bool {
+        self.capabilities().cost_reported
+    }
     /// One request, one response.
     async fn complete(&self, req: CompletionRequest) -> Result<CompletionResponse, ProviderError>;
     /// Streamed response. The default buffers `complete` into a single final

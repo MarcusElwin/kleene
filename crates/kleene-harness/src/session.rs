@@ -121,6 +121,10 @@ pub struct HarnessConfig {
     /// `AGENTS.md` or `CLAUDE.md` from the workspace root; `Some("")` means
     /// none.
     pub instructions: Option<String>,
+    /// Tables loaded before the root session's first turn (`kleene run
+    /// --load`), by name; each replaces a table of that name left by an
+    /// earlier run, like `ctx`.
+    pub tables: Vec<(String, Batch)>,
 }
 
 impl Default for HarnessConfig {
@@ -148,6 +152,7 @@ impl Default for HarnessConfig {
             skills: None,
             config_dir: None,
             instructions: None,
+            tables: vec![],
         }
     }
 }
@@ -480,6 +485,11 @@ impl Harness {
                 task: task.to_string(),
             });
         }
+        if self.cfg.budget.dollars.is_some() {
+            if let Some(why) = self.cfg.provider.as_deref().and_then(crate::live::unpriced) {
+                return Err(HarnessError::Config(why));
+            }
+        }
         let role = AgentRole::root();
         let meta = SessionMeta {
             id: SessionId::new(),
@@ -619,6 +629,11 @@ impl Harness {
         self.register(meta.id, &sink);
         let fresh = record.messages.is_empty();
         let mut context_summary = None;
+        if fresh && meta.depth == 0 {
+            for (name, batch) in &self.cfg.tables {
+                load_table(&sink, name, batch.clone()).await?;
+            }
+        }
         if let Some(ctx) = &record.context {
             if fresh {
                 load_context(&sink, ctx).await?;
@@ -1525,21 +1540,26 @@ pub fn paragraphs(text: &str) -> Vec<String> {
 }
 
 async fn load_context(sink: &LiveSink, ctx: &str) -> Result<(), ExecError> {
-    use kleene_exec::CallSink;
     let schema = Arc::new(Schema::new(vec![
         Field::not_null("ordinal", DataType::Int),
         Field::new("text", DataType::Text),
     ]));
-    // A fresh run replaces whatever an earlier run in this store left behind.
-    sink.drop_table("ctx", true).await?;
-    sink.create_table("ctx", schema.clone(), false).await?;
     let rows: Vec<Vec<Value>> = paragraphs(ctx)
         .into_iter()
         .enumerate()
         .map(|(i, p)| vec![Value::Int(i as i64), Value::Text(p)])
         .collect();
-    let batch = Batch::try_new(schema, rows)?;
-    sink.insert("ctx", batch).await?;
+    load_table(sink, "ctx", Batch::try_new(schema, rows)?).await
+}
+
+/// Create `name` from `batch`, replacing whatever an earlier run in this
+/// store left under that name, and refresh the catalog so the session sees
+/// it.
+pub(crate) async fn load_table(sink: &LiveSink, name: &str, batch: Batch) -> Result<(), ExecError> {
+    use kleene_exec::CallSink;
+    sink.drop_table(name, true).await?;
+    sink.create_table(name, batch.schema.clone(), false).await?;
+    sink.insert(name, batch).await?;
     sink.store()
         .refresh()
         .await

@@ -48,10 +48,11 @@ Environment variables win over the file, field by field, so a one-off `ANTHROPIC
 | `OPENAI_BASE_URL` | any OpenAI-compatible endpoint; a local server needs only this, no key |
 | `OPENAI_MODEL` | the model every alias resolves to on that endpoint (default `gpt-5.4-mini`) |
 | `KLEENE_ROUTER_TOML` | a router file for your own aliases, failover and pricing |
+| `KLEENE_PRICING` | prices for models no rate card knows: `model=input/output[/cache_read[/cache_write]]` in dollars per million tokens, entries separated by commas |
 | `KLEENE_WEB_SEARCH_API_KEY`, `KLEENE_WEB_SEARCH_PROVIDER` | the service behind `web_search`: `brave` (default), `tavily`, `exa` or `linkup` |
 | `KLEENE_CONFIG_DIR` | where `config.toml` lives |
 
-With only Anthropic configured the default routing is: `root` on Opus 5.5 at high effort, `worker` and `judge` on Sonnet 5, `proxy` on Haiku 4.5 at low effort, prompt prefix cached everywhere, priced from the first-party rate card. With only an OpenAI-compatible endpoint, every alias resolves to `OPENAI_MODEL` and nothing is priced, so dollar budgets and estimates read zero until you add pricing.
+With only Anthropic configured the default routing is: `root` on Opus 5.5 at high effort, `worker` and `judge` on Sonnet 5, `proxy` on Haiku 4.5 at low effort, prompt prefix cached everywhere, priced from the first-party rate card. With only an OpenAI-compatible endpoint, every alias resolves to `OPENAI_MODEL`, priced from OpenAI's rate card when the model is on it or from the gateway's own `usage.cost`; any other model needs `KLEENE_PRICING="model=input/output"` (dollars per million tokens) or a `[pricing]` entry before a dollar budget can be set.
 
 ## Aliases and the router file
 

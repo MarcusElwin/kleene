@@ -12,9 +12,9 @@ const repo = dirname(dirname(dirname(dirname(fileURLToPath(import.meta.url)))));
 /** The committed runs: a CSV (plus any later CSVs of the same model under
  * `csvs`), the model label, and when and how it ran. */
 export const RUNS: { csv: string; csvs?: string[]; model: string; label: string; date: string; plots: string; note: string }[] = [
-  { csv: "plots/evals.csv", csvs: ["plots/opus-2026-10-06/evals.csv"], model: "claude-opus-5-5", label: "Claude Opus 5.5", date: "27 Sep, 6 and 10 Oct 2026", plots: "plots", note: "root on Opus 5.5 at high effort, worker and judge on Sonnet 5.5, proxy on Haiku 4.5; the four original packs on 27 September, coding and memo-rubric on 6 October and logbook-hard (capped at ten tasks) on 10 October with the conversation cached and prompt functions batched" },
-  { csv: "plots/haiku-2026-10-01/evals.csv", csvs: ["plots/haiku-2026-10-06/evals.csv"], model: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5", date: "1 and 6 Oct 2026", plots: "plots/haiku-2026-10-01", note: "every solver alias on Haiku 4.5, judge on Sonnet 5.5; coding and memo-rubric on 1 October, the four original packs, coding plain and logbook-hard (capped at ten tasks) on 6 October with the conversation cached" },
-  { csv: "plots/luna-2026-10-05/evals.csv", model: "gpt-6-luna", label: "GPT-6 Luna", date: "5 Oct 2026", plots: "plots/luna-2026-10-05", note: "every solver alias on GPT-6 Luna over OpenAI chat completions, judge on Sonnet 5.5, all seven packs; logbook-hard capped at ten tasks and its learning run stopped after three" },
+  { csv: "plots/evals.csv", csvs: ["plots/opus-2026-10-06/evals.csv", "plots/opus-2026-10-26/evals.csv"], model: "claude-opus-5-5", label: "Claude Opus 5.5", date: "27 Sep, 6, 10 and 26 Oct 2026", plots: "plots", note: "root on Opus 5.5 at high effort, worker and judge on Sonnet 5.5, proxy on Haiku 4.5; the four original packs on 27 September, coding and memo-rubric on 6 October and logbook-hard (capped at ten tasks) on 10 October with the conversation cached and prompt functions batched; the four hard packs on 26 October with every task capped at $2.50" },
+  { csv: "plots/haiku-2026-10-01/evals.csv", csvs: ["plots/haiku-2026-10-06/evals.csv", "plots/haiku-2026-10-13/evals.csv"], model: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5", date: "1, 6 and 13 Oct 2026", plots: "plots/haiku-2026-10-01", note: "every solver alias on Haiku 4.5, judge on Sonnet 5.5; coding and memo-rubric on 1 October, the four original packs, coding plain and logbook-hard (capped at ten tasks) on 6 October with the conversation cached, and the four hard packs on 13 October" },
+  { csv: "plots/luna-2026-10-05/evals.csv", csvs: ["plots/luna-2026-10-13/evals.csv"], model: "gpt-6-luna", label: "GPT-6 Luna", date: "5 and 13 Oct 2026", plots: "plots/luna-2026-10-05", note: "every solver alias on GPT-6 Luna over OpenAI chat completions, judge on Sonnet 5.5, all seven packs on 5 October (logbook-hard capped at ten tasks and its learning run stopped after three); the four hard packs on 13 October with the root alias at reasoning effort none, which the API now requires for function tools" },
 ];
 
 export const MODES = ["learning", "frozen", "plain"] as const;
@@ -58,8 +58,8 @@ export function aggregate(rows: Row[]): Cell[] {
   return cells.sort((a, b) => a.pack.localeCompare(b.pack) || modeIx(a.mode) - modeIx(b.mode) || a.label.localeCompare(b.label));
 }
 
-/** Pack order on the page: the first four Opus packs, then the harder ones. */
-export const PACK_ORDER = ["terminal", "oolong-like", "finance-synthetic", "legal-synthetic", "coding", "memo-rubric", "logbook-hard"];
+/** Pack order on the page: the first four Opus packs, then the harder ones, then the hard versions of the first four. */
+export const PACK_ORDER = ["terminal", "oolong-like", "finance-synthetic", "legal-synthetic", "coding", "memo-rubric", "logbook-hard", "terminal-hard", "oolong-hard", "finance-hard", "legal-hard"];
 
 export const fmt = {
   money: (x: number) => (x >= 1 ? `$${x.toFixed(2)}` : x >= 0.01 ? `$${x.toFixed(3)}` : `$${x.toFixed(4)}`),

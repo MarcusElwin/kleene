@@ -139,20 +139,22 @@ import { VERSION } from "../lib/version";
 
 <span class="cmt"># Homebrew: the repository is its own tap</span>&#10;<span class="prompt">$</span> brew tap MarcusElwin/kleene https://github.com/MarcusElwin/kleene&#10;<span class="prompt">$</span> brew trust MarcusElwin/kleene&#10;<span class="prompt">$</span> brew install kleene
 
+<span class="cmt"># Windows (PowerShell): unzip the release asset, compare the hash with SHA256SUMS, put kleene.exe on the PATH</span>&#10;<span class="prompt">&gt;</span> Expand-Archive kleene-{VERSION}-x86_64-pc-windows-msvc.zip -DestinationPath $env:LOCALAPPDATA\kleene&#10;<span class="prompt">&gt;</span> Get-FileHash $env:LOCALAPPDATA\kleene\kleene.exe
+
 <span class="cmt"># From source (compiles DuckDB the first time, about ten minutes)</span>&#10;<span class="prompt">$</span> cargo install --git https://github.com/MarcusElwin/kleene kleene
 
 <span class="cmt"># Check the engine without a model</span>&#10;<span class="prompt">$</span> kleene repl -c "SELECT 1 + 1 AS two"
   <span class="num">2</span>&#10;  <span class="dim">1 row</span></Terminal>
-    <p>Prebuilt binaries cover macOS (Apple silicon, Intel), Linux (x86_64, aarch64) and Windows (x86_64, as a zip on the releases page). Then <code>kleene setup</code> for a provider (Anthropic, OpenAI, or any compatible endpoint), or just export <code>ANTHROPIC_API_KEY</code>. The full reference is in <a href="/docs/cli/">the CLI docs</a>.</p>
+    <p>Prebuilt binaries cover macOS (Apple silicon, Intel), Linux (x86_64, aarch64) and Windows (x86_64). The installer and the formula are Unix only; on Windows the engine, the REPL, the TUI and the providers run natively, and the daemon listens on a named pipe. See <a href="/docs/cli/#windows">Windows in the CLI docs</a> for the details. Then <code>kleene setup</code> for a provider (Anthropic, OpenAI, or any compatible endpoint), or just export <code>ANTHROPIC_API_KEY</code>. The full reference is in <a href="/docs/cli/">the CLI docs</a>.</p>
   </section>
 
   <section class="status">
     <h2>Status</h2>
-    <p>Released: <code>v{VERSION}</code> ships as prebuilt binaries through <code>install.sh</code>, Homebrew and GitHub releases. Every milestone of <a href="/docs/plan/">the plan</a> is on <code>main</code>: the relational core with recursive CTEs by semi-naive evaluation, the call algebra with memo, batching and budgets, the RLM harness with <code>rlm</code> and <code>spawn</code>, the daemon and the Catppuccin TUI, the planner, the continual learning loop and the benchmark harness. Rust, model-agnostic, no SDK and no gateway required, MIT licensed.</p>
+    <p>Released: <code>v{VERSION}</code> ships as prebuilt binaries for macOS, Linux and Windows through <code>install.sh</code>, Homebrew and GitHub releases. Every milestone of <a href="/docs/plan/">the plan</a> is on <code>main</code>: the relational core with recursive CTEs by semi-naive evaluation, the call algebra with memo, batching and budgets, the RLM harness with <code>rlm</code> and <code>spawn</code>, the daemon and the Catppuccin TUI, the planner, the continual learning loop and the benchmark harness. Rust, model-agnostic, no SDK and no gateway required, MIT licensed.</p>
     <p class="dim">
       <span class="green">[x]</span> M0 scaffold &nbsp; <span class="green">[x]</span> M1 relational core &nbsp; <span class="green">[x]</span> M2 call algebra &nbsp; <span class="green">[x]</span> M3 RLM harness<br />
       <span class="green">[x]</span> M4 daemon and TUI &nbsp; <span class="green">[x]</span> M5 planner &nbsp; <span class="green">[x]</span> M6 continual loop &nbsp; <span class="green">[x]</span> M7 benchmarks<br />
-      <span class="green">[x]</span> v0.1.0 release &nbsp; <span class="green">[x]</span> v{VERSION} on <code>install.sh</code> and Homebrew
+      <span class="green">[x]</span> v0.1.0 release &nbsp; <span class="green">[x]</span> v{VERSION} on <code>install.sh</code> and Homebrew &nbsp; <span class="green">[x]</span> Windows since v0.4.0
     </p>
   </section>
 </Base>

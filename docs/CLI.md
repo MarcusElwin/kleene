@@ -8,8 +8,8 @@ flags as compiled.
 - [Set up a model provider](#configuring-a-model-provider) (`kleene setup`)
 - [First run](#first-run)
 - [Global flags and files](#global-flags-and-files)
-- [Commands](#commands): `run`, `resume`, `repl`, `explain`, `trace`, `tui`,
-  `attach`, `daemon`, `learn`, `bench`
+- [Commands](#commands): `run`, `resume`, `repl`, `explain`, `dialect`,
+  `trace`, `tui`, `attach`, `daemon`, `learn`, `bench`
 - [Working from source](#working-from-source)
 - [Troubleshooting](#troubleshooting)
 
@@ -236,8 +236,17 @@ export OPENAI_MODEL=gpt-5.4-mini          # optional; the model every alias reso
 
 A local server needs only a URL: `OPENAI_BASE_URL=http://localhost:11434/v1`
 with no key. With only this configured, every alias resolves to
-`OPENAI_MODEL` (default `gpt-5.4-mini`) and nothing is priced, so dollar
-budgets and estimates read zero.
+`OPENAI_MODEL` (default `gpt-5.4-mini`), priced from OpenAI's rate card when
+the model is on it. A gateway that reports a cost in the response
+(`usage.cost`, as OpenRouter and the Vercel AI Gateway do) is priced from
+that. Any other model needs a price before a dollar budget can be set:
+
+```bash
+export KLEENE_PRICING="deepseek/deepseek-v4.1-flash-1017=0.28/0.42"   # $/Mtok in/out[/cache read[/cache write]], comma-separated entries
+```
+
+`--budget-dollars` and `SET budget.dollars` are refused with that hint when
+an alias's model has no price, instead of counting every call as $0.
 
 **Both, or your own routing**
 
@@ -383,17 +392,18 @@ plain. Child sessions (`rlm`, `spawn`) are summarised one level in, not
 streamed.
 
 ```
-kleene run <task|@file> [--context <file>] [--max-turns 30] [--max-depth 2]
-              [--budget-calls N] [--budget-dollars X] [--check <cmd>] [-q|--quiet]
+kleene run <task|@file> [--context <file>] [--load name=file.csv ...] [--max-turns 30]
+              [--max-depth 2] [--budget-calls N] [--budget-dollars X] [--check <cmd>] [-q|--quiet]
               [--json] [--out <file>]
 ```
 
 | Flag | Meaning |
 |---|---|
 | `--context <file>` | Loaded as table `ctx(ordinal, text)`, one row per blank-line-separated paragraph (a file without blank lines is one row). UTF-8 with or without a byte-order mark, or UTF-16 with one; CRLF and LF both work. The run prints what it loaded (bytes, paragraphs, characters, tokens) on stderr, and a file in another encoding is refused with the fix |
+| `--load name=path` | Load a CSV or JSON file as table `name` before the first turn (`--load path` names it after the file); repeatable. The CSV header names the columns; a JSON array of objects, an object holding one array, or JSON Lines give one row per element; column types are inferred (`BIGINT`, `DOUBLE`, `BOOLEAN`, `JSON`, else `TEXT`; an empty CSV field is `NULL`). Files are UTF-8 (a byte-order mark is fine). `kleene repl --load` takes the same |
 | `--max-turns` | Turn cap for the root session (default 30); `resume` grants more |
 | `--max-depth` | Deepest child session allowed (default 2); `0` disables `rlm` and `spawn` |
-| `--budget-calls`, `--budget-dollars` | Budget for the whole run including children; a statement whose estimate exceeds what is left is refused with its plan |
+| `--budget-calls`, `--budget-dollars` | Budget for the whole run including children; a statement whose estimate exceeds what is left is refused with its plan. A dollar budget needs a price for every alias's model (the provider's cost report, a rate card, `[pricing]` in the router TOML or `KLEENE_PRICING`) and is refused otherwise |
 | `--check <cmd>` | A shell command run in the workspace whenever the root session writes `FINAL`; a non-zero exit refuses the `FINAL`, renders the output back and the session continues. Give a code task its test command (`--check 'python3 -m unittest -q'`) and it cannot end red |
 | `-q` | Print only the final relation |
 | `--json` | Print the result as JSON on stdout instead of a table (implies `-q`): the final relation as an array of objects keyed by column, or `{"run", "outcome", "detail"}` with exit code 3 when there was no `FINAL`. Written as UTF-8 bytes, so it survives a redirect on any console |
@@ -431,6 +441,10 @@ one per line or terminated by `;`, plans each just before running it, and
 prints the rendered rows with a footer of calls, tokens and dollars when a
 statement made calls.
 
+`kleene repl --load threads.csv` loads a CSV or JSON file as a table first
+(see `run --load`), and `read_csv(path)` / `read_json(path)` in a query read
+one from the workspace as `(row, record JSON)`.
+
 ```bash
 kleene repl                                   # interactive
 kleene repl -c "SELECT 1 + 1 AS two"          # one statement
@@ -454,6 +468,14 @@ kleene explain "SELECT c FROM candidates WHERE llm_bool('Is ' || c || ' a real p
 ```
 
 `EXPLAIN ANALYZE <statement>` inside `repl` also runs it and prints actuals.
+
+### `kleene dialect`
+
+Print the CallSQL reference that matches this binary: a copy of
+[`DIALECT.md`](DIALECT.md) is compiled in, so `kleene dialect | less` (or
+`> dialect.md`) answers "is this statement supported in the version I have"
+without a trip to the repository. It is the page to hand an agent model that
+writes CallSQL for you.
 
 ### `kleene trace <sql>`
 
@@ -647,7 +669,7 @@ modes, oracles, report columns and plots measure is in
 | Command | What it does |
 |---|---|
 | `bench run <pack-dir> [--mode learning\|frozen\|plain] [--limit N] [--sample N --seed S] [--outputs <dir>] [--record <dir>] [--replay <dir>] [--resume <run-id>] [--budget-dollars X] [--max-depth N]` | Run a pack. `learning` shows and adopts the playbook; `frozen` is the control; `plain` is a tool-calling agent on the same provider, tools and budget. `--sample` runs a seeded sample of N tasks in pack order; `--outputs` exports every task's `output/` in the layout Harvey LAB's evaluator reads and prints the `run_eval` commands; `--record` saves every model reply as fixtures; `--replay` serves them offline. A task that ends without a token spent (no credit, a bad key) stops the run with the reason in `bench_runs.note`; `--resume` continues that run at the first task without a row. `--budget-dollars` stops a task once it has spent that much, in every mode (the task counts as unsolved with `budget_exhausted` in its detail). Child sessions may nest to the harness default of 2, or to the pack's `depth` when it states one (`recursion-depth` says 6); `--max-depth` overrides both |
-| `bench build <out-dir> --from <generator> [--count 20] [--dial 0.5] [--seed 1] [--lazy]` | Freeze generator output into a pack; same seeds, same tasks. `--lazy` stores generator references and regenerates on load. Generators: `sat3`, `graph`, `puzzle`, `corpus`, `repo`, `statements`, `contracts`, `logbook`, `memo`, `nest` |
+| `bench build <out-dir> --from <generator> [--count 20] [--dial 0.5] [--seed 1] [--lazy]` | Freeze generator output into a pack; same seeds, same tasks. `--lazy` stores generator references and regenerates on load. Generators: `sat3`, `graph`, `puzzle`, `corpus`, `repo`, `statements`, `contracts`, `logbook`, `memo`, `tracker`, `ledger`, `agreement`, `nest` |
 | `bench terminal <out-dir>` | Write the built-in Terminal-Bench-style pack |
 | `bench import-lab <checkout>/tasks <out-dir> [--sample N --seed S]` | Import a Harvey LAB checkout (or one practice area under it) into a pack with the shipped rubrics; `--sample` imports a seeded sample and copies only its documents |
 | `bench import-oolong <out-dir> [--dataset trec_coarse] [--context-len 131072] [--limit 50] [--offset 0] [--split validation\|test] [--from-json <file>]` | Import OOLONG-synth questions from Hugging Face into a pack with the `oolong` oracle; the defaults are the RLM paper's trec_coarse 128k split |
@@ -705,8 +727,17 @@ the statement makes no calls. `kleene setup --show` says what is configured
 and whether it came from the file or the environment.
 
 **Estimates and dollars are all zero** — the model is not in the pricing
-table. Only the Anthropic defaults come priced; add a `[pricing."model"]`
-section to your router TOML.
+table and the provider reports no cost. Set
+`KLEENE_PRICING="model=input/output"` (dollars per million tokens) or add a
+`[pricing."model"]` section to your router TOML; `--budget-dollars` refuses
+to run until one of them is there.
+
+**Token estimates are below the actuals** — `EXPLAIN` prices a statement's
+own calls (about 750 tokens for a scalar call, a whole agent loop for
+`rlm`/`spawn`); the turn that carries the statement adds its system prompt
+and transcript on top. `EXPLAIN ANALYZE` prints estimate and actual side by
+side, and the trace tables (`trace_sessions`, `trace_calls`) hold every
+actual for a per-model calibration.
 
 **A statement is refused with its plan** — the estimate exceeded the
 remaining call or dollar budget. Raise `--budget-*`, or narrow the query;

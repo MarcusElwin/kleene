@@ -231,11 +231,45 @@ impl<'c> Planner<'c> {
             sp::Statement::CreateTable(ct) => {
                 let name = object_name_last(&ct.name)?;
                 let Some(query) = &ct.query else {
-                    return Err(unsupported(
-                        "CREATE TABLE with a column list",
-                        "use CREATE TABLE name AS SELECT ... (column DDL arrives later)",
-                    ));
+                    if ct.columns.is_empty() {
+                        return Err(unsupported(
+                            "CREATE TABLE without columns or a query",
+                            "CREATE TABLE name (column TYPE, ...) or CREATE TABLE name AS SELECT ...",
+                        ));
+                    }
+                    let fields = ct
+                        .columns
+                        .iter()
+                        .map(|c| {
+                            let data_type = Self::data_type(&c.data_type)?;
+                            let not_null = c.options.iter().any(|o| {
+                                matches!(
+                                    o.option,
+                                    sp::ColumnOption::NotNull | sp::ColumnOption::PrimaryKey(_)
+                                )
+                            });
+                            Ok(if not_null {
+                                kleene_core::Field::not_null(c.name.value.clone(), data_type)
+                            } else {
+                                kleene_core::Field::new(c.name.value.clone(), data_type)
+                            })
+                        })
+                        .collect::<Result<Vec<_>, SqlError>>()?;
+                    return Ok(Statement {
+                        sql,
+                        kind: StatementKind::CreateTable {
+                            name,
+                            schema: kleene_core::Schema::new(fields),
+                            if_not_exists: ct.if_not_exists,
+                        },
+                    });
                 };
+                if !ct.columns.is_empty() {
+                    return Err(unsupported(
+                        "CREATE TABLE with both a column list and AS SELECT",
+                        "the query names the columns: CREATE TABLE name AS SELECT a, b FROM ...",
+                    ));
+                }
                 StatementKind::CreateTableAs {
                     name,
                     plan: self.plan_query(query, None, &CteEnv::default())?.plan,

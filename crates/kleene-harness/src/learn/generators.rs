@@ -37,6 +37,9 @@ pub const GENERATORS: &[&str] = &[
     "contracts",
     "logbook",
     "memo",
+    "tracker",
+    "ledger",
+    "agreement",
     "nest",
 ];
 
@@ -92,6 +95,9 @@ pub fn generate(
         "contracts" => contracts(dial, &mut rng),
         "logbook" => logbook(dial, &mut rng),
         "memo" => memo(dial, &mut rng),
+        "tracker" => super::hard::tracker(dial, &mut rng),
+        "ledger" => super::hard::ledger(dial, &mut rng),
+        "agreement" => super::hard::agreement(dial, &mut rng),
         "nest" => super::nest::nest(dial, &mut rng),
         _ => return None,
     })

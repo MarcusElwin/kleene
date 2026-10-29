@@ -12,6 +12,7 @@
 pub mod bench;
 pub mod functions;
 pub mod generators;
+pub mod hard;
 pub mod nest;
 pub mod packs;
 pub mod plain;

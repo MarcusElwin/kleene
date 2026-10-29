@@ -70,6 +70,15 @@ pub(crate) fn is_builtin(name: &str) -> bool {
             | "starts_with"
             | "contains"
             | "split_part"
+            | "strpos"
+            | "left"
+            | "right"
+            | "repeat"
+            | "reverse"
+            | "lpad"
+            | "rpad"
+            | "chr"
+            | "ascii"
             | "coalesce"
             | "nullif"
             | "greatest"
@@ -195,6 +204,77 @@ pub(crate) fn call(name: &str, args: &[Value]) -> Result<Value, ExecError> {
             };
             Ok(Value::Text(part.to_string()))
         }
+        "strpos" => {
+            let (Some(s), Some(needle)) = (text_arg(name, args, 0)?, text_arg(name, args, 1)?)
+            else {
+                return Ok(Value::Null);
+            };
+            Ok(Value::Int(match s.find(needle) {
+                Some(at) => s[..at].chars().count() as i64 + 1,
+                None => 0,
+            }))
+        }
+        "left" | "right" => {
+            let (Some(s), Some(n)) = (text_arg(name, args, 0)?, int_arg(name, args, 1)?) else {
+                return Ok(Value::Null);
+            };
+            let chars: Vec<char> = s.chars().collect();
+            let len = chars.len() as i64;
+            // PostgreSQL: a negative n drops that many characters from the other end.
+            let keep = if n >= 0 { n.min(len) } else { (len + n).max(0) } as usize;
+            Ok(Value::Text(if name == "left" {
+                chars[..keep].iter().collect()
+            } else {
+                chars[chars.len() - keep..].iter().collect()
+            }))
+        }
+        "repeat" => {
+            let (Some(s), Some(n)) = (text_arg(name, args, 0)?, int_arg(name, args, 1)?) else {
+                return Ok(Value::Null);
+            };
+            Ok(Value::Text(s.repeat(n.max(0) as usize)))
+        }
+        "reverse" => text1!(|s: &str| s.chars().rev().collect::<String>()),
+        "lpad" | "rpad" => {
+            let (Some(s), Some(n)) = (text_arg(name, args, 0)?, int_arg(name, args, 1)?) else {
+                return Ok(Value::Null);
+            };
+            let fill: Vec<char> = if args.len() > 2 {
+                match text_arg(name, args, 2)? {
+                    None => return Ok(Value::Null),
+                    Some(f) => f.chars().collect(),
+                }
+            } else {
+                vec![' ']
+            };
+            let chars: Vec<char> = s.chars().collect();
+            let n = n.max(0) as usize;
+            if chars.len() >= n || fill.is_empty() {
+                return Ok(Value::Text(chars[..n.min(chars.len())].iter().collect()));
+            }
+            let pad: String = fill.iter().cycle().take(n - chars.len()).collect();
+            Ok(Value::Text(if name == "lpad" {
+                format!("{pad}{s}")
+            } else {
+                format!("{s}{pad}")
+            }))
+        }
+        "chr" => Ok(match int_arg(name, args, 0)? {
+            None => Value::Null,
+            Some(code) => {
+                let c = u32::try_from(code)
+                    .ok()
+                    .and_then(char::from_u32)
+                    .ok_or_else(|| {
+                        ExecError::Eval(format!("chr: {code} is not a Unicode code point"))
+                    })?;
+                Value::Text(c.to_string())
+            }
+        }),
+        "ascii" => Ok(match text_arg(name, args, 0)? {
+            None => Value::Null,
+            Some(s) => Value::Int(s.chars().next().map_or(0, |c| c as i64)),
+        }),
         "coalesce" => Ok(args
             .iter()
             .find(|v| !v.is_null())
@@ -392,6 +472,53 @@ mod tests {
 
     fn t(s: &str) -> Value {
         Value::from(s)
+    }
+
+    #[test]
+    fn more_string_functions() {
+        assert_eq!(call("chr", &[Value::Int(10)]).unwrap(), t("\n"));
+        assert_eq!(call("chr", &[Value::Int(12523)]).unwrap(), t("ル"));
+        assert!(call("chr", &[Value::Int(-1)]).is_err());
+        assert_eq!(call("ascii", &[t("ループ")]).unwrap(), Value::Int(12523));
+        assert_eq!(call("ascii", &[t("")]).unwrap(), Value::Int(0));
+        assert_eq!(
+            call("strpos", &[t("予算とコスト"), t("コスト")]).unwrap(),
+            Value::Int(4)
+        );
+        assert_eq!(call("strpos", &[t("abc"), t("z")]).unwrap(), Value::Int(0));
+        assert_eq!(
+            call("left", &[t("ループ"), Value::Int(2)]).unwrap(),
+            t("ルー")
+        );
+        assert_eq!(
+            call("left", &[t("abcde"), Value::Int(-2)]).unwrap(),
+            t("abc")
+        );
+        assert_eq!(
+            call("right", &[t("ループ"), Value::Int(2)]).unwrap(),
+            t("ープ")
+        );
+        assert_eq!(call("right", &[t("ab"), Value::Int(9)]).unwrap(), t("ab"));
+        assert_eq!(
+            call("repeat", &[t("ab"), Value::Int(3)]).unwrap(),
+            t("ababab")
+        );
+        assert_eq!(call("repeat", &[t("ab"), Value::Int(-1)]).unwrap(), t(""));
+        assert_eq!(call("reverse", &[t("ルー")]).unwrap(), t("ール"));
+        assert_eq!(
+            call("lpad", &[t("7"), Value::Int(3), t("0")]).unwrap(),
+            t("007")
+        );
+        assert_eq!(call("lpad", &[t("ab"), Value::Int(4)]).unwrap(), t("  ab"));
+        assert_eq!(
+            call("rpad", &[t("ab"), Value::Int(5), t("xy")]).unwrap(),
+            t("abxyx")
+        );
+        assert_eq!(call("rpad", &[t("abcd"), Value::Int(2)]).unwrap(), t("ab"));
+        assert_eq!(
+            call("lpad", &[Value::Null, Value::Int(2)]).unwrap(),
+            Value::Null
+        );
     }
 
     #[test]

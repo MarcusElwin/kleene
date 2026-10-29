@@ -1,0 +1,136 @@
+{
+  "name": "terminal-hard",
+  "description": "Terminal-Bench-style shell tasks over workspaces too large to inspect by hand: logs across many files, CSV joins, duplicate detection, bulk renames, directory sizes, config repair, reconciliation and distinct counts, judged by hidden graders that recompute the answer from the files",
+  "license": "original tasks, MIT",
+  "kind": "terminal",
+  "tasks": [
+    {
+      "id": "errors-by-service",
+      "kind": null,
+      "task": "Under logs/ there is one directory per service and one file per day of that service's log. Each line is `<timestamp> <LEVEL> <service> <message>`, where LEVEL is one of DEBUG, INFO, WARN, ERROR; messages may themselves contain the word ERROR. How many ERROR-level lines did each service log in total across all its files? Answer with FINAL over one row per service: columns service and errors (an integer).",
+      "context": null,
+      "context_file": null,
+      "setup": [
+        "python3 .gen/make.py && rm -rf .gen"
+      ],
+      "workspace_from": "workspaces/errors-by-service",
+      "verify": {
+        "kind": "shell",
+        "command": "python3 -c \"$(cat <<'PY'\nimport json, sys\nrows = json.load(sys.stdin)\ndef num(x):\n    return float(str(x).replace(',', ''))\n\nimport os\nwant = {}\nfor s in os.listdir(\"logs\"):\n    n = 0\n    for fn in os.listdir(f\"logs/{s}\"):\n        for line in open(f\"logs/{s}/{fn}\"):\n            parts = line.split(\" \", 3)\n            if len(parts) > 1 and parts[1] == \"ERROR\":\n                n += 1\n    want[s] = n\ngot = {str(r[0]).strip().lower(): int(num(r[1])) for r in rows if len(r) >= 2}\nprint(want, got)\nsys.exit(0 if got == want else 1)\nPY\n)\""
+      },
+      "difficulty": 1300.0
+    },
+    {
+      "id": "top-countries",
+      "kind": null,
+      "task": "orders.csv has columns order_id,customer_id,amount,status and customers.csv has customer_id,name,country. Which three countries have the highest total amount of orders whose status is exactly `paid` (other statuses do not count)? Answer with FINAL over three rows: columns country and total (the sum of amount, two decimals), highest first.",
+      "context": null,
+      "context_file": null,
+      "setup": [
+        "python3 .gen/make.py && rm -rf .gen"
+      ],
+      "workspace_from": "workspaces/top-countries",
+      "verify": {
+        "kind": "shell",
+        "command": "python3 -c \"$(cat <<'PY'\nimport json, sys\nrows = json.load(sys.stdin)\ndef num(x):\n    return float(str(x).replace(',', ''))\n\nimport csv\ncountry = {row[\"customer_id\"]: row[\"country\"] for row in csv.DictReader(open(\"customers.csv\"))}\ntot = {}\nfor row in csv.DictReader(open(\"orders.csv\")):\n    if row[\"status\"] == \"paid\":\n        c = country[row[\"customer_id\"]]\n        tot[c] = tot.get(c, 0.0) + float(row[\"amount\"])\nwant = sorted(tot.items(), key=lambda kv: -kv[1])[:3]\ngot = [(str(r[0]).strip().lower(), num(r[1])) for r in rows if len(r) >= 2]\nprint(want, got)\nok = len(got) == 3 and all(g[0] == w[0].lower() and abs(g[1] - w[1]) < 0.011 for g, w in zip(got, want))\nsys.exit(0 if ok else 1)\nPY\n)\""
+      },
+      "difficulty": 1300.0
+    },
+    {
+      "id": "unique-contents",
+      "kind": null,
+      "task": "data/ holds a few hundred files in nested directories. Many are byte-for-byte copies of each other under different names. How many distinct file contents are there? Answer with FINAL over one row with column unique (an integer).",
+      "context": null,
+      "context_file": null,
+      "setup": [
+        "python3 .gen/make.py && rm -rf .gen"
+      ],
+      "workspace_from": "workspaces/unique-contents",
+      "verify": {
+        "kind": "shell",
+        "command": "python3 -c \"$(cat <<'PY'\nimport json, sys\nrows = json.load(sys.stdin)\ndef num(x):\n    return float(str(x).replace(',', ''))\n\nimport os, hashlib\nseen = set()\nfor d, _, fs in os.walk(\"data\"):\n    for fn in fs:\n        seen.add(hashlib.sha256(open(os.path.join(d, fn), \"rb\").read()).hexdigest())\ngot = int(num(rows[0][0])) if rows and rows[0] else -1\nprint(len(seen), got)\nsys.exit(0 if got == len(seen) else 1)\nPY\n)\""
+      },
+      "difficulty": 1300.0
+    },
+    {
+      "id": "apply-manifest",
+      "kind": null,
+      "task": "assets/ holds 150 files and manifest.csv has columns old,new mapping each file's current path to the path it should have (new paths are under renamed/ in subdirectories that may not exist yet). Move every file to its new path, keeping its contents, so that no old path remains. Answer with FINAL over one row with column moved (the number of files moved).",
+      "context": null,
+      "context_file": null,
+      "setup": [
+        "python3 .gen/make.py && rm -rf .gen"
+      ],
+      "workspace_from": "workspaces/apply-manifest",
+      "verify": {
+        "kind": "shell",
+        "command": "python3 -c \"$(cat <<'PY'\nimport json, sys\nrows = json.load(sys.stdin)\ndef num(x):\n    return float(str(x).replace(',', ''))\n\nimport csv, os\nok = True\nn = 0\nfor row in csv.DictReader(open(\"manifest.csv\")):\n    i = int(row[\"old\"][11:15])\n    if os.path.exists(row[\"old\"]) or not os.path.exists(row[\"new\"]):\n        ok = False; break\n    if open(row[\"new\"]).read() != f\"asset {i}\\n\":\n        ok = False; break\n    n += 1\ngot = int(num(rows[0][0])) if rows and rows[0] else -1\nprint(ok, n, got)\nsys.exit(0 if ok and got == n else 1)\nPY\n)\""
+      },
+      "difficulty": 1300.0
+    },
+    {
+      "id": "largest-top-dir",
+      "kind": null,
+      "task": "tree/ has several top-level directories, each with files nested to varying depths. Which top-level directory under tree/ holds the most bytes in total (sum of the sizes of every regular file beneath it, at any depth)? Answer with FINAL over one row: columns dir (the top-level directory name only) and bytes (an integer).",
+      "context": null,
+      "context_file": null,
+      "setup": [
+        "python3 .gen/make.py && rm -rf .gen"
+      ],
+      "workspace_from": "workspaces/largest-top-dir",
+      "verify": {
+        "kind": "shell",
+        "command": "python3 -c \"$(cat <<'PY'\nimport json, sys\nrows = json.load(sys.stdin)\ndef num(x):\n    return float(str(x).replace(',', ''))\n\nimport os\nsizes = {}\nfor t in os.listdir(\"tree\"):\n    total = 0\n    for d, _, fs in os.walk(os.path.join(\"tree\", t)):\n        total += sum(os.path.getsize(os.path.join(d, fn)) for fn in fs)\n    sizes[t] = total\nwant = max(sizes.items(), key=lambda kv: kv[1])\ngot = (str(rows[0][0]).strip().lower(), int(num(rows[0][1]))) if rows and len(rows[0]) >= 2 else None\nprint(want, got)\nsys.exit(0 if got == (want[0], want[1]) else 1)\nPY\n)\""
+      },
+      "difficulty": 1300.0
+    },
+    {
+      "id": "fix-timeouts",
+      "kind": null,
+      "task": "services/ holds one JSON config per service. Each has a top-level key `timeout` that should be an integer number of seconds, but in some files it was written as a string (for example \\\"30\\\" instead of 30). Rewrite those files so that `timeout` is an integer with the same value, change nothing else in any file, and leave the correct files untouched. Answer with FINAL over one row with column fixed (the number of files you changed).",
+      "context": null,
+      "context_file": null,
+      "setup": [
+        "python3 .gen/make.py && rm -rf .gen"
+      ],
+      "workspace_from": "workspaces/fix-timeouts",
+      "verify": {
+        "kind": "shell",
+        "command": "python3 -c \"$(cat <<'PY'\nimport json, sys\nrows = json.load(sys.stdin)\ndef num(x):\n    return float(str(x).replace(',', ''))\n\nimport json, os\nok = True\nfor i in range(60):\n    p = f\"services/svc_{i:03}.json\"\n    if not os.path.exists(p):\n        ok = False; break\n    cfg = json.load(open(p))\n    t = 10 + (i * 7) % 50\n    if cfg.get(\"timeout\") != t or type(cfg.get(\"timeout\")) is not int:\n        ok = False; break\n    if cfg.get(\"timeout_ms\") != str(t * 1000) or cfg.get(\"env\", {}).get(\"TIMEOUT\") != str(t) or cfg.get(\"name\") != f\"svc-{i:03}\":\n        ok = False; break\ngot = int(num(rows[0][0])) if rows and rows[0] else -1\nprint(ok, got)\nsys.exit(0 if ok and got == 20 else 1)\nPY\n)\""
+      },
+      "difficulty": 1300.0
+    },
+    {
+      "id": "missing-in-books",
+      "kind": null,
+      "task": "bank.csv and books.csv both have columns id,date,amount and should list the same transactions. Which transaction ids appear in bank.csv but not in books.csv? Answer with FINAL over one row per such id with column id.",
+      "context": null,
+      "context_file": null,
+      "setup": [
+        "python3 .gen/make.py && rm -rf .gen"
+      ],
+      "workspace_from": "workspaces/missing-in-books",
+      "verify": {
+        "kind": "shell",
+        "command": "python3 -c \"$(cat <<'PY'\nimport json, sys\nrows = json.load(sys.stdin)\ndef num(x):\n    return float(str(x).replace(',', ''))\n\nimport csv\nbank = {row[\"id\"] for row in csv.DictReader(open(\"bank.csv\"))}\nbooks = {row[\"id\"] for row in csv.DictReader(open(\"books.csv\"))}\nwant = sorted(x.lower() for x in bank - books)\ngot = sorted(str(r[0]).strip().lower() for r in rows if r)\nprint(len(want), len(got))\nsys.exit(0 if want == got else 1)\nPY\n)\""
+      },
+      "difficulty": 1300.0
+    },
+    {
+      "id": "monthly-active-users",
+      "kind": null,
+      "task": "events.jsonl has one JSON object per line with keys user, ts (an ISO 8601 timestamp) and type. How many distinct users had at least one event in each calendar month? Answer with FINAL over one row per month present: columns month (as YYYY-MM) and users (an integer).",
+      "context": null,
+      "context_file": null,
+      "setup": [
+        "python3 .gen/make.py && rm -rf .gen"
+      ],
+      "workspace_from": "workspaces/monthly-active-users",
+      "verify": {
+        "kind": "shell",
+        "command": "python3 -c \"$(cat <<'PY'\nimport json, sys\nrows = json.load(sys.stdin)\ndef num(x):\n    return float(str(x).replace(',', ''))\n\nimport json\nseen = {}\nfor line in open(\"events.jsonl\"):\n    e = json.loads(line)\n    seen.setdefault(e[\"ts\"][:7], set()).add(e[\"user\"])\nwant = {m: len(s) for m, s in seen.items()}\ngot = {str(r[0]).strip(): int(num(r[1])) for r in rows if len(r) >= 2}\nprint(want, got)\nsys.exit(0 if got == want else 1)\nPY\n)\""
+      },
+      "difficulty": 1300.0
+    }
+  ]
+}
