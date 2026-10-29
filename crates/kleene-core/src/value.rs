@@ -124,6 +124,27 @@ impl Value {
         }
     }
 
+    /// The value as JSON: `NULL` is `null`, numbers and booleans themselves,
+    /// text a string, `JSON` as is, a vector an array of numbers. A float
+    /// JSON cannot hold (NaN, infinity) becomes its text.
+    pub fn to_json(&self) -> serde_json::Value {
+        match self {
+            Value::Null => serde_json::Value::Null,
+            Value::Bool(b) => serde_json::Value::Bool(*b),
+            Value::Int(i) => serde_json::Value::from(*i),
+            Value::Float(f) => serde_json::Number::from_f64(*f)
+                .map(serde_json::Value::Number)
+                .unwrap_or_else(|| serde_json::Value::String(f.to_string())),
+            Value::Text(s) => serde_json::Value::String(s.clone()),
+            Value::Json(j) => j.clone(),
+            Value::Vector(v) => serde_json::Value::Array(
+                v.iter()
+                    .map(|x| serde_json::Value::from(f64::from(*x)))
+                    .collect(),
+            ),
+        }
+    }
+
     /// Borrow as text, if this is a `TEXT`.
     pub fn as_text(&self) -> Option<&str> {
         match self {
