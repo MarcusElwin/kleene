@@ -1,7 +1,11 @@
 //! The `kleene` command.
 
-#![forbid(unsafe_code)]
+// `deny`, not the workspace's `forbid`: `codepage` makes the four kernel32
+// code-page calls on Windows and allows `unsafe` for itself alone; no other
+// module may.
+#![deny(unsafe_code)]
 
+mod codepage;
 mod hf;
 mod pretty;
 
@@ -13,6 +17,13 @@ use clap::{Parser, Subcommand};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+/// End the process with a code, putting the console back first (a
+/// `process::exit` runs no destructors, so the [`codepage`] guard would not).
+fn exit(code: i32) -> ! {
+    codepage::restore();
+    std::process::exit(code)
+}
 
 /// The wordmark shown by `kleene --help` and by `kleene` outside a terminal.
 const BANNER: &str = "\
@@ -1515,6 +1526,9 @@ async fn open_repl(cli: &Cli) -> anyhow::Result<Opened> {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    // A Windows console is switched to UTF-8 while kleene runs, so piped
+    // output decodes as what the model wrote; the guard restores it.
+    let _console = codepage::utf8();
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::new(&cli.log))
         .with_writer(std::io::stderr)
@@ -1614,7 +1628,7 @@ async fn main() -> anyhow::Result<()> {
                 pretty::report(&report)
             };
             if code != 0 {
-                std::process::exit(code);
+                exit(code);
             }
             Ok(())
         }
@@ -1638,7 +1652,7 @@ async fn main() -> anyhow::Result<()> {
             trace.flush().await;
             let code = pretty::report(&report);
             if code != 0 {
-                std::process::exit(code);
+                exit(code);
             }
             Ok(())
         }
@@ -1651,12 +1665,13 @@ async fn main() -> anyhow::Result<()> {
             if let Some(sql) = command {
                 let mut failed = false;
                 for r in repl.submit(sql).await {
+                    codepage::note_output(&r.text);
                     writeln!(stdout, "{}", r.text)?;
                     failed |= r.is_error;
                 }
                 trace.flush().await;
                 if failed {
-                    std::process::exit(1);
+                    exit(1);
                 }
                 return Ok(());
             }
@@ -1686,6 +1701,7 @@ async fn main() -> anyhow::Result<()> {
                 buffer.push_str(&line);
                 if buffer.trim_end().ends_with(';') {
                     for r in repl.submit(&buffer).await {
+                        codepage::note_output(&r.text);
                         writeln!(stdout, "{}", r.text)?;
                     }
                     buffer.clear();
@@ -1693,6 +1709,7 @@ async fn main() -> anyhow::Result<()> {
             }
             if !buffer.trim().is_empty() {
                 for r in repl.submit(&buffer).await {
+                    codepage::note_output(&r.text);
                     writeln!(stdout, "{}", r.text)?;
                 }
             }
@@ -1711,19 +1728,22 @@ async fn main() -> anyhow::Result<()> {
             let Opened { repl, trace } = open_repl(&cli).await?;
             let mut failed = false;
             for r in repl.submit(&format!("EXPLAIN {sql}")).await {
+                codepage::note_output(&r.text);
                 println!("{}", r.text);
                 failed |= r.is_error;
             }
             trace.flush().await;
             if failed {
-                std::process::exit(1);
+                exit(1);
             }
             Ok(())
         }
         Some(Command::Trace { sql }) => {
             let store = open_store(&cli)?;
             let batch = store.query(sql).await?;
-            print!("{}", batch.render_table(200));
+            let text = batch.render_table(200);
+            codepage::note_output(&text);
+            print!("{text}");
             println!(
                 "{} row{}",
                 batch.len(),
@@ -1904,7 +1924,7 @@ fn describe_settings() -> anyhow::Result<String> {
 async fn run_setup(args: SetupArgs) -> anyhow::Result<()> {
     use kleene_llm::ProviderSettings;
     if args.show {
-        print!("{}", describe_settings()?);
+        print!("{}{}", describe_settings()?, codepage::describe());
         return Ok(());
     }
     let existing = ProviderSettings::load()?.unwrap_or_default();
