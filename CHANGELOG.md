@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.0](https://github.com/MarcusElwin/kleene/compare/v0.5.0...v0.6.0) (2026-10-31)
+
+
+### Features
+
+* **core:** ToolProfile, the capability profile of a run ([33ebd3c](https://github.com/MarcusElwin/kleene/commit/33ebd3cb81a607ee14c662436779ffce740747e4)), closes [#71](https://github.com/MarcusElwin/kleene/issues/71)
+* **harness:** capability profiles for root sessions ([56ce8b2](https://github.com/MarcusElwin/kleene/commit/56ce8b2cf0a02ab7bacd208e787edfcbfe104b68)), closes [#71](https://github.com/MarcusElwin/kleene/issues/71)
+
 ## [0.5.0](https://github.com/MarcusElwin/kleene/compare/v0.4.0...v0.5.0) (2026-10-29)
 
 
