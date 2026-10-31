@@ -569,6 +569,15 @@ impl LiveSink {
                 }
             }
         }
+        if matches!(body, FunctionBody::Shell { .. }) {
+            let catalog = self.store.catalog();
+            let cat = catalog.read().await;
+            if cat.function("shell").is_none() {
+                return Err(ExecError::Eval(format!(
+                    "CREATE FUNCTION {name} AS SHELL needs the shell tool, which this session does not have; define it AS PROMPT or AS SQL instead"
+                )));
+            }
+        }
         let defined = DefinedFunction {
             arg_names: args.iter().map(|(n, _)| n.clone()).collect(),
             arg_types: args.iter().map(|(_, t)| *t).collect(),

@@ -22,7 +22,7 @@ pub mod ui;
 
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use futures::StreamExt;
-use kleene_core::{ConversationId, RunId, SessionId};
+use kleene_core::{ConversationId, RunId, SessionId, ToolProfile};
 use kleene_daemon::client::{Client, ClientReader, ClientWriter};
 use kleene_daemon::{ClientRequest, ServerMessage, StatementOutput};
 use kleene_llm::ProviderSettings;
@@ -210,6 +210,9 @@ pub struct App {
     pub setup: Option<SetupApp>,
     /// Where `/setup` reads and writes the config file.
     pub config_path: PathBuf,
+    /// Which tools runs started from the prompt may use (`kleene tui
+    /// --read-only` and the like).
+    pub profile: ToolProfile,
 }
 
 impl Default for App {
@@ -238,6 +241,7 @@ impl Default for App {
             awaiting_run: false,
             setup: None,
             config_path: ProviderSettings::path(),
+            profile: ToolProfile::default(),
         }
     }
 }
@@ -401,6 +405,7 @@ impl App {
             max_depth: None,
             budget_calls: None,
             check: None,
+            profile: self.profile.clone(),
             conversation: Some(self.conversation),
         })
     }
@@ -793,6 +798,7 @@ pub async fn run(
     socket: &Path,
     start: Option<ClientRequest>,
     workspace: String,
+    profile: ToolProfile,
 ) -> Result<(), TuiError> {
     let client = Client::connect(socket).await?;
     let generation = client.generation;
@@ -803,8 +809,15 @@ pub async fn run(
         .await?;
     let mut app = App {
         workspace,
+        profile,
         ..App::default()
     };
+    if !app.profile.is_unrestricted() {
+        app.entries.push(Entry::Notice(format!(
+            "Runs from this prompt start with {}; the withheld tools are listed in each run's prompt.",
+            app.profile.describe()
+        )));
+    }
     if let Some(req) = start {
         if let ClientRequest::StartRun { task, .. } = &req {
             app.entries.push(Entry::Input(task.clone()));

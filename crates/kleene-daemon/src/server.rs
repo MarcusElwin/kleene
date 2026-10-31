@@ -418,6 +418,7 @@ impl Daemon {
                 max_depth,
                 budget_calls,
                 check,
+                profile,
                 conversation,
             } => {
                 let (live_harness, live_cfg) = {
@@ -443,11 +444,14 @@ impl Daemon {
                 if check.is_some() {
                     cfg.finish_check = check;
                 }
+                // A client's profile narrows the daemon's, never widens it.
+                cfg.profile = live_cfg.profile.intersect(&profile);
                 let harness = if cfg.workspace == live_cfg.workspace
                     && cfg.max_turns == live_cfg.max_turns
                     && cfg.max_depth == live_cfg.max_depth
                     && cfg.budget == live_cfg.budget
                     && cfg.finish_check == live_cfg.finish_check
+                    && cfg.profile == live_cfg.profile
                 {
                     live_harness
                 } else {
@@ -508,6 +512,7 @@ impl Daemon {
                                 provider: live.provider,
                                 tracer: live.tracer,
                                 web_search: live.web_search,
+                                profile: live.profile,
                             };
                             match Repl::with_config(self.store.clone(), cfg).await {
                                 Ok(mut r) => {

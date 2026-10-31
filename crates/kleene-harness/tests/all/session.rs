@@ -841,3 +841,131 @@ async fn spawn_async_children_message_the_parent_and_are_awaited() {
         t[1].results[0].text
     );
 }
+
+#[tokio::test]
+async fn a_read_only_profile_withholds_side_effects_from_root_and_children() {
+    // Root: a side-effect call fails, a shell-bodied function is refused,
+    // and reading still works. The child's role names `shell`, and still
+    // cannot see it: a role narrows the profile, never widens it.
+    let declare = sql("CALL shell('ls')");
+    let shell_fn = sql("CREATE FUNCTION run_it(c TEXT) RETURNS TEXT AS SHELL 'echo {c}'");
+    let read = sql("CREATE AGENT doer MODEL 'worker' TOOLS (shell, files) BUDGET (calls 5) PROMPT 'You run things.';\nCREATE TABLE r AS SELECT s.answer FROM spawn('doer', 'Run the listing.', 'x') s;\nSELECT COUNT(*) AS n FROM files('**/*')");
+    let fin = sql("FINAL FROM (SELECT answer FROM r)");
+    let child_try = sql("CALL shell('ls')");
+    let child_final = sql("FINAL('could not')");
+    let f = fixture(
+        vec![
+            ("Run the listing", child_try.as_str()),
+            ("turn 1/4", child_final.as_str()),
+            ("turn 3/6", fin.as_str()),
+            ("turn 2/6", read.as_str()),
+            ("turn 1/6", shell_fn.as_str()),
+            ("# Task", declare.as_str()),
+        ],
+        |cfg| {
+            cfg.profile = kleene_core::ToolProfile {
+                read_only: true,
+                ..Default::default()
+            };
+        },
+    )
+    .await;
+    let report = f.harness.run("List the workspace.", None).await.unwrap();
+    let rows = final_rows(&report);
+    assert_eq!(
+        rows,
+        vec![vec![kleene_core::Value::Text("could not".into())]]
+    );
+    let t = &report.root.transcript;
+    assert!(
+        t[0].results[0].text.contains("shell"),
+        "the call on a withheld tool fails naming it: {}",
+        t[0].results[0].text
+    );
+    assert!(
+        t[1].results[0]
+            .text
+            .contains("CREATE FUNCTION run_it AS SHELL needs the shell tool, which this session does not have; define it AS PROMPT or AS SQL instead"),
+        "{}",
+        t[1].results[0].text
+    );
+    assert!(
+        !t[2].results[2].is_error,
+        "read-only tools still work: {}",
+        t[2].results[2].text
+    );
+    // The prompt told the model what it does not have, after the catalog.
+    let system = f.provider.last_system();
+    assert!(
+        system.contains("## Tools withheld\nThis run was started with --read-only: append_file, mkdir, patch, remove, send, shell, web_fetch, web_search, write_file are not available in this session or any child; a statement that names one fails. Plan without them.\n"),
+        "{system}"
+    );
+    assert!(!system.contains("- shell("), "{system}");
+    assert!(system.contains("- files("), "{system}");
+    // The child could not see `shell` either.
+    f.trace.flush().await;
+    let child_stmts = f
+        .store
+        .query("SELECT s.error FROM trace_statements s JOIN trace_sessions x ON s.session = x.session WHERE s.sql LIKE 'CALL shell%' AND x.depth = 1")
+        .await
+        .unwrap();
+    assert_eq!(child_stmts.rows.len(), 1, "{child_stmts:?}");
+    let err = child_stmts.rows[0][0].render();
+    assert!(err.contains("shell"), "{err}");
+    assert_eq!(
+        f.harness.withheld_tools(),
+        &[
+            "append_file",
+            "mkdir",
+            "patch",
+            "remove",
+            "send",
+            "shell",
+            "web_fetch",
+            "web_search",
+            "write_file"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn no_shell_and_an_allow_list_leave_the_rest() {
+    let try_web = sql("CALL web_fetch('https://example.com')");
+    let fin = sql("FINAL(1)");
+    let f = fixture(
+        vec![("turn 1/", fin.as_str()), ("# Task", try_web.as_str())],
+        |cfg| {
+            cfg.profile = kleene_core::ToolProfile {
+                no_shell: true,
+                tools: Some(vec![
+                    "files".into(),
+                    "grep".into(),
+                    "shell".into(),
+                    "web_fetch".into(),
+                ]),
+                ..Default::default()
+            };
+        },
+    )
+    .await;
+    let withheld = f.harness.withheld_tools().to_vec();
+    assert!(withheld.contains(&"shell".to_string()), "{withheld:?}");
+    assert!(withheld.contains(&"read".to_string()), "{withheld:?}");
+    assert!(!withheld.contains(&"files".to_string()), "{withheld:?}");
+    assert!(!withheld.contains(&"web_fetch".to_string()), "{withheld:?}");
+    let report = f.harness.run("Fetch a page.", None).await.unwrap();
+    final_rows(&report);
+    let t = &report.root.transcript;
+    // web_fetch is allowed, so the statement reached the tool (and failed
+    // there, with no network), rather than being unresolved.
+    assert!(
+        !t[0].results[0].text.contains("no such function"),
+        "{}",
+        t[0].results[0].text
+    );
+    let system = f.provider.last_system();
+    assert!(
+        system.contains("--no-shell --tools files,grep,shell,web_fetch"),
+        "{system}"
+    );
+}
