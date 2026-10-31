@@ -13,7 +13,8 @@ from a session use `CALL shell('kleene bench ...')`.
 
 The shipped packs are under `tasks/`: `terminal`, `oolong-like`,
 `finance-synthetic`, `legal-synthetic`, `logbook-hard`, `memo-rubric`,
-`coding`. `tasks/<pack>/pack.json` lists the tasks; `kleene bench build`
+`coding`, and the harder `oolong-hard`, `finance-hard`, `legal-hard` and
+`terminal-hard`. `tasks/<pack>/pack.json` lists the tasks; `kleene bench build`
 makes new ones from a generator, `kleene bench import-oolong` and
 `import-lab` fetch public benchmarks.
 

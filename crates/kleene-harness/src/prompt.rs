@@ -8,7 +8,7 @@
 use crate::{AgentRole, Rendered};
 use kleene_core::{
     Budget, BudgetUsage, CallKind, Catalog, ConversationId, FunctionDef, FunctionReturn, TableDef,
-    Volatility,
+    ToolProfile, Volatility,
 };
 use kleene_tools::skills::Skill;
 use std::fmt::Write as _;
@@ -36,6 +36,11 @@ pub struct PromptContext<'a> {
     pub skills: &'a [Skill],
     /// Project instructions (`KLEENE.md`, `AGENTS.md` or `CLAUDE.md`), if any.
     pub instructions: Option<&'a str>,
+    /// The capability profile the run started with.
+    pub profile: &'a ToolProfile,
+    /// The tools the profile withheld, sorted; rendered so the model does
+    /// not plan around a tool it cannot call.
+    pub withheld: &'a [String],
 }
 
 /// Size of a preloaded context, for the task message.
@@ -85,6 +90,7 @@ This session runs at depth {} of {}; you have at most {} turns.\n",
     out.push_str(RULES);
     out.push('\n');
     render_catalog(&mut out, cx.catalog);
+    render_withheld(&mut out, cx.profile, cx.withheld);
     if !cx.agents.is_empty() {
         out.push_str("## Declared agents (for spawn)\n");
         let mut agents: Vec<&AgentRole> = cx.agents.iter().collect();
@@ -268,6 +274,20 @@ fn render_catalog(out: &mut String, catalog: &Catalog) {
         }
     }
     out.push('\n');
+}
+
+/// The tools a capability profile took away, so the model does not plan
+/// around `CALL shell` and get refused.
+fn render_withheld(out: &mut String, profile: &ToolProfile, withheld: &[String]) {
+    if withheld.is_empty() {
+        return;
+    }
+    let _ = writeln!(
+        out,
+        "## Tools withheld\nThis run was started with {}: {} are not available in this session or any child; a statement that names one fails. Plan without them.\n",
+        profile.describe(),
+        withheld.join(", ")
+    );
 }
 
 fn is_hidden_table(name: &str) -> bool {
@@ -599,6 +619,8 @@ mod tests {
             playbook: &[],
             skills: &kleene_tools::skills::builtin(),
             instructions: Some("Run cargo fmt before finishing."),
+            profile: &ToolProfile::default(),
+            withheld: &[],
         };
         let a = system_prompt(&cx);
         let b = system_prompt(&cx);
@@ -645,6 +667,43 @@ mod tests {
                 .ends_with("## Your role\nYou review one hypothesis."),
             "{a}"
         );
+    }
+
+    #[test]
+    fn withheld_tools_are_named_after_the_catalog() {
+        let mut cat = catalog();
+        let profile = ToolProfile {
+            no_shell: true,
+            no_web: true,
+            ..Default::default()
+        };
+        let withheld = profile.apply(&mut cat);
+        assert_eq!(withheld, vec!["shell"]);
+        let role = AgentRole::root();
+        let budget = Budget::unbounded();
+        let cx = PromptContext {
+            catalog: &cat,
+            role: &role,
+            agents: &[],
+            budget: &budget,
+            depth: 0,
+            max_depth: 2,
+            max_turns: 30,
+            playbook: &[],
+            skills: &[],
+            instructions: None,
+            profile: &profile,
+            withheld: &withheld,
+        };
+        let a = system_prompt(&cx);
+        assert!(
+            a.contains("## Tools withheld\nThis run was started with --no-shell --no-web: shell are not available in this session or any child; a statement that names one fails. Plan without them.\n"),
+            "{a}"
+        );
+        assert!(!a.contains("- shell("), "{a}");
+        let withheld_at = a.find("## Tools withheld").unwrap();
+        let tools_at = a.find("### Tools, read-only").unwrap();
+        assert!(withheld_at > tools_at, "after the catalog: {a}");
     }
 
     #[test]

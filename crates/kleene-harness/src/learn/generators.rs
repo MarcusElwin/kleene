@@ -37,6 +37,9 @@ pub const GENERATORS: &[&str] = &[
     "contracts",
     "logbook",
     "memo",
+    "tracker",
+    "ledger",
+    "agreement",
 ];
 
 /// A small deterministic PRNG (xorshift64*), so tasks are reproducible.
@@ -91,6 +94,9 @@ pub fn generate(
         "contracts" => contracts(dial, &mut rng),
         "logbook" => logbook(dial, &mut rng),
         "memo" => memo(dial, &mut rng),
+        "tracker" => super::hard::tracker(dial, &mut rng),
+        "ledger" => super::hard::ledger(dial, &mut rng),
+        "agreement" => super::hard::agreement(dial, &mut rng),
         _ => return None,
     })
 }

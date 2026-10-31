@@ -349,7 +349,7 @@ Files under the working directory:
 |---|---|
 | `.kleene/run.duckdb` | the store: your tables, `memo`, `trace_*`, `kleene_sessions`, learning and bench tables |
 | `.kleene/daemon.sock` | the daemon's Unix socket (`--socket` on `daemon`, `tui`, `attach`) |
-| `~/.config/kleene/config.toml` | provider and web search keys written by `kleene setup` or `/setup` (`KLEENE_CONFIG_DIR` moves it) |
+| `~/.config/kleene/config.toml` | provider and web search keys written by `kleene setup` or `/setup`, and an optional `[profile]` of allowed tools (`KLEENE_CONFIG_DIR` moves it) |
 | `~/.config/kleene/mcp.json`, `.kleene/mcp.json` | MCP servers, per user and per project (`kleene mcp add`, `/mcp add`); the project file wins on a name clash |
 | `~/.config/kleene/skills/<name>/SKILL.md`, `.kleene/skills/<name>/SKILL.md` | skills, per user and per project (also `~/.agents/skills`, `.agents/skills`, `.claude/skills`); a project skill replaces a user or built-in one of the same name |
 | `KLEENE.md`, `AGENTS.md` or `CLAUDE.md` | project instructions at the workspace root, the first found, rendered into every session's prompt |
@@ -401,7 +401,7 @@ streamed.
 ```
 kleene run <task|@file> [--context <file>] [--load name=file.csv ...] [--max-turns 30]
               [--max-depth 2] [--budget-calls N] [--budget-dollars X] [--check <cmd>] [-q|--quiet]
-              [--json] [--out <file>]
+              [--json] [--out <file>] [--read-only] [--no-shell] [--no-web] [--tools a,b,c]
 ```
 
 | Flag | Meaning |
@@ -415,6 +415,39 @@ kleene run <task|@file> [--context <file>] [--load name=file.csv ...] [--max-tur
 | `-q` | Print only the final relation |
 | `--json` | Print the result as JSON on stdout instead of a table (implies `-q`): the final relation as an array of objects keyed by column, or `{"run", "outcome", "detail"}` with exit code 3 when there was no `FINAL`. Written as UTF-8 bytes, so it survives a redirect on any console |
 | `--out <file>` | Also write the final relation to a file: CSV when the name ends in `.csv`, else a JSON array of objects. UTF-8 regardless of the console |
+| `--read-only`, `--no-shell`, `--no-web`, `--tools <names>` | The run's capability profile; see below |
+
+#### Capability profiles
+
+Four flags on `run`, `repl`, `tui` and `attach` say which tools the run's
+sessions may use. A withheld tool is removed from the catalog, so the SQL
+frontend does not resolve it and the prompt does not list it; the prompt
+instead names the withheld tools under "Tools withheld", so the model does
+not plan around `CALL shell` and get refused. Children inherit the profile:
+a `CREATE AGENT ... TOOLS (...)` role is intersected with it, never widened.
+
+| Flag | Withholds |
+|---|---|
+| `--read-only` | Every `VOLATILE` tool: `shell`, `write_file`, `append_file`, `patch`, `mkdir`, `remove`, `web_fetch`, `web_search`, `send` and any writable MCP tool. The model can read files, grep, search and load data but not change the workspace or reach the network |
+| `--no-shell` | `shell`, and `CREATE FUNCTION ... AS SHELL` is refused |
+| `--no-web` | `web_fetch` and `web_search` |
+| `--tools files,grep,read` | Everything but the names listed; the other flags still apply to the list |
+
+The flags narrow a `[profile]` section of the config file (`kleene setup
+--show` prints where), for a custom set that applies to every run:
+
+```toml
+[profile]
+read_only = false
+no_shell = false
+no_web = false
+tools = ["files", "grep", "read", "lines", "search", "read_csv"]
+```
+
+`kleene run` prints the withheld tools on stderr when it starts (not with
+`-q`), and the `--check` command runs whatever the profile says: it is the
+user's command, not the model's. Trace tables still record every prompt
+and result.
 
 The run id is printed with the result and stored in `trace_runs`. The
 session's earlier turns are folded into the table `turns(run, n, sql, result)`
@@ -456,6 +489,7 @@ one from the workspace as `(row, record JSON)`.
 kleene repl                                   # interactive
 kleene repl -c "SELECT 1 + 1 AS two"          # one statement
 kleene repl < demos/planner/three_way.sql     # a script
+kleene repl --read-only                       # no shell, writes or network (see run)
 ```
 
 Everything in [`DIALECT.md`](DIALECT.md) works here: `CREATE FUNCTION … AS
@@ -512,7 +546,12 @@ the same.
 
 ```
 kleene tui [--run <task|@file>] [--context <file>] [--socket <path>]
+           [--read-only] [--no-shell] [--no-web] [--tools a,b,c]
 ```
+
+The profile flags (see `run`) apply to every task typed at the prompt in
+this TUI; the daemon keeps running with its own profile (the config file's
+`[profile]`), and a client can only narrow it.
 
 ![The stream mid-run](screenshots/run.png)
 
@@ -592,7 +631,9 @@ Keys:
 
 Headless twin of `tui`: attaches to the daemon and prints every server
 message as a JSON line. With `--run`, starts that task on connect and exits
-when it finishes, so it can drive scripts and evaluations.
+when it finishes, so it can drive scripts and evaluations. The profile
+flags (`--read-only`, `--no-shell`, `--no-web`, `--tools`) apply to that
+task.
 
 ```bash
 kleene attach --run "Sum 1..4" | jq -c 'select(.msg == "run_finished")'
@@ -676,7 +717,7 @@ modes, oracles, report columns and plots measure is in
 | Command | What it does |
 |---|---|
 | `bench run <pack-dir> [--mode learning\|frozen\|plain] [--limit N] [--sample N --seed S] [--outputs <dir>] [--record <dir>] [--replay <dir>] [--resume <run-id>]` | Run a pack. `learning` shows and adopts the playbook; `frozen` is the control; `plain` is a tool-calling agent on the same provider, tools and budget. `--sample` runs a seeded sample of N tasks in pack order; `--outputs` exports every task's `output/` in the layout Harvey LAB's evaluator reads and prints the `run_eval` commands; `--record` saves every model reply as fixtures; `--replay` serves them offline. A task that ends without a token spent (no credit, a bad key) stops the run with the reason in `bench_runs.note`; `--resume` continues that run at the first task without a row |
-| `bench build <out-dir> --from <generator> [--count 20] [--dial 0.5] [--seed 1] [--lazy]` | Freeze generator output into a pack; same seeds, same tasks. `--lazy` stores generator references and regenerates on load. Generators: `sat3`, `graph`, `puzzle`, `corpus`, `repo`, `statements`, `contracts`, `logbook`, `memo` |
+| `bench build <out-dir> --from <generator> [--count 20] [--dial 0.5] [--seed 1] [--lazy]` | Freeze generator output into a pack; same seeds, same tasks. `--lazy` stores generator references and regenerates on load. Generators: `sat3`, `graph`, `puzzle`, `corpus`, `repo`, `statements`, `contracts`, `logbook`, `memo`, `tracker`, `ledger`, `agreement` |
 | `bench terminal <out-dir>` | Write the built-in Terminal-Bench-style pack |
 | `bench import-lab <checkout>/tasks <out-dir> [--sample N --seed S]` | Import a Harvey LAB checkout (or one practice area under it) into a pack with the shipped rubrics; `--sample` imports a seeded sample and copies only its documents |
 | `bench import-oolong <out-dir> [--dataset trec_coarse] [--context-len 131072] [--limit 50] [--offset 0] [--split validation\|test] [--from-json <file>]` | Import OOLONG-synth questions from Hugging Face into a pack with the `oolong` oracle; the defaults are the RLM paper's trec_coarse 128k split |

@@ -1,0 +1,14 @@
+pack          | mode     | model           | tasks | accuracy | calls_per_task | dollars | tokens_per_task | depth
+--------------+----------+-----------------+-------+----------+----------------+---------+-----------------+------
+finance-hard  | frozen   | claude-opus-5-5 | 20    | 1        | 6.1            | 1.6118  | 53455           | 0    
+finance-hard  | learning | claude-opus-5-5 | 20    | 1        | 5.2            | 1.7246  | 48102           | 0    
+finance-hard  | plain    | claude-opus-5-5 | 20    | 1        | 1.25           | 3.4405  | 44709           | 0    
+legal-hard    | frozen   | claude-opus-5-5 | 20    | 1        | 16.65          | 3.2633  | 104161          | 0    
+legal-hard    | learning | claude-opus-5-5 | 20    | 0.95     | 15.6           | 3.4556  | 100109          | 0    
+legal-hard    | plain    | claude-opus-5-5 | 20    | 1        | 1.1            | 1.8773  | 22248           | 0    
+oolong-hard   | frozen   | claude-opus-5-5 | 20    | 1        | 6.85           | 2.2909  | 68008           | 0    
+oolong-hard   | learning | claude-opus-5-5 | 20    | 1        | 4.85           | 1.7272  | 44749           | 0    
+oolong-hard   | plain    | claude-opus-5-5 | 20    | 0.8      | 5.5            | 13.9068 | 302555          | 0    
+terminal-hard | frozen   | claude-opus-5-5 | 8     | 1        | 4.5            | 0.3732  | 33038           | 0    
+terminal-hard | learning | claude-opus-5-5 | 8     | 0.875    | 4.5            | 0.4383  | 34474           | 0    
+terminal-hard | plain    | claude-opus-5-5 | 8     | 1        | 7.63           | 0.4465  | 35352           | 0    

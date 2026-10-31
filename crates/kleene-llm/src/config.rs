@@ -26,6 +26,12 @@
 //! [web_search]
 //! provider = "brave"        # or "tavily", "exa", "linkup"
 //! api_key = "BSA..."
+//!
+//! [profile]                 # which tools every run may use; the flags narrow it further
+//! read_only = false         # --read-only: no VOLATILE tool at all
+//! no_shell = false          # --no-shell
+//! no_web = false            # --no-web
+//! tools = ["files", "grep", "read", "lines", "search"]   # --tools: an allow-list
 //! ```
 
 use crate::types::ProviderError;
@@ -160,6 +166,10 @@ pub struct ProviderSettings {
     /// The `web_search` tool's service and key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub web_search: Option<WebSearchSettings>,
+    /// The capability profile every run starts with (`--read-only`,
+    /// `--no-shell`, `--no-web`, `--tools` narrow it further).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<kleene_core::ToolProfile>,
 }
 
 fn non_empty(v: &Option<String>) -> bool {
@@ -222,6 +232,7 @@ impl ProviderSettings {
                 .then_some(open_responses),
             router: env(crate::env::ROUTER_TOML_ENV).map(PathBuf::from),
             web_search: (web_search != WebSearchSettings::default()).then_some(web_search),
+            profile: None,
         }
     }
 
@@ -317,7 +328,13 @@ impl ProviderSettings {
             w.api_key = o.api_key.or(w.api_key);
             self.web_search = Some(w);
         }
+        self.profile = other.profile.or(self.profile);
         self
+    }
+
+    /// The file's capability profile, or an unrestricted one.
+    pub fn profile(&self) -> kleene_core::ToolProfile {
+        self.profile.clone().unwrap_or_default()
     }
 
     /// The web search service and key, when a key is set.
@@ -377,6 +394,7 @@ mod tests {
                 provider: None,
                 api_key: Some("BSA-x".into()),
             }),
+            profile: None,
         };
         let text = s.to_toml();
         assert!(text.contains("[anthropic]"), "{text}");
@@ -391,6 +409,23 @@ mod tests {
             s.configured().collect::<Vec<_>>(),
             vec!["anthropic", "openai_compat"]
         );
+    }
+
+    #[test]
+    fn a_profile_section_round_trips() {
+        let file =
+            ProviderSettings::parse("[profile]\nno_web = true\ntools = [\"files\", \"grep\"]\n")
+                .unwrap();
+        let p = file.profile();
+        assert!(p.no_web && !p.read_only && !p.no_shell);
+        assert_eq!(p.tools, Some(vec!["files".to_string(), "grep".to_string()]));
+        let text = file.to_toml();
+        assert!(text.contains("[profile]"), "{text}");
+        assert!(!text.contains("read_only"), "off flags are omitted: {text}");
+        assert!(ProviderSettings::parse("")
+            .unwrap()
+            .profile()
+            .is_unrestricted());
     }
 
     #[test]
