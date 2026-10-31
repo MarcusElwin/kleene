@@ -1,8 +1,8 @@
 //! The `kleene` command.
 
-// `deny`, not the workspace's `forbid`: `codepage` makes the four kernel32
-// code-page calls on Windows and allows `unsafe` for itself alone; no other
-// module may.
+// `deny`, not the workspace's `forbid` (this crate's Cargo.toml says the
+// same): `codepage` makes the four kernel32 code-page calls on Windows and
+// allows `unsafe` for itself alone; no other module may.
 #![deny(unsafe_code)]
 
 mod codepage;
