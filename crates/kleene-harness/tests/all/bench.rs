@@ -586,6 +586,8 @@ async fn hard_packs_load_lazily_and_terminal_hard_graders_judge_shell_solutions(
     );
     assert!(!by_id("errors-by-service").solved);
     assert!(!by_id("top-countries").solved);
+}
+
 /// The `nest` pack: a delegating solver reaches the dialled depth, the run
 /// records it, and the harness default of two refuses it.
 #[tokio::test]
