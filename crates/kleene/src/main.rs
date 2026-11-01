@@ -289,7 +289,7 @@ enum BenchAction {
     Build {
         /// Output directory, e.g. tasks/oolong-like.
         out: PathBuf,
-        /// Generator: sat3, graph, puzzle, corpus, repo, statements, contracts, logbook, memo, tracker, ledger, agreement, nest.
+        /// Generator: sat3, graph, puzzle, corpus, repo, statements, contracts, logbook, memo, tracker, ledger, agreement, nest, nest-long, nest-guided.
         #[arg(long)]
         from: String,
         /// How many tasks.

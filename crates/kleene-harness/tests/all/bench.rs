@@ -596,8 +596,13 @@ async fn the_recursion_depth_pack_records_the_depth_a_delegating_solver_reaches(
     use kleene_harness::testing::NestSolver;
     let ws = std::env::temp_dir();
     // One task at each of depths 3 and 4, kept lazy, as tasks/recursion-depth is.
+    // One task at each of depths 3 and 4, kept lazy, as tasks/recursion-depth
+    // is, and the depth-3 task again in its `nest-long` form (the same tree
+    // under ten thousand characters of commentary per report), which the
+    // same solver must still read.
     let mut pack = Pack::from_generator("recursion-depth", "nest", 1, 0.4, 1, &ws, true).unwrap();
     let deeper = Pack::from_generator("recursion-depth", "nest", 1, 0.6, 11, &ws, true).unwrap();
+    let long = Pack::from_generator("recursion-depth", "nest-long", 1, 0.4, 1, &ws, true).unwrap();
     for (i, t) in pack.tasks.iter_mut().enumerate() {
         t.id = format!("k3-{:02}", i + 1);
     }
@@ -605,12 +610,22 @@ async fn the_recursion_depth_pack_records_the_depth_a_delegating_solver_reaches(
         t.id = format!("k4-{:02}", i + 1);
         pack.tasks.push(t);
     }
+    for (i, mut t) in long.tasks.into_iter().enumerate() {
+        t.id = format!("k3-long-{:02}", i + 1);
+        pack.tasks.push(t);
+    }
     pack.depth = Some(4);
     let dir = tempfile::tempdir().unwrap();
     pack.save(dir.path()).unwrap();
     let loaded = Pack::load(dir.path()).unwrap();
     assert_eq!(loaded.depth, Some(4));
-    assert_eq!(loaded.tasks.len(), 2);
+    assert_eq!(loaded.tasks.len(), 3);
+    let ctx_len = |generator: &str| {
+        let p = Pack::from_generator("recursion-depth", generator, 1, 0.4, 1, &ws, false).unwrap();
+        p.tasks[0].context.as_deref().unwrap_or_default().len()
+    };
+    let (plain_ctx, long_ctx) = (ctx_len("nest"), ctx_len("nest-long"));
+    assert!(long_ctx > 10 * plain_ctx, "{long_ctx} vs {plain_ctx}");
     assert_eq!(nest::levels(0.4), 3);
     assert_eq!(nest::levels(0.6), 4);
 

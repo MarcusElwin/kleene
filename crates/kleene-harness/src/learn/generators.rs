@@ -41,6 +41,8 @@ pub const GENERATORS: &[&str] = &[
     "ledger",
     "agreement",
     "nest",
+    "nest-long",
+    "nest-guided",
 ];
 
 /// A small deterministic PRNG (xorshift64*), so tasks are reproducible.
@@ -99,6 +101,8 @@ pub fn generate(
         "ledger" => super::hard::ledger(dial, &mut rng),
         "agreement" => super::hard::agreement(dial, &mut rng),
         "nest" => super::nest::nest(dial, &mut rng),
+        "nest-long" => super::nest::nest_long(dial, &mut rng),
+        "nest-guided" => super::nest::nest_guided(dial, &mut rng),
         _ => return None,
     })
 }

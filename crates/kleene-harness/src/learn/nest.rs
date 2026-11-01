@@ -14,6 +14,14 @@
 //! reaches depth [`levels`]`(dial)`. Nothing forces that shape (a flat
 //! recursive CTE answers too), so a run records the depth the model chose
 //! next to whether it was right.
+//!
+//! Two variants keep the same trees, questions and answers for a seed and
+//! change what the model is up against. `nest-long` ([`nest_long`]) wraps
+//! every report in management commentary, ten thousand characters of
+//! it, so a deep group's context no longer fits one `llm()` call and has to
+//! be partitioned. `nest-guided` ([`nest_guided`]) adds one sentence to the
+//! task: that the consolidated spend of a sub-unit is this same task over
+//! that sub-unit's reports, which is the shape a delegating solution takes.
 
 use super::generators::{difficulty_prior, GeneratedTask, Rng};
 use super::verify::Verify;
@@ -166,10 +174,73 @@ const DISTRACTORS: &[&str] = &[
     "Capital commitments outstanding: {n} kEUR, outside this year's spend.",
 ];
 
+/// Management commentary for `nest-long`, one sentence per entry; `{n}` is
+/// a number. Figures here are never the direct spend, but several carry
+/// kEUR so the direct spend has to be found by its label.
+const COMMENTARY: &[&str] = &[
+    "The unit completed its annual review of supplier contracts, renewing {n} of them on existing terms.",
+    "Staff turnover over the year was {n} percent, in line with the group average.",
+    "An internal project to consolidate reporting tools closed in the third quarter after {n} weeks.",
+    "Customer satisfaction, measured twice a year, stood at {n} on the group's hundred-point scale.",
+    "The unit held {n} town-hall meetings over the year, two of them with the group board present.",
+    "Deferred revenue carried into next year amounts to {n} kEUR and is recognised on delivery.",
+    "A review of office leases found {n} contracts that renew within eighteen months.",
+    "Energy use fell by {n} percent after the lighting refit was finished in the spring.",
+    "The unit's risk register lists {n} items, none rated above medium.",
+    "Training days per employee averaged {n}, most of them in the new compliance curriculum.",
+    "Accounts receivable older than ninety days stood at {n} kEUR at year end and are being pursued.",
+    "The unit sponsored {n} apprenticeships under the group programme.",
+    "Inventory counts in June and December found differences below {n} kEUR, all reconciled.",
+    "Vacancies open at year end: {n}, of which two are management roles.",
+    "The unit's share of group overhead, allocated centrally, was {n} kEUR and is not part of its direct spend.",
+    "Procurement savings against list prices were estimated at {n} kEUR, counted at group level.",
+    "The unit migrated {n} applications to the shared platform during the year.",
+    "Sickness absence averaged {n} days per employee.",
+    "Warranty provisions of {n} kEUR were released as the covered products reached end of life.",
+    "The unit ran {n} customer workshops, half of them abroad.",
+    "Pension contributions of {n} kEUR are paid by the group and shown in its own accounts.",
+    "A quality audit in autumn raised {n} observations, all closed before year end.",
+    "The unit holds {n} patents, two of them granted this year.",
+    "Insurance premiums for the unit's sites came to {n} kEUR and are settled by the group treasury.",
+    "Plans for next year foresee {n} new hires, subject to the budget round.",
+    "The unit took part in {n} cross-unit initiatives led from the group centre.",
+    "Receipts from asset disposals were {n} kEUR and are reported below the operating line.",
+    "The unit's intranet pages were rewritten and now run to {n} articles.",
+];
+
+/// The sentence `nest-guided` adds to the task.
+const GUIDE: &str = "Consolidation follows the tree: the consolidated spend of a sub-unit is this same question asked of that sub-unit over the reports of it and everything under it, so a child session given those reports can answer it and the answer rolls up.";
+
 const PREAMBLE: &str = "ctx holds the annual reports of a group, one unit per row, in no particular order. Each report names the unit, the unit it reports to, its direct spend this year in kEUR and its sub-units, and may say that one sub-unit was divested and is excluded from consolidation, which removes that sub-unit and everything under it. A row beginning 'Correction:' replaces the direct spend of the unit it names. Reports also mention figures that are not spend (headcount, budget requests, commitments, findings). The consolidated spend of a unit is its own direct spend plus the consolidated spend of every sub-unit that is not excluded, all the way down.";
 
 /// Generate a task at `dial` from `rng`.
 pub fn nest(dial: f64, rng: &mut Rng) -> GeneratedTask {
+    generate(dial, rng, false, false)
+}
+
+/// The `nest-long` variant: the same tree, questions and answers as
+/// [`nest`] at this dial and seed, with every report wrapped in ten thousand characters
+/// of management commentary, so the context is many times longer and a deep group's no
+/// longer fits one `llm()` call.
+pub fn nest_long(dial: f64, rng: &mut Rng) -> GeneratedTask {
+    generate(dial, rng, true, false)
+}
+
+/// The `nest-guided` variant: the same task as [`nest`] with one more
+/// sentence, that a sub-unit's consolidated spend is this same question one
+/// level down.
+pub fn nest_guided(dial: f64, rng: &mut Rng) -> GeneratedTask {
+    generate(dial, rng, false, true)
+}
+
+/// Characters of commentary a `nest-long` report carries at least.
+const LONG_REPORT_CHARS: usize = 10_000;
+
+fn generate(dial: f64, rng: &mut Rng, long: bool, guided: bool) -> GeneratedTask {
+    // The commentary draws on its own stream, seeded from the state at
+    // entry without consuming from `rng`, so the long variant keeps the
+    // plain variant's tree, rows, order and question for a seed.
+    let mut commentary = Rng::new(rng.clone().next_u64() ^ 0x6c6f_6e67);
     let g = build(dial, rng);
     let root = &g.units[0];
     let mut rows: Vec<String> = vec![];
@@ -199,10 +270,15 @@ pub fn nest(dial: f64, rng: &mut Rng) -> GeneratedTask {
             ),
             None => String::new(),
         };
-        rows.push(format!(
+        let report = format!(
             "Unit {} reports to {to}. Direct spend this year: {} kEUR. {distractor} {subs}{excluded}",
             u.name, u.reported
-        ));
+        );
+        rows.push(if long {
+            wrap_in_commentary(report, &mut commentary)
+        } else {
+            report
+        });
         if let Some(c) = u.corrected {
             rows.push(format!(
                 "Correction: unit {}'s direct spend this year should read {c} kEUR, not {}.",
@@ -282,15 +358,77 @@ pub fn nest(dial: f64, rng: &mut Rng) -> GeneratedTask {
             },
         ),
     };
+    let generator = match (long, guided) {
+        (true, _) => "nest-long",
+        (false, true) => "nest-guided",
+        (false, false) => "nest",
+    };
+    let task = if guided {
+        format!("{PREAMBLE} {GUIDE} {ask}")
+    } else {
+        format!("{PREAMBLE} {ask}")
+    };
     GeneratedTask {
-        generator: "nest".into(),
+        generator: generator.into(),
         kind: kind.into(),
-        task: format!("{PREAMBLE} {ask}"),
+        task,
         context: Some(rows.join("\n\n")),
         verify,
         dial,
         difficulty: difficulty_prior(0.4 + 0.6 * dial),
     }
+}
+
+/// The report's facts spread through commentary: the opening sentence
+/// stays first (it names the unit), the rest of the report's sentences land
+/// at random points among at least [`LONG_REPORT_CHARS`] of commentary.
+fn wrap_in_commentary(report: String, rng: &mut Rng) -> String {
+    let mut sentences: Vec<String> = split_sentences(&report);
+    let head = sentences.remove(0);
+    let mut filler: Vec<String> = vec![];
+    let mut chars = 0;
+    while chars < LONG_REPORT_CHARS {
+        let s = COMMENTARY[rng.below(COMMENTARY.len() as u64) as usize]
+            .replace("{n}", &(3 + rng.below(900)).to_string());
+        chars += s.len() + 1;
+        filler.push(s);
+    }
+    // Insert each fact at a random position, in order, so none is lost.
+    for fact in sentences {
+        let at = rng.below(filler.len() as u64 + 1) as usize;
+        filler.insert(at, fact);
+    }
+    // Paragraphs of six sentences or so read as a report; rows stay one
+    // report each (paragraph breaks inside a row are single newlines).
+    let mut out = head;
+    for (i, s) in filler.iter().enumerate() {
+        out.push(if i % 6 == 5 { '\n' } else { ' ' });
+        out.push_str(s);
+    }
+    out
+}
+
+/// Sentences of a report: split after a full stop followed by a space. A
+/// unit name never contains a full stop and the figures are integers, so
+/// this is exact for the reports [`generate`] writes.
+fn split_sentences(text: &str) -> Vec<String> {
+    let mut out = vec![];
+    let mut start = 0;
+    let bytes = text.as_bytes();
+    for i in 0..bytes.len() {
+        if bytes[i] == b'.' && (i + 1 == bytes.len() || bytes[i + 1] == b' ') {
+            let s = text[start..=i].trim();
+            if !s.is_empty() {
+                out.push(s.to_string());
+            }
+            start = i + 1;
+        }
+    }
+    let rest = text[start..].trim();
+    if !rest.is_empty() {
+        out.push(rest.to_string());
+    }
+    out
 }
 
 #[cfg(test)]
@@ -358,6 +496,51 @@ mod tests {
         assert!(corrections <= reports.len());
         assert!(a.task.contains("consolidated"), "{}", a.task);
         assert!(a.kind.starts_with("nest_"));
+    }
+
+    /// The variants keep the plain task's tree, question and answer, and
+    /// change only what they say they change.
+    #[test]
+    fn variants_keep_the_tree_the_question_and_the_answer() {
+        let ws = std::path::Path::new(".");
+        for seed in [1u64, 14, 7, 11] {
+            for dial in [0.4, 1.0] {
+                let plain = super::super::generators::generate("nest", dial, seed, ws).unwrap();
+                let long = super::super::generators::generate("nest-long", dial, seed, ws).unwrap();
+                let guided =
+                    super::super::generators::generate("nest-guided", dial, seed, ws).unwrap();
+                assert_eq!(plain.kind, long.kind);
+                assert_eq!(plain.verify, long.verify);
+                assert_eq!(plain.task, long.task);
+                assert_eq!(long.generator, "nest-long");
+                assert_eq!(plain.kind, guided.kind);
+                assert_eq!(plain.verify, guided.verify);
+                assert_eq!(plain.context, guided.context);
+                assert!(guided.task.contains(GUIDE), "{}", guided.task);
+                assert!(guided.task.ends_with(&plain.task[PREAMBLE.len()..]));
+                // Every plain row is a long row's facts: same opening
+                // sentence, same figures, far more text.
+                let plain_rows: Vec<&str> =
+                    plain.context.as_deref().unwrap().split("\n\n").collect();
+                let long_rows: Vec<&str> = long.context.as_deref().unwrap().split("\n\n").collect();
+                assert_eq!(plain_rows.len(), long_rows.len());
+                for (p, l) in plain_rows.iter().zip(&long_rows) {
+                    let first = p.split(". ").next().unwrap();
+                    assert!(l.starts_with(first), "{l}");
+                    for fact in split_sentences(p) {
+                        assert!(l.contains(&fact), "{fact} missing from {l}");
+                    }
+                    if p.starts_with("Unit ") {
+                        assert!(l.len() >= LONG_REPORT_CHARS, "{}", l.len());
+                        assert_eq!(l.matches("Direct spend this year: ").count(), 1);
+                        assert_eq!(
+                            l.matches("Sub-units: ").count() + l.matches("No sub-units.").count(),
+                            1
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]
