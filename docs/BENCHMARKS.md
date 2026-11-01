@@ -539,6 +539,29 @@ plain pack whether it finds one. `NestSolver` reads the long variant
 unchanged (the bench test runs a depth-3 task of it), since the facts keep
 their sentences and only gain neighbours.
 
+Luna, frozen, on both (2026-11-01, `--budget-dollars 1`, routers and rows
+under `plots/luna-recursion-2026-10-31/{guided,long}/`):
+
+| pack | solved | depth used (max) | tasks at depth > 0 | child sessions | calls per task | dollars |
+|---|---|---|---|---|---|---|
+| `recursion-depth` (rerun, for reference) | 4/20 | 0.25 (2) | 4 | 99 | 326 | $0.44 |
+| `recursion-depth-guided` | 3/20 | 0.05 (1) | 1 | 64 | 124 | $0.18 |
+| `recursion-depth-long` | 2/20 | 0.9 (5) | 5 | 1,634 | 1,139 | $3.26 |
+
+The guided sentence did nothing for Luna: half the tasks ended on turn one
+with a guessed `FINAL SELECT 0`, as on the plain pack, and the one task
+that delegated went one level. Length is what moved the depth. On the long
+pack Luna went to depth 3 on `k3-03`, `k4-03` and `k6-04`, depth 4 on
+`k6-01` and depth 5 on `k5-05`, the depth that task was built for, through
+1,634 child sessions (653 at depth 1, 652 at depth 2, 317 at depth 3, 9 at
+depth 4, 3 at depth 5), every one of which finished, so the harness side of
+the question has an answer at five levels. The model side does not yet: the
+recursion is text partitioning, children extracting facts from chunks of a
+long report and delegating chunks of their chunk, not consolidation along
+the tree, and nothing it did there made the answer better (2/20, nine tasks
+out of turns, $0.65 on a single six-level task). The dial moves depth; it
+has not yet moved the shape.
+
 Two harness settings matter here. The harness refuses a child beyond
 `max_depth`, which defaults to 2; the pack states `depth: 6` and `bench run`
 raises the maximum to at least a pack's `depth` (`--max-depth` overrides
