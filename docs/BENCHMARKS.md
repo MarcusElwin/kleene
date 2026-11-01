@@ -485,6 +485,40 @@ and an error), a `FINAL` could not read a table its own reply had created,
 and child sessions nested on the thread stack (both fixed in the same
 change).
 
+GPT-6 Luna, frozen, 2026-10-31 (`plots/luna-recursion-2026-10-31/`, same
+`--budget-dollars 1`): 5/20 for $0.19, depth 0 on every task, and the
+reason was in the trace. On `k5-03` Luna wrote `CROSS JOIN LATERAL rlm(...)`
+over the report rows three times, and the planner refused each statement:
+"estimated at ~488 calls (~$4.68) but the remaining budget is $1". The cost
+model priced tokens at a fixed $2/$10 per million whatever the model, so on
+Luna ($0.10/$0.50) every estimate was twenty times too high and the gate
+built to keep recursion affordable was what blocked it. The fix in the same
+change learns the per-token rate from the priced calls already in the
+store's `trace_calls` (once three have run; input to output fixed at the
+rate cards' five to one, cache reads at a tenth), and `EXPLAIN` ends its
+`learned:` line with the measured rates. The rerun on the fixed binary
+(`plots/luna-recursion-2026-10-31/rerun/`):
+
+| built for | solved | depth used (max) | calls per task | dollars |
+|---|---|---|---|---|
+| k3 | 2/5 | 0.4 (1) | 79 | $0.03 |
+| k4 | 1/5 | 0.4 (2) | 179 | $0.08 |
+| k5 | 1/5 | 0.2 (1) | 411 | $0.14 |
+| k6 | 0/5 | 0 | 635 | $0.19 |
+
+4/20 for $0.44, with 99 child sessions over four tasks (depth 1 on `k3-01`,
+`k3-02`, `k5-01`; depth 2 on `k4-02`, which it then solved exactly where
+the first run returned 0). The shape of the recursion is a map, not a
+divide: every child gets one report row and the question about the top
+unit, so the children extract and the root still has to consolidate.
+Nine tasks hit the 30-turn cap, mostly at five and six levels, and
+accuracy did not improve; the pack now measures depth, and the first
+measurement is that a cheap model recurses when the gate lets it and does
+not yet recurse along the tree. Ways to move it that stay open: a verbosity
+dial so a six-level context no longer fits one `llm()` call, a preamble
+variant that names the sub-unit's consolidated spend as the same task, and
+a learning-mode run so one task's working `rlm` plan reaches the next.
+
 Two harness settings matter here. The harness refuses a child beyond
 `max_depth`, which defaults to 2; the pack states `depth: 6` and `bench run`
 raises the maximum to at least a pack's `depth` (`--max-depth` overrides
