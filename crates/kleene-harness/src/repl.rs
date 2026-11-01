@@ -196,6 +196,32 @@ impl Repl {
                 }
             }
         }
+        // What tokens cost here: the priced calls in the trace, once there
+        // are a few, replace the default rate card, so a cheap model's
+        // estimates, and the budget gate that trusts them, scale with it.
+        // One actual cannot separate input from output rates, so the ratio
+        // stays at the rate cards' five to one (cache reads at a tenth of
+        // input) and the level is learned.
+        if let Ok(b) = store
+            .query(
+                "SELECT COUNT(*), CAST(SUM(input_tokens) AS DOUBLE), CAST(SUM(cache_read_tokens) AS DOUBLE), CAST(SUM(output_tokens) AS DOUBLE), SUM(cost_usd) FROM trace_calls WHERE cost_usd > 0 AND error IS NULL AND NOT coalesce(memo_hit, false)",
+            )
+            .await
+        {
+            if let Some(row) = b.rows.first() {
+                let n = row[0].as_int().unwrap_or(0);
+                let input = row[1].as_f64().unwrap_or(0.0);
+                let cached = row[2].as_f64().unwrap_or(0.0);
+                let output = row[3].as_f64().unwrap_or(0.0);
+                let dollars = row[4].as_f64().unwrap_or(0.0);
+                let weighted = input + 0.1 * cached + 5.0 * output;
+                if n >= 3 && weighted > 0.0 && dollars > 0.0 {
+                    cost.usd_per_input_token = dollars / weighted;
+                    cost.usd_per_output_token = 5.0 * cost.usd_per_input_token;
+                    cost.prices_learned = n as u64;
+                }
+            }
+        }
         // What earlier sessions learned (the store's `estimates` table),
         // then this session's own sample on top: the pass rate of every
         // boolean call predicate evaluated at least a few times, and the
