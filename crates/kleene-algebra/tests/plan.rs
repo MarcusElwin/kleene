@@ -731,3 +731,37 @@ fn child_sessions_are_priced_as_agent_loops() {
     assert_eq!(notes.len(), 1, "{notes:?}");
     assert!(learned.learned_notes(&["verify".to_string()]).is_empty());
 }
+
+/// Token rates learned from the store price every estimate, children
+/// included, and EXPLAIN says where they came from; the defaults are silent.
+#[test]
+fn learned_token_rates_scale_every_dollar_estimate() {
+    let default = CostModel::default();
+    assert!(default
+        .rates_note()
+        .contains("a default until a call has run"));
+    assert!(default.learned_notes(&["llm".to_string()]).is_empty());
+    let cheap = CostModel {
+        usd_per_input_token: 1e-7,
+        usd_per_output_token: 5e-7,
+        prices_learned: 40,
+        ..CostModel::default()
+    };
+    let kinds = [CallKind::Recursive {
+        role: "self".into(),
+    }];
+    let ratio = default.calls_for(&kinds, 1.0).dollars / cheap.calls_for(&kinds, 1.0).dollars;
+    assert!((ratio - 20.0).abs() < 1e-6, "{ratio}");
+    let ratio = default.calls(10.0).dollars / cheap.calls(10.0).dollars;
+    assert!((ratio - 20.0).abs() < 1e-6, "{ratio}");
+    let notes = cheap.learned_notes(&["llm".to_string()]);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(
+        notes[0].contains(
+            "$0.10 per M input tokens, ~$0.50 per M output tokens (measured over 40 calls)"
+        ),
+        "{}",
+        notes[0]
+    );
+    assert!(cheap.learned_notes(&[]).is_empty());
+}

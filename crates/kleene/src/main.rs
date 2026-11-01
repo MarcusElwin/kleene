@@ -337,12 +337,16 @@ enum BenchAction {
         /// task then counts as unsolved with `budget_exhausted` in its detail).
         #[arg(long)]
         budget_dollars: Option<f64>,
+        /// Deepest child session allowed. Without it the harness default (2)
+        /// applies, raised to the pack's `depth` when the pack states one.
+        #[arg(long)]
+        max_depth: Option<u32>,
     },
     /// Freeze tasks from a generator into a pack directory.
     Build {
         /// Output directory, e.g. tasks/oolong-like.
         out: PathBuf,
-        /// Generator: sat3, graph, puzzle, corpus, repo, statements, contracts, logbook, memo, tracker, ledger, agreement.
+        /// Generator: sat3, graph, puzzle, corpus, repo, statements, contracts, logbook, memo, tracker, ledger, agreement, nest, nest-long, nest-guided.
         #[arg(long)]
         from: String,
         /// How many tasks.
@@ -659,6 +663,15 @@ async fn run_bench(cli: &Cli, action: &BenchAction) -> anyhow::Result<()> {
     // so a run's prompts do not grow with every session before it and a
     // recorded run replays from its own fixtures.
     cfg.drop_session_tables = true;
+    if let BenchAction::Run {
+        pack, max_depth, ..
+    } = action
+    {
+        // A pack built for deep recursion states the depth it needs; the
+        // flag overrides either way.
+        let wanted = Pack::load(pack)?.depth.unwrap_or(0);
+        cfg.max_depth = max_depth.unwrap_or(cfg.max_depth.max(wanted));
+    }
     if let BenchAction::Run {
         record,
         replay,

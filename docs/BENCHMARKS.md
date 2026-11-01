@@ -31,6 +31,9 @@ themselves in the README's
 | `legal-synthetic` | 20 | a contract with planted clause categories | the categories present | `exact` | CUAD, Harvey LAB |
 | `logbook-hard` | 30 | 1,650 log entries (30k tokens), four phrasings, corrections | one of five aggregates | `exact` | OOLONG at scale |
 | `memo-rubric` | 20 | a 40-section agreement with an amendment and a rejected proposal | a short memo | `judge` | Harvey LAB drafting |
+| `recursion-depth` | 20 | a group's unit reports, a tree 3 to 6 levels deep, with divested subtrees and corrections | a consolidated figure, the largest sub-unit, a count or the depth | `number`, `exact` | recursion depth: how far child sessions nest |
+| `recursion-depth-long` | 20 | the same trees, every report wrapped in 10k+ characters of commentary (200k to 1M characters a task) | the same | `number`, `exact` | recursion depth when the context no longer fits one call |
+| `recursion-depth-guided` | 20 | the same tasks, the task text naming the recursion (a sub-unit's spend is the same question one level down) | the same | `number`, `exact` | recursion depth when the shape is spelled out |
 | `coding` | 12 | a small Python project with visible tests, in three-step episodes | files edited and a `FINAL` row | `shell`, hidden tests | SWE-bench |
 | `oolong-hard` | 20 | 1,300 dated tracker entries (25k tokens): time in mixed units, action items opened and closed by id, decisions, corrections | one of five aggregates | `exact` | OOLONG at scale, with joins |
 | `finance-hard` | 20 | a quarterly statement by segment over six years (1,100 figures, 16k tokens) with restatements and a discontinued segment | a number, a segment or a quarter | `number`, `exact` | FinanceBench over a filing, not a table |
@@ -74,6 +77,9 @@ prior. The schema is `Pack` and `PackTask` in
 | `tasks/legal-synthetic` | 20 | `ctx`: a synthetic contract, one clause per row, with planted clause categories among boilerplate, paraphrases and near-miss distractors | `FINAL` with one row per category present, out of six named categories | `exact`: the set of categories, spelled as given | CUAD / Harvey LAB-style clause classification |
 | `tasks/logbook-hard` | 30 | `ctx`: a work log of about 1,650 dated entries (about 118,000 characters, 30,000 tokens) in four phrasings, with entries about the same projects whose numbers are not hours, and `Correction:` entries that amend an earlier entry | `FINAL` answering one of five questions: hours per project, hours per person on one project, the top person, hours per project in one month, distinct people on a project | `exact` | OOLONG at a size that cannot be read once and answered: the context has to be filtered and aggregated |
 | `tasks/memo-rubric` | 20 | `ctx`: a synthetic services agreement of about 40 sections with six planted commercial terms, a rejected proposal in a schedule, and an amendment that supersedes one term | `FINAL` with one row holding a short written memo answering three questions about the terms | `judge`: a separate model grades the memo against a rubric naming each required fact and forbidding the superseded and rejected values, with a reference memo | Harvey LAB-style drafting graded by rubric |
+| `tasks/recursion-depth` | 20 | `ctx`: one report per unit of a group, shuffled, naming the unit, the unit it reports to, its direct spend in kEUR, distractor figures and its sub-units; some reports exclude one divested sub-unit with everything under it, and `Correction:` rows restate a unit's spend. Five tasks at each of 3, 4, 5 and 6 levels (about 20, 40, 75 and 140 units; 3k to 25k characters) | `FINAL` with the consolidated spend of the top unit or of a unit one level down, the sub-unit with the largest consolidated spend, the number of units consolidated, or the number of levels | `number` within 0.5, or `exact` | recursion depth: consolidation is a recursion as deep as the tree, so a run shows the depth the model chose (`evals.depth`) next to accuracy and cost as the depth a task calls for grows past the default of two |
+| `tasks/recursion-depth-long` | 20 | the same trees, questions and answers, every report wrapped in at least 10,000 characters of management commentary with kEUR figures that are not the direct spend (about 200k to 1M characters a task, 50k to 260k tokens) | the same | `number` within 0.5, or `exact` | recursion depth when no single `llm()` call reads the context: the partition has to come from somewhere, and the tree is the natural one |
+| `tasks/recursion-depth-guided` | 20 | the same tasks, with one more sentence in the task: a sub-unit's consolidated spend is this same question over that sub-unit's reports | the same | `number` within 0.5, or `exact` | recursion depth when the recursion is spelled out: following it against finding it |
 | `tasks/coding` | 12 | a small Python project in the workspace (four projects: a finance CSV library, word statistics, warehouse stock, day-interval scheduling), visible unit tests, and a task: implement a module, then extend it, then fix a bug report | files edited in place and a one-row `FINAL` | `shell`: the grader's own hidden unit tests for every step so far (visible tests plus edge cases the task text states) | SWE-bench-style code editing, in three-step episodes over one checkout |
 | `tasks/oolong-hard` | 20 | `ctx`: a project tracker of about 1,300 dated entries (about 98,000 characters, 25,000 tokens): time entries in hours, decimal hours, minutes or `2h 30m`; action items opened on a project and closed later by id alone; decisions per project; entries with numbers that are not time; and `Correction:` entries that amend an earlier time entry | `FINAL` answering one of five questions: hours per project, open action items per project at the end, the project with the most decisions in a month, hours per person on one project in one month, how many of a project's items were closed within a week | `exact` | OOLONG at a size that cannot be read once, where the questions join two kinds of entry and normalise units |
 | `tasks/finance-hard` | 20 | `ctx`: a quarterly income statement by segment, one figure per row (six segments, seven line items, six fiscal years: about 1,100 figures, 16,000 tokens), followed by restatements that replace earlier figures, a note marking one segment discontinued, and commentary full of numbers that are not figures | `FINAL` with a consolidated full-year total, a year-on-year change in operating income, a cost ratio for one segment, the segment with the highest revenue, or the quarter with the highest consolidated revenue | `number` (0.5 for totals, 0.15 for percentages, 0.015 for ratios) or `exact` | FinanceBench-style QA over a filing's worth of figures, not one table |
@@ -99,8 +105,8 @@ Freezing means the tasks are checked into the repository, so two runs, or two
 people, see the same tasks in the same order; `bench build <dir> --from
 <generator> --count N --dial D --seed S` regenerates a pack and the same
 arguments give byte-identical tasks. The first three packs are written out in
-full; `logbook-hard`, `memo-rubric`, `oolong-hard`, `finance-hard` and
-`legal-hard` are built with `--lazy`, so their `pack.json` holds a
+full; `logbook-hard`, `memo-rubric`, `oolong-hard`, `finance-hard`,
+`legal-hard` and `recursion-depth` are built with `--lazy`, so their `pack.json` holds a
 generator, dial and seed per task (`from`) and the task is regenerated on
 load. The two forms load to the same task, because every
 generator is a pure function of its dial and seed; the lazy form keeps a
@@ -110,7 +116,9 @@ the generator's hardness knob in `[0, 1]`: it adds notes and distractors for
 paraphrase for `contracts`, entries, phrasings, distractors and corrections
 for `logbook`, length and the amendment for `memo`, entries and the
 correction rate for `tracker`, segments, years and restatements for `ledger`,
-and sections, near misses and amendments for `agreement`. The difficulty prior
+sections, near misses and amendments for `agreement`, and depth for `nest`
+(1 level at 0, 6 at 1: dials 0.4, 0.6, 0.8 and 1.0 give trees 3, 4, 5 and 6
+levels deep, where every other generator grows wider). The difficulty prior
 on every task is derived from the dial (800 rating points at 0, 1600 at 1, so
 1200 at 0.5); the terminal tasks carry the 1000 baseline and the coding
 steps 1150 to 1350.
@@ -436,6 +444,142 @@ The plan names four measurements; this is how each maps onto the commands.
 - **Damage control**: `playbook_evals` ties every adopted entry to the replay
   eval that admitted it, and `learn playbook` lists reverts, so a regression
   can be traced to the entry that caused it.
+
+## Recursion depth
+
+The other packs are flat: the models almost never spawned a child session
+on them (`evals.depth` is 0 in nearly every cell of the results table, and
+1 or 2 in the handful of exceptions), so they say nothing about how the
+harness behaves when sessions nest. `tasks/recursion-depth` is built for
+that question. Its generator, `nest`, grows deeper as the dial rises where
+every other generator grows wider: a reporting tree whose consolidated
+figures are a recursion exactly as deep as the tree, five tasks at each of
+3, 4, 5 and 6 levels. Nothing forces a model to recurse (a flat recursive
+CTE answers too), so a run records the depth the model chose next to
+whether it was right and what it spent. Group `evals` by the depth a task
+was built for, which its id carries (`k3-01` ... `k6-05`):
+
+```sql
+SELECT substr(task, 1, 2) AS built_for, mode,
+       COUNT(*) AS tasks, SUM(solved::INT) AS solved,
+       ROUND(AVG(depth), 1) AS depth_used, ROUND(AVG(calls), 1) AS calls,
+       ROUND(AVG(dollars), 3) AS dollars
+FROM evals WHERE pack = 'recursion-depth'
+GROUP BY 1, 2 ORDER BY 1, 2
+```
+
+The first real run, Claude Haiku 4.5 in frozen mode on 2026-10-29
+(`plots/haiku-recursion-2026-10-29/`, `--budget-dollars 1` per task,
+$3.66 in all):
+
+| built for | solved | depth used | calls per task | tokens per task | dollars |
+|---|---|---|---|---|---|
+| k3 | 2/5 | 0 | 14.6 | 339k | $0.95 |
+| k4 | 2/5 | 0 | 23.6 | 318k | $0.79 |
+| k5 | 1/5 | 0 | 19.0 | 457k | $1.13 |
+| k6 | 2/5 | 0 | 23.0 | 346k | $0.79 |
+
+Haiku never delegated: every task was flat SQL over `ctx`, right on the
+structural questions (levels, units counted) and wrong on the consolidated
+figures, where corrections and excluded subtrees have to be combined. The
+run also found the harness holes this pack was built to find: a
+`WITH RECURSIVE ... UNION ALL` with no bound grew to 14 GB inside the
+recursion loop before the OOM killer stopped the process (now a row cap
+and an error), a `FINAL` could not read a table its own reply had created,
+and child sessions nested on the thread stack (both fixed in the same
+change).
+
+GPT-6 Luna, frozen, 2026-10-31 (`plots/luna-recursion-2026-10-31/`, same
+`--budget-dollars 1`): 5/20 for $0.19, depth 0 on every task, and the
+reason was in the trace. On `k5-03` Luna wrote `CROSS JOIN LATERAL rlm(...)`
+over the report rows three times, and the planner refused each statement:
+"estimated at ~488 calls (~$4.68) but the remaining budget is $1". The cost
+model priced tokens at a fixed $2/$10 per million whatever the model, so on
+Luna ($0.10/$0.50) every estimate was twenty times too high and the gate
+built to keep recursion affordable was what blocked it. The fix in the same
+change learns the per-token rate from the priced calls already in the
+store's `trace_calls` (once three have run; input to output fixed at the
+rate cards' five to one, cache reads at a tenth), and `EXPLAIN` ends its
+`learned:` line with the measured rates. The rerun on the fixed binary
+(`plots/luna-recursion-2026-10-31/rerun/`):
+
+| built for | solved | depth used (max) | calls per task | dollars |
+|---|---|---|---|---|
+| k3 | 2/5 | 0.4 (1) | 79 | $0.03 |
+| k4 | 1/5 | 0.4 (2) | 179 | $0.08 |
+| k5 | 1/5 | 0.2 (1) | 411 | $0.14 |
+| k6 | 0/5 | 0 | 635 | $0.19 |
+
+4/20 for $0.44, with 99 child sessions over four tasks (depth 1 on `k3-01`,
+`k3-02`, `k5-01`; depth 2 on `k4-02`, which it then solved exactly where
+the first run returned 0). The shape of the recursion is a map, not a
+divide: every child gets one report row and the question about the top
+unit, so the children extract and the root still has to consolidate.
+Nine tasks hit the 30-turn cap, mostly at five and six levels, and
+accuracy did not improve; the pack now measures depth, and the first
+measurement is that a cheap model recurses when the gate lets it and does
+not yet recurse along the tree. Ways to move it that stay open: a verbosity
+dial so a six-level context no longer fits one `llm()` call, a preamble
+variant that names the sub-unit's consolidated spend as the same task, and
+a learning-mode run so one task's working `rlm` plan reaches the next.
+
+Two variants of the pack pull on the levers the Luna runs left open, with
+the same trees, seeds, questions and answers as `recursion-depth` so their
+rows compare task for task. `tasks/recursion-depth-long` (generator
+`nest-long`) wraps every report in at least 10,000 characters of management
+commentary, figures in kEUR among them that are not the direct spend, so a
+six-level group is about a million characters (260k tokens) and no single
+`llm()` call reads it: the context has to be partitioned, and the question is whether the
+partition follows the tree. `tasks/recursion-depth-guided` (generator
+`nest-guided`) adds one sentence to the task, that the consolidated spend of
+a sub-unit is this same question asked of that sub-unit over its own
+reports, so a child session given those reports can answer it. The guided
+pack measures whether a model follows a recursion it is told about; the
+plain pack whether it finds one. `NestSolver` reads the long variant
+unchanged (the bench test runs a depth-3 task of it), since the facts keep
+their sentences and only gain neighbours.
+
+Luna, frozen, on both (2026-11-01, `--budget-dollars 1`, routers and rows
+under `plots/luna-recursion-2026-10-31/{guided,long}/`):
+
+| pack | solved | depth used (max) | tasks at depth > 0 | child sessions | calls per task | dollars |
+|---|---|---|---|---|---|---|
+| `recursion-depth` (rerun, for reference) | 4/20 | 0.25 (2) | 4 | 99 | 326 | $0.44 |
+| `recursion-depth-guided` | 3/20 | 0.05 (1) | 1 | 64 | 124 | $0.18 |
+| `recursion-depth-long` | 2/20 | 0.9 (5) | 5 | 1,634 | 1,139 | $3.26 |
+
+The guided sentence did nothing for Luna: half the tasks ended on turn one
+with a guessed `FINAL SELECT 0`, as on the plain pack, and the one task
+that delegated went one level. Length is what moved the depth. On the long
+pack Luna went to depth 3 on `k3-03`, `k4-03` and `k6-04`, depth 4 on
+`k6-01` and depth 5 on `k5-05`, the depth that task was built for, through
+1,634 child sessions (653 at depth 1, 652 at depth 2, 317 at depth 3, 9 at
+depth 4, 3 at depth 5), every one of which finished, so the harness side of
+the question has an answer at five levels. The model side does not yet: the
+recursion is text partitioning, children extracting facts from chunks of a
+long report and delegating chunks of their chunk, not consolidation along
+the tree, and nothing it did there made the answer better (2/20, nine tasks
+out of turns, $0.65 on a single six-level task). The dial moves depth; it
+has not yet moved the shape.
+
+Two harness settings matter here. The harness refuses a child beyond
+`max_depth`, which defaults to 2; the pack states `depth: 6` and `bench run`
+raises the maximum to at least a pack's `depth` (`--max-depth` overrides
+both), so the deepest tasks are not refused by construction. And a child
+gets `child_budget_fraction` (50%) of its parent's *remaining* budget, so
+under a bounded `budget.calls` the budget a session can spend falls
+geometrically with depth; the bench runs with no call budget, so this does
+not bite there, but a depth-6 run under `kleene run --budget-calls` would.
+
+The pack has an offline stand-in for a model: `NestSolver` in
+`kleene_harness::testing` reads the unit and the measure from the task text
+and delegates every sub-unit to a child with `rlm`, the same CallSQL at
+every level, so it reaches exactly the dialled depth and every task passes.
+It is what the integration test runs, and `cargo test --workspace
+--all-features -- --ignored sweep` runs it over the whole pack and prints
+one line per task with the depth reached, calls and tokens. It is not a
+model result; it shows what the harness records when a solver does recurse
+and that the oracles accept the recursion's answer.
 
 ## Recording and replaying
 
