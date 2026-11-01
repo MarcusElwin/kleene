@@ -32,6 +32,8 @@ themselves in the README's
 | `logbook-hard` | 30 | 1,650 log entries (30k tokens), four phrasings, corrections | one of five aggregates | `exact` | OOLONG at scale |
 | `memo-rubric` | 20 | a 40-section agreement with an amendment and a rejected proposal | a short memo | `judge` | Harvey LAB drafting |
 | `recursion-depth` | 20 | a group's unit reports, a tree 3 to 6 levels deep, with divested subtrees and corrections | a consolidated figure, the largest sub-unit, a count or the depth | `number`, `exact` | recursion depth: how far child sessions nest |
+| `recursion-depth-long` | 20 | the same trees, every report wrapped in 10k+ characters of commentary (200k to 1M characters a task) | the same | `number`, `exact` | recursion depth when the context no longer fits one call |
+| `recursion-depth-guided` | 20 | the same tasks, the task text naming the recursion (a sub-unit's spend is the same question one level down) | the same | `number`, `exact` | recursion depth when the shape is spelled out |
 | `coding` | 12 | a small Python project with visible tests, in three-step episodes | files edited and a `FINAL` row | `shell`, hidden tests | SWE-bench |
 | `oolong-hard` | 20 | 1,300 dated tracker entries (25k tokens): time in mixed units, action items opened and closed by id, decisions, corrections | one of five aggregates | `exact` | OOLONG at scale, with joins |
 | `finance-hard` | 20 | a quarterly statement by segment over six years (1,100 figures, 16k tokens) with restatements and a discontinued segment | a number, a segment or a quarter | `number`, `exact` | FinanceBench over a filing, not a table |
@@ -76,6 +78,8 @@ prior. The schema is `Pack` and `PackTask` in
 | `tasks/logbook-hard` | 30 | `ctx`: a work log of about 1,650 dated entries (about 118,000 characters, 30,000 tokens) in four phrasings, with entries about the same projects whose numbers are not hours, and `Correction:` entries that amend an earlier entry | `FINAL` answering one of five questions: hours per project, hours per person on one project, the top person, hours per project in one month, distinct people on a project | `exact` | OOLONG at a size that cannot be read once and answered: the context has to be filtered and aggregated |
 | `tasks/memo-rubric` | 20 | `ctx`: a synthetic services agreement of about 40 sections with six planted commercial terms, a rejected proposal in a schedule, and an amendment that supersedes one term | `FINAL` with one row holding a short written memo answering three questions about the terms | `judge`: a separate model grades the memo against a rubric naming each required fact and forbidding the superseded and rejected values, with a reference memo | Harvey LAB-style drafting graded by rubric |
 | `tasks/recursion-depth` | 20 | `ctx`: one report per unit of a group, shuffled, naming the unit, the unit it reports to, its direct spend in kEUR, distractor figures and its sub-units; some reports exclude one divested sub-unit with everything under it, and `Correction:` rows restate a unit's spend. Five tasks at each of 3, 4, 5 and 6 levels (about 20, 40, 75 and 140 units; 3k to 25k characters) | `FINAL` with the consolidated spend of the top unit or of a unit one level down, the sub-unit with the largest consolidated spend, the number of units consolidated, or the number of levels | `number` within 0.5, or `exact` | recursion depth: consolidation is a recursion as deep as the tree, so a run shows the depth the model chose (`evals.depth`) next to accuracy and cost as the depth a task calls for grows past the default of two |
+| `tasks/recursion-depth-long` | 20 | the same trees, questions and answers, every report wrapped in at least 10,000 characters of management commentary with kEUR figures that are not the direct spend (about 200k to 1M characters a task, 50k to 260k tokens) | the same | `number` within 0.5, or `exact` | recursion depth when no single `llm()` call reads the context: the partition has to come from somewhere, and the tree is the natural one |
+| `tasks/recursion-depth-guided` | 20 | the same tasks, with one more sentence in the task: a sub-unit's consolidated spend is this same question over that sub-unit's reports | the same | `number` within 0.5, or `exact` | recursion depth when the recursion is spelled out: following it against finding it |
 | `tasks/coding` | 12 | a small Python project in the workspace (four projects: a finance CSV library, word statistics, warehouse stock, day-interval scheduling), visible unit tests, and a task: implement a module, then extend it, then fix a bug report | files edited in place and a one-row `FINAL` | `shell`: the grader's own hidden unit tests for every step so far (visible tests plus edge cases the task text states) | SWE-bench-style code editing, in three-step episodes over one checkout |
 | `tasks/oolong-hard` | 20 | `ctx`: a project tracker of about 1,300 dated entries (about 98,000 characters, 25,000 tokens): time entries in hours, decimal hours, minutes or `2h 30m`; action items opened on a project and closed later by id alone; decisions per project; entries with numbers that are not time; and `Correction:` entries that amend an earlier time entry | `FINAL` answering one of five questions: hours per project, open action items per project at the end, the project with the most decisions in a month, hours per person on one project in one month, how many of a project's items were closed within a week | `exact` | OOLONG at a size that cannot be read once, where the questions join two kinds of entry and normalise units |
 | `tasks/finance-hard` | 20 | `ctx`: a quarterly income statement by segment, one figure per row (six segments, seven line items, six fiscal years: about 1,100 figures, 16,000 tokens), followed by restatements that replace earlier figures, a note marking one segment discontinued, and commentary full of numbers that are not figures | `FINAL` with a consolidated full-year total, a year-on-year change in operating income, a cost ratio for one segment, the segment with the highest revenue, or the quarter with the highest consolidated revenue | `number` (0.5 for totals, 0.15 for percentages, 0.015 for ratios) or `exact` | FinanceBench-style QA over a filing's worth of figures, not one table |
@@ -518,6 +522,22 @@ not yet recurse along the tree. Ways to move it that stay open: a verbosity
 dial so a six-level context no longer fits one `llm()` call, a preamble
 variant that names the sub-unit's consolidated spend as the same task, and
 a learning-mode run so one task's working `rlm` plan reaches the next.
+
+Two variants of the pack pull on the levers the Luna runs left open, with
+the same trees, seeds, questions and answers as `recursion-depth` so their
+rows compare task for task. `tasks/recursion-depth-long` (generator
+`nest-long`) wraps every report in at least 10,000 characters of management
+commentary, figures in kEUR among them that are not the direct spend, so a
+six-level group is about a million characters (260k tokens) and no single
+`llm()` call reads it: the context has to be partitioned, and the question is whether the
+partition follows the tree. `tasks/recursion-depth-guided` (generator
+`nest-guided`) adds one sentence to the task, that the consolidated spend of
+a sub-unit is this same question asked of that sub-unit over its own
+reports, so a child session given those reports can answer it. The guided
+pack measures whether a model follows a recursion it is told about; the
+plain pack whether it finds one. `NestSolver` reads the long variant
+unchanged (the bench test runs a depth-3 task of it), since the facts keep
+their sentences and only gain neighbours.
 
 Two harness settings matter here. The harness refuses a child beyond
 `max_depth`, which defaults to 2; the pack states `depth: 6` and `bench run`
