@@ -562,6 +562,16 @@ the tree, and nothing it did there made the answer better (2/20, nine tasks
 out of turns, $0.65 on a single six-level task). The dial moves depth; it
 has not yet moved the shape.
 
+Claude Opus 5.5, frozen, on the plain pack (2026-11-02,
+`plots/opus-recursion-2026-11-02/`, root Opus 5.5 at high effort, worker
+Sonnet 5.5, `--budget-dollars 2`): 20/20 for $1.85, 6.75 calls and 60k
+tokens a task, depth 0 on every task and no `llm()` at all. Opus parses the
+reports with string functions and consolidates with a `WITH RECURSIVE` CTE
+(25 of them over the run), one plan at every depth from 3 to 6, so the
+pack's recursion is answered in SQL and the model never needs a child. That
+is the flat solution the pack always allowed, done right: the measure of
+depth is only interesting for a model that cannot do this.
+
 Two harness settings matter here. The harness refuses a child beyond
 `max_depth`, which defaults to 2; the pack states `depth: 6` and `bench run`
 raises the maximum to at least a pack's `depth` (`--max-depth` overrides
