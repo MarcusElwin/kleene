@@ -25,8 +25,11 @@ pub struct Repl {
 }
 
 enum Pending {
-    Planned(Statement),
     Ast(Box<sqlparser::ast::Statement>, String),
+    /// A CallSQL addition the parser does not know (`FINAL`, `CALL`,
+    /// `CREATE FUNCTION`, `CREATE AGENT`), kept as text and planned when its
+    /// turn comes.
+    Extension(String),
 }
 
 fn error(text: String) -> Rendered {
@@ -202,6 +205,32 @@ impl Repl {
                 }
             }
         }
+        // What tokens cost here: the priced calls in the trace, once there
+        // are a few, replace the default rate card, so a cheap model's
+        // estimates, and the budget gate that trusts them, scale with it.
+        // One actual cannot separate input from output rates, so the ratio
+        // stays at the rate cards' five to one (cache reads at a tenth of
+        // input) and the level is learned.
+        if let Ok(b) = store
+            .query(
+                "SELECT COUNT(*), CAST(SUM(input_tokens) AS DOUBLE), CAST(SUM(cache_read_tokens) AS DOUBLE), CAST(SUM(output_tokens) AS DOUBLE), SUM(cost_usd) FROM trace_calls WHERE cost_usd > 0 AND error IS NULL AND NOT coalesce(memo_hit, false)",
+            )
+            .await
+        {
+            if let Some(row) = b.rows.first() {
+                let n = row[0].as_int().unwrap_or(0);
+                let input = row[1].as_f64().unwrap_or(0.0);
+                let cached = row[2].as_f64().unwrap_or(0.0);
+                let output = row[3].as_f64().unwrap_or(0.0);
+                let dollars = row[4].as_f64().unwrap_or(0.0);
+                let weighted = input + 0.1 * cached + 5.0 * output;
+                if n >= 3 && weighted > 0.0 && dollars > 0.0 {
+                    cost.usd_per_input_token = dollars / weighted;
+                    cost.usd_per_output_token = 5.0 * cost.usd_per_input_token;
+                    cost.prices_learned = n as u64;
+                }
+            }
+        }
         // What earlier sessions learned (the store's `estimates` table),
         // then this session's own sample on top: the pass rate of every
         // boolean call predicate evaluated at least a few times, and the
@@ -262,19 +291,10 @@ impl Repl {
         let mut pending = vec![];
         for piece in split_statements(sql) {
             if is_extension(&piece) {
-                // CallSQL additions the parser does not know are planned now,
-                // one statement at a time.
-                let catalog = self.sink.catalog().read().await.clone();
-                match plan_sql(&piece, &catalog) {
-                    Ok(stmts) => pending.extend(stmts.into_iter().map(Pending::Planned)),
-                    Err(e) => {
-                        let mut out = self.run_pending(pending).await;
-                        if out.last().is_none_or(|r| !r.is_error && !r.is_final) {
-                            out.push(self.failed_to_plan(&piece, &e));
-                        }
-                        return out;
-                    }
-                }
+                // CallSQL additions the parser does not know are planned
+                // when they run, like everything else, so a FINAL at the end
+                // of a reply reads the tables the reply created.
+                pending.push(Pending::Extension(piece));
                 continue;
             }
             let asts = match parse(&piece) {
@@ -302,28 +322,34 @@ impl Repl {
 
     async fn run_pending(&self, pending: Vec<Pending>) -> Vec<Rendered> {
         let mut out = vec![];
-        for item in pending {
-            let stmt = match item {
-                Pending::Planned(s) => s,
-                Pending::Ast(ast, text) => {
-                    let catalog = self.sink.catalog().read().await.clone();
-                    match plan(&ast, &catalog) {
-                        Ok(mut s) => {
-                            s.sql = text;
-                            s
-                        }
-                        Err(e) => {
-                            out.push(self.failed_to_plan(&text, &e));
-                            break;
-                        }
+        'items: for item in pending {
+            let catalog = self.sink.catalog().read().await.clone();
+            let stmts = match item {
+                Pending::Ast(ast, text) => match plan(&ast, &catalog) {
+                    Ok(mut s) => {
+                        s.sql = text;
+                        vec![s]
                     }
-                }
+                    Err(e) => {
+                        out.push(self.failed_to_plan(&text, &e));
+                        break;
+                    }
+                },
+                Pending::Extension(text) => match plan_sql(&text, &catalog) {
+                    Ok(stmts) => stmts,
+                    Err(e) => {
+                        out.push(self.failed_to_plan(&text, &e));
+                        break;
+                    }
+                },
             };
-            let rendered = self.run_one(&stmt).await;
-            let stop = rendered.is_error || rendered.is_final;
-            out.push(rendered);
-            if stop {
-                break;
+            for stmt in stmts {
+                let rendered = self.run_one(&stmt).await;
+                let stop = rendered.is_error || rendered.is_final;
+                out.push(rendered);
+                if stop {
+                    break 'items;
+                }
             }
         }
         out

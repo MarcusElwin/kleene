@@ -63,6 +63,12 @@ pub struct CostModel {
     /// Finished child sessions behind `child_calls` and `child_tokens`;
     /// 0 means the defaults are in use.
     pub child_learned: u64,
+    /// Priced model calls behind `usd_per_input_token` and
+    /// `usd_per_output_token`; 0 means the defaults (a Sonnet-class rate
+    /// card) are in use. The harness learns the rates from the calls the
+    /// store has traced, so a cheap model's estimates, and the budget gate
+    /// that trusts them, scale with what it actually costs.
+    pub prices_learned: u64,
 }
 
 impl Default for CostModel {
@@ -87,6 +93,7 @@ impl Default for CostModel {
             child_tokens: 12_000.0,
             child_dollars: None,
             child_learned: 0,
+            prices_learned: 0,
         }
     }
 }
@@ -147,6 +154,20 @@ impl CostModel {
         format!(
             "rlm/spawn: ~{:.0} calls, ~{:.0} tokens and ~${:.4} per child session ({basis}); a child's turns each carry the agent prompt, so it costs more than one llm() call",
             e.calls, e.tokens, e.dollars
+        )
+    }
+
+    /// The `EXPLAIN` note on the token rates behind every dollar estimate.
+    pub fn rates_note(&self) -> String {
+        let basis = if self.prices_learned > 0 {
+            format!("measured over {} calls", self.prices_learned)
+        } else {
+            "a default until a call has run".to_string()
+        };
+        format!(
+            "rates: ~${:.2} per M input tokens, ~${:.2} per M output tokens ({basis})",
+            self.usd_per_input_token * 1e6,
+            self.usd_per_output_token * 1e6
         )
     }
 
@@ -222,6 +243,10 @@ impl CostModel {
             } else if let Some(b) = self.call_branching.get(name) {
                 out.push(format!("{name}: {b:.1} rows per call from {n} calls"));
             }
+        }
+        // Last, so the lines about named functions keep their place.
+        if self.prices_learned > 0 && !call_names.is_empty() {
+            out.push(self.rates_note());
         }
         out
     }

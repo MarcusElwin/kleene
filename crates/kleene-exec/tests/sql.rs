@@ -440,6 +440,20 @@ async fn ctes_and_recursion() {
     };
     // rounds: {1}, {2}, {3}, {1,4}, {2}, {3} -> 1+1+1+2+1+1 = 7 rows
     assert_eq!(b.rows, vec![vec![v(7)]]);
+    // A recursion that fans out every round (five edges per input row)
+    // grows geometrically; with no round cap it is stopped by the row cap
+    // with an error that says how to bound it, instead of eating memory.
+    let stmts = plan_sql(
+        "WITH RECURSIVE p(n) AS (SELECT 1 UNION ALL SELECT e.dst FROM p CROSS JOIN edges e) SELECT COUNT(*) FROM p",
+        &w.catalog,
+    )
+    .unwrap();
+    let err = execute_statement(&stmts[0], ExecContext::new(w.sink.clone()))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("grew past 1000000 rows"), "{err}");
+    assert!(err.contains("SET max_recursion_rounds"), "{err}");
 }
 
 #[tokio::test]

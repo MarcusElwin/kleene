@@ -138,6 +138,12 @@ impl ExecContext {
 /// Hard cap on semi-naive rounds regardless of configuration.
 pub const RECURSION_HARD_CAP: usize = 10_000;
 
+/// Hard cap on the rows a recursive CTE may accumulate regardless of
+/// configuration. A recursion that fans out on a cycle under `UNION ALL`
+/// grows geometrically and would take the process down with it long before
+/// the round cap; past this many rows it is an error the model can read.
+pub const RECURSION_ROW_CAP: usize = 1_000_000;
+
 /// Execute a logical plan, producing a stream of batches.
 ///
 /// The plan is evaluated eagerly into rows and then chunked by
