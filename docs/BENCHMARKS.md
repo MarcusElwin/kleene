@@ -19,6 +19,7 @@ themselves in the README's
 | what a plot shows and which claim it backs | [The five plots](#the-five-plots) |
 | how to run a clean comparison | [Comparisons the design calls for](#comparisons-the-design-calls-for), [Reading results](#reading-results) |
 | how to run offline or resume | [Recording and replaying](#recording-and-replaying) |
+| how to run Terminal-Bench 2.0 itself | [Terminal-Bench 2.0 through Harbor](#terminal-bench-20-through-harbor) |
 | how to add a pack | [Adding a pack](#adding-a-pack) |
 
 **In one screen**
@@ -478,6 +479,32 @@ Results against a real model are reported in
   when it gates a playbook candidate are not in `evals`; they are recorded
   in `playbook_evals` with their own dollars, so the true cost of a learning
   run is the sum of both.
+
+## Terminal-Bench 2.0 through Harbor
+
+The packs above imitate public benchmarks; one of them can also grade
+kleene directly. [`adapters/kleene_harbor.py`](../adapters/kleene_harbor.py)
+is a [Harbor](https://github.com/laude-institute/harbor) installed agent:
+Harbor builds each of the 89 Terminal-Bench 2.0 task images, installs the
+released `kleene` binary inside, runs `kleene run` over the instruction with
+every alias routed to the `-m` model, and grades what is left on the machine
+with the task's own tests. Tokens and dollars come back out of `trace_calls`
+through `kleene trace --json`, so Harbor's results carry kleene's cost the
+way they carry every other agent's.
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+PYTHONPATH=. harbor run -d terminal-bench@2.0 \
+  -a adapters.kleene_harbor:KleeneAgent -m anthropic/claude-haiku-4-5 \
+  --ak budget_dollars=1 -n 4
+```
+
+It needs Docker (or one of Harbor's cloud sandboxes) and a model key;
+[`adapters/README.md`](../adapters/README.md) lists the options and the
+files each trial leaves behind. These runs are not part of `kleene bench`:
+they measure kleene against other agents on one model, not learning
+against plain, and their results belong next to the leaderboard's, not in
+the table above.
 
 ## Adding a pack
 
