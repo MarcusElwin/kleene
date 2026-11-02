@@ -97,9 +97,14 @@ things differ from Unix:
 - The daemon listens on a named pipe instead of a Unix socket. `--socket`
   still names it: the pipe is derived from the path, so two workspaces get
   two daemons, and `kleene daemon` prints both.
-- The `shell` tool and the benchmark packs run commands through `sh`, so
-  they need one on the `PATH` (Git for Windows ships it) or WSL. `kleene`
-  runs without it; `shell` reports the missing `sh` when a query calls it.
+- The `shell` tool, `--check`, pack setup commands and shell oracles run a
+  command line through `sh -c` when `sh` is on the `PATH` (Git for Windows
+  ships one under `usr\bin`; WSL and MSYS do too) and through `cmd /C`
+  otherwise, so `CALL shell('dir')` and `--check "cmd /c exit 0"` work on a
+  stock install. Benchmark packs are written for `sh` and still need one.
+  Shell output is decoded as UTF-8, or UTF-16 when PowerShell wrote it,
+  with NUL bytes dropped; while `kleene` runs in a console it has switched
+  that console to UTF-8, so `cmd`'s own output is UTF-8 too.
 
 The installer script and the Homebrew formula are Unix only.
 

@@ -49,6 +49,23 @@ async fn round_trip_every_type_including_nulls() {
 }
 
 #[tokio::test]
+async fn a_text_with_nul_bytes_is_stored_without_them() {
+    // Shell output on Windows can carry NULs (issue #78); DuckDB refuses a
+    // string with one, so the literal drops them instead of failing.
+    let s = DuckDbStore::in_memory().unwrap();
+    let schema = Arc::new(Schema::new(vec![Field::new("t", DataType::Text)]));
+    s.create_table("N", schema.clone()).await.unwrap();
+    let b = kleene_core::Batch::try_new(schema, vec![vec![Value::Text("a\0b\0".into())]]).unwrap();
+    s.insert("N", b).await.unwrap();
+    let back = s.scan("N").await.unwrap();
+    assert_eq!(back.rows, vec![vec![Value::Text("ab".into())]]);
+    assert_eq!(
+        kleene_store::duckdb::literal(&Value::Text("x\0'y".into())),
+        "'x''y'"
+    );
+}
+
+#[tokio::test]
 async fn tables_hide_internal_ones_and_drop_works() {
     let s = DuckDbStore::in_memory().unwrap();
     assert!(s.tables().await.unwrap().is_empty());

@@ -1,14 +1,16 @@
 //! `shell(cmd TEXT [, cwd TEXT, timeout_ms BIGINT])`: run a command.
 //!
 //! **No sandbox in M2.** The command runs as a plain `sh -c` subprocess of
-//! the daemon with a cleared environment (only `PATH`, `HOME` and `LANG`
-//! survive) and its working directory confined to the workspace. M3 wraps it
+//! the daemon (`cmd /C` on a Windows without `sh` on the `PATH`; see
+//! [`shell_interpreter`]) with a cleared environment (only `PATH`, `HOME`
+//! and `LANG` survive, plus what Windows needs to start a program) and its
+//! working directory confined to the workspace. M3 wraps it
 //! in `hakoniwa` (namespaces, tmpfs root, Landlock, seccomp, cgroups); until
 //! then a role that may `CALL shell` can do anything the daemon's user can.
 
 use crate::args::{check_arity, opt_int, opt_text, text};
 use crate::paths::{resolve, workspace_root, Access};
-use crate::tools::clean_command;
+use crate::tools::{clean_command, decode_output, shell_interpreter};
 use crate::{Signature, Tool, ToolContext, ToolError};
 use kleene_core::{Batch, DataType, Field, Schema, Value, Volatility};
 use std::process::Stdio;
@@ -35,7 +37,7 @@ async fn read_capped<R: AsyncRead + Unpin>(mut reader: R) -> String {
             }
         }
     }
-    let mut text = String::from_utf8_lossy(&kept).into_owned();
+    let mut text = decode_output(&kept);
     if total > MAX_STREAM_BYTES {
         text.push_str(&format!(
             "\n... truncated ({total} bytes total, first {MAX_STREAM_BYTES} shown)"
@@ -84,7 +86,11 @@ impl Tool for Shell {
     }
 
     fn description(&self) -> &str {
-        "run a command with sh -c in the workspace: stdout, stderr, exit_code, duration_ms"
+        if shell_interpreter().0 == "cmd" {
+            "run a command with cmd /C in the workspace: stdout, stderr, exit_code, duration_ms"
+        } else {
+            "run a command with sh -c in the workspace: stdout, stderr, exit_code, duration_ms"
+        }
     }
 
     async fn call(&self, args: &[Value], ctx: &ToolContext) -> Result<Batch, ToolError> {
@@ -111,8 +117,9 @@ impl Tool for Shell {
         };
 
         let started = Instant::now();
-        let mut child = clean_command("sh", &cwd)
-            .arg("-c")
+        let (program, flag) = shell_interpreter();
+        let mut child = clean_command(program, &cwd)
+            .arg(flag)
             .arg(cmd)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())

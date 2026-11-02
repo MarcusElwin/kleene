@@ -384,10 +384,7 @@ pub async fn prepare_workspace(pack_dir: &Path, t: &PackTask) -> Result<Workspac
 /// left.
 pub async fn run_setup(dir: &Workspace, t: &PackTask) -> Result<(), HarnessError> {
     for cmd in &t.setup {
-        let out = tokio::process::Command::new("sh")
-            .arg("-c")
-            .arg(cmd)
-            .current_dir(dir.path())
+        let out = kleene_tools::shell_command(cmd, dir.path())
             .output()
             .await
             .map_err(|e| HarnessError::Config(format!("setup failed to start: {e}")))?;

@@ -51,7 +51,8 @@
 //! Every path argument is resolved under the session workspace by
 //! [`paths`]; nothing outside it is readable, and writes are further limited
 //! to the [`ToolContext::writable`] allow-list. `shell` runs as a plain
-//! subprocess in M2; the sandbox arrives in M3.
+//! subprocess in M2 (`sh -c`, or `cmd /C` on a Windows without `sh`; see
+//! [`shell_interpreter`]); the sandbox arrives in M3.
 
 #![forbid(unsafe_code)]
 
@@ -60,6 +61,8 @@ pub mod paths;
 pub mod skills;
 pub mod tabular;
 pub mod tools;
+
+pub use tools::{decode_output, shell_command, shell_interpreter};
 
 mod args;
 

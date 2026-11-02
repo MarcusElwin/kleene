@@ -531,10 +531,7 @@ fn sat(vars: usize, clauses: &[[i32; 3]], satisfiable: bool, answer: &Batch) -> 
 async fn shell(command: &str, answer: &Batch, workspace: &std::path::Path) -> Verdict {
     let rows = rendered_rows(answer);
     let input = serde_json::to_string(&rows).unwrap_or_default();
-    let mut child = match tokio::process::Command::new("sh")
-        .arg("-c")
-        .arg(command)
-        .current_dir(workspace)
+    let mut child = match kleene_tools::shell_command(command, workspace)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
