@@ -75,7 +75,7 @@
 \large A planner, a budget and a replay-gated playbook for agents that write SQL}
 \author{Marcus Elwin\\[2pt]
 \normalsize \href{https://github.com/MarcusElwin/kleene}{github.com/MarcusElwin/kleene}}
-\date{October 2026 \\[2pt] \small Technical report, version 2 (draft; v1 of 3 October 2026)}
+\date{November 2026 \\[2pt] \small Technical report, version 3 (draft; v1 of 3 October 2026, v2 of 9 October 2026)}
 
 \begin{document}
 \maketitle
@@ -99,24 +99,34 @@ whose estimate exceeds what remains is refused with its plan. \emph{Learning} is
 rows in DuckDB: solved SQL becomes a playbook only after a replay evaluation
 with the memo bypassed wins on solves and cost, and every adoption is tied to the
 evaluation that admitted it. We describe the algebra, the system and a benchmark
-harness with seven task packs run under three modes (learning, frozen, and a
+harness with eleven task packs run under three modes (learning, frozen, and a
 plain tool-calling agent on the same provider and budgets) on three models:
-Claude Opus~5.5, Claude Haiku~4.5 and GPT-6 Luna, 62 of 63 cells filled. Opus
-saturates the four original packs and the coding pack, so those separate on
+Claude Opus~5.5, Claude Haiku~4.5 and GPT-6 Luna, every cell filled, plus
+three recursion-depth packs built to measure how deep child sessions nest.
+Opus saturates the four original packs, the coding pack and the four harder
+packs built after them (198 of 204 tasks), so on Opus the modes separate on
 cost only: the playbook cuts calls per task, the replay gate costs more than
 the playbook saves at twenty tasks a pack, and the one-call baseline is
-cheapest wherever the context fits in a prompt. Luna and Haiku separate on
-accuracy. The playbook's clearest wins are on the packs where the task is an
-aggregation or a draft: on rubric-graded memos learning beats frozen 18/20 to
-8/20 on Luna and 11/20 to 8/20 on Haiku, and on long-context aggregation
-20/20 to 15/20 on Luna at 1.3 calls a task against 34. Where the context fits
-one prompt and the question is a lookup, the plain agent is as accurate and
-far cheaper; where it does not (a 30\,000-token log), \kleene{} frozen solves
-7/10 on Luna against the plain agent's 3/10, at the price of hundreds of
-worker calls a task. On memo drafting the playbook hurt Opus (10 to 4), the
-one reversal. We report the numbers with their confounds (one run per cell,
-a shared memo in the first Haiku sweep, an untraced judge) and the adapter
-and batching fixes the runs forced.
+cheapest wherever the context fits in a prompt. Where it does not, the
+abstraction wins on the strongest model too: on a 30\,000-token log Opus
+frozen solves 10/10 at a tenth of the cost of the plain agent's 5/10, and on
+the hard aggregation pack the plain agent on Opus costs four to six times
+the SQL modes and loses four tasks. Luna and Haiku separate on accuracy, and
+on the hard packs the gap between models (Opus 97\%, Haiku 30 to 95\%, Luna
+0 to 62\%) is larger than any gap between modes. The playbook's clearest
+wins are on the packs where the task is an aggregation or a draft: on
+rubric-graded memos learning beats frozen 18/20 to 8/20 on Luna and 11/20
+to 8/20 on Haiku, and on long-context aggregation 20/20 to 15/20 on Luna at
+1.3 calls a task against 34. On memo drafting the playbook hurt Opus (10 to
+4), the one reversal. On the recursion-depth packs no model recursed along
+the tree: Opus solves all twenty tasks flat with recursive CTEs for \$1.85,
+Haiku and Luna solve a fifth to a third, and only when the context no
+longer fits one call does Luna open child sessions five levels deep (1\,634
+of them), partitioning text rather than consolidating the tree. We report
+the numbers with their confounds (one run per cell, a shared memo in the
+first Haiku sweep, an untraced judge) and the harness fixes the runs
+forced, among them a cost model that learns token rates from the trace
+after a fixed rate had priced a cheap model out of recursing at all.
 \end{abstract}
 
 \section{Introduction}
@@ -173,16 +183,18 @@ system and what it has measured so far. Our contributions are:
   persistent store in which every learned object (playbook SQL, ratings,
   generator dials, refined prompt functions) is a versioned table adopted
   only after a replay evaluation (\S\ref{sec:system}, \S\ref{sec:learning}).
-\item A benchmark harness with seven task packs, three modes that isolate the
-  playbook and the SQL abstraction respectively, code and rubric oracles,
-  and record-and-replay (\S\ref{sec:bench}); and the results of five
-  real-model sweeps on three models, reported with their confounds
-  (\S\ref{sec:results}).
+\item A benchmark harness with fourteen task packs, three modes that isolate
+  the playbook and the SQL abstraction respectively, code and rubric
+  oracles, and record-and-replay (\S\ref{sec:bench}); and the results of
+  nine real-model sweeps on three models, reported with their confounds
+  (\S\ref{sec:results}), including the first measurement of how deep the
+  models actually recurse (\S\ref{sec:recursion}).
 \end{itemize}
 
 What this report does \emph{not} claim is a benchmark win. The packs are
-small and mostly synthetic, every cell is one run, and Opus~5.5 saturates five
-of the seven packs. The numbers say where the abstraction pays for itself
+small and mostly synthetic, every cell is one run, and Opus~5.5 solves
+every task of six of the eleven packs in every mode and all but a handful
+on four more. The numbers say where the abstraction pays for itself
 (aggregation over a context that does not fit, drafting against a rubric,
 a playbook on a stream of similar tasks) and where it does not (one-call
 lookups), and \S\ref{sec:limits} lists what remains before a stronger claim
@@ -240,7 +252,8 @@ defaults to \code{IMMUTABLE} for prompts, \code{STABLE} for SQL and
 statements: \code{CALL shell(cmd)}, \code{CALL write\_file(path, text)},
 \code{CALL patch(path, old, new)}, \code{CALL web\_search(q)}, and so on. A
 tool's output relation is rendered back to the model like any other result.
-Roles restrict which tools a session may use.
+Roles restrict which tools a session may use, and a run's capability
+profile (\S\ref{sec:system}) narrows them further.
 
 \paragraph{Delegation.} \code{rlm(question [, context])} in a \code{CROSS JOIN
 LATERAL} opens one child session per input row at depth $d+1$ and returns
@@ -367,10 +380,16 @@ costs.
 \end{enumerate}
 
 Estimates use the store's row counts, sampled selectivities, per-alias cost
-factors and pricing. \code{EXPLAIN} prints the plan as a tree with per-node
-rows, calls, tokens and dollars, the call kinds, the fences, the fragment
-badge, the rules that fired, the join-order plan space and the alternatives it
-priced.
+factors and pricing. The per-token rates are learned: once three priced
+calls are in the store's \code{trace\_calls}, the cost model prices tokens
+at the rate those calls actually paid (output to input fixed at the rate
+cards' five to one, cache reads at a tenth) rather than at a built-in
+default, a change forced by the recursion runs of \S\ref{sec:recursion},
+where a fixed rate twenty times too high for a cheap model refused every
+delegation. \code{EXPLAIN} prints the plan as a tree with per-node rows,
+calls, tokens and dollars, the call kinds, the fences, the fragment badge,
+the rules that fired, the join-order plan space, the alternatives it priced
+and the rates it is using.
 
 \paragraph{Budgets as semantics.} A \code{Budget} has calls, tokens, dollars,
 depth and wall clock. A child session receives the parent's remaining slice
@@ -379,7 +398,11 @@ budget cancels the statement, not the session, and returns a budget row to the
 model; a statement whose \emph{estimate} already exceeds the remainder is
 refused before it runs. Depth defaults to a cap of two, following the
 reproduction study's finding that deeper recursion degrades on current
-models~\citep{wang2026reproducing}; it is a dial, not a constant.
+models~\citep{wang2026reproducing}; it is a dial, not a constant: a
+benchmark pack states the depth its tasks need and the harness raises the
+cap to it, and \code{--max-depth} overrides both. A child gets half of its
+parent's \emph{remaining} budget, so under a bounded budget the slice a
+session can spend falls geometrically with depth.
 
 \section{System}
 \label{sec:system}
@@ -467,11 +490,48 @@ loop's tables and the benchmark rows. \code{kleene trace} runs plain DuckDB SQL
 over all of it, and the terminal UI's \code{/trace} does the same from the
 prompt.
 
+\paragraph{Memory as tables.} A long session is not compacted into a
+summary; it is folded into tables the model can query. Once more than
+sixteen turns have run, the earlier ones move out of the prompt into
+\code{turns(run, n, sql, result)} and the last eight stay in full, so a
+fact from turn three is a \code{SELECT} away rather than a paraphrase.
+Tasks typed in the terminal UI belong to a \emph{conversation}: every run
+records its task and its answer in \code{conversations(conversation, run,
+n, role, text, ts)}, a follow-up run's task message shows the last four
+messages inline and points at the table for the rest, and \code{/new}
+starts another conversation. \code{memory(key, value)} is a plain table
+the model may \code{INSERT INTO} to keep a fact across runs. This is the
+RLM premise applied to the harness's own state: the context is a variable
+the model reads with queries, and the place where other harnesses
+summarise is a table here.
+
+\paragraph{Capability profiles.} Four flags on \code{run}, \code{repl},
+\code{tui} and \code{attach} say which tools a run's sessions may use:
+\code{--read-only} withholds every \code{VOLATILE} tool (shell, file
+writes, network, writable MCP tools), \code{--no-shell} and
+\code{--no-web} withhold those two, and \code{--tools a,b,c} keeps only the
+names listed; a \code{[profile]} section of the configuration file sets a
+default. A withheld tool is removed from the catalog, so the SQL frontend
+does not resolve it and the prompt does not list it; the prompt names the
+withheld tools instead, so the model does not plan around \code{CALL
+shell} and get refused. Children inherit the profile: a \code{CREATE AGENT
+\ldots{} TOOLS} role is intersected with it, never widened. The
+\code{--check} command still runs whatever the profile says, because it is
+the user's command, not the model's.
+
 \paragraph{Processes.} \code{kleene run}, \code{repl}, \code{explain},
 \code{learn} and \code{bench} run the harness in one process. The terminal UI
-talks to an engine daemon over a Unix socket with a JSONL protocol with cursors,
-so a reconnecting client resumes from where it left off and \code{kleene attach}
-watches the same events headless. The UI is one scrolling stream: the model's
+talks to an engine daemon over a Unix socket (a named pipe on Windows) with
+a JSONL protocol with cursors, so a reconnecting client resumes from where
+it left off and \code{kleene attach} watches the same events headless.
+Since v0.4.0 the engine, the REPL, the UI and the providers run natively on
+Windows from a release zip; the \code{shell} tool runs through \code{sh}
+when one is on the path and through \code{cmd /C} otherwise (the benchmark
+packs are written for \code{sh} and still need one), and text in and out
+is UTF-8 whatever the console code page: a context file in the console's
+code page is refused with the fix named, never loaded as mojibake, and the
+console is switched to UTF-8 while \kleene{} runs so piped output survives
+the trip. A field report in Japanese was the first to test all of it. The UI is one scrolling stream: the model's
 reply streams in, each fence runs as it lands, every statement shows its rows
 and its cost, child sessions nest under the turn that opened them.
 
@@ -509,7 +569,8 @@ is a table with a version and a provenance pointer:
   \code{VERIFY}-style functions in a ledger with before/after snapshots and
   rollback;
 \item the \textbf{cost model}: sampled selectivities of boolean call predicates
-  that feed the planner (today per session; \S\ref{sec:limits});
+  (today per session; \S\ref{sec:limits}) and the per-token rates learned
+  from the priced calls in the trace (\S\ref{sec:planner});
 \item \textbf{ratings} of tasks and solver configurations, and each generator's
   \textbf{dial}.
 \end{itemize}
@@ -540,11 +601,24 @@ calls it took, and what it cost.
 
 A pack is a directory with a \code{pack.json}: tasks with text, optional context,
 setup commands, a workspace source, an oracle and a difficulty prior.
-Table~\ref{tab:packs} lists the seven shipped packs. The synthetic packs are
-frozen output of the loop's generators, so two runs see the same tasks in the
-same order and \code{bench build} regenerates them byte for byte; the two
-long-context packs are stored lazily as (generator, dial, seed) triples and
-regenerated on load. The coding pack is hand-written: four small Python
+Table~\ref{tab:packs} lists the fourteen shipped packs: the seven of the
+first two versions of this report, four \emph{hard} packs built in October
+after every model solved the original aggregation, finance and legal packs
+in every mode, and three recursion-depth packs (\S\ref{sec:recursion}). The
+synthetic packs are frozen output of the loop's generators, so two runs see
+the same tasks in the same order and \code{bench build} regenerates them
+byte for byte; the long-context, hard and recursion packs are stored lazily
+as (generator, dial, seed) triples and regenerated on load. The hard packs
+are new generators rather than a higher dial, because the old ones at dial
+1.0 stay one-shot readable: \code{tracker} mixes time units, opens action
+items that are closed later by id alone and amends entries with
+corrections; \code{ledger} is a quarterly statement by segment over six
+years with restatements and a discontinued segment; \code{agreement} is a
+350-section contract with a near miss for every planted category and
+amendments that delete, add or touch a clause. \code{terminal-hard} is
+hand-written: eight workspaces of hundreds of files or thousands of rows,
+generated at setup, with a hidden grader that recomputes the answer from
+the files. The coding pack is hand-written: four small Python
 projects, each a three-step \emph{episode} in which the second and third steps
 run in the workspace the previous step left, and a step's setup installs the
 reference solution for the previous step when its hidden tests fail, so each
@@ -569,9 +643,18 @@ Pack & $n$ & What the model gets and must produce & Oracle & Stands in for \\
 \code{logbook-hard} & 30 & a 30\,000-token work log with corrections and distractors; one of five aggregate questions & \code{exact} & OOLONG at full size \\
 \code{memo-rubric} & 20 & a 40-section agreement with an amendment and a rejected proposal; a short memo & \code{judge} & LAB drafting \\
 \code{coding} & 12 & a Python project with visible tests; implement, extend, fix a bug & \code{shell} & SWE-bench episodes \\
+\addlinespace
+\code{oolong-hard} & 20 & a 1\,300-entry tracker (25\,000 tokens): time in mixed units, action items closed by id, decisions, corrections; one of five aggregates that join two kinds of entry & \code{exact} & OOLONG at scale, with joins \\
+\code{finance-hard} & 20 & a quarterly statement by segment over six years (1\,100 figures, 16\,000 tokens) with restatements and a discontinued segment; a number, a segment or a quarter & \code{number}, \code{exact} & FinanceBench over a filing \\
+\code{legal-hard} & 20 & a 350-section agreement (12\,000 tokens) with twelve categories, a near miss for each, and amendments; the categories or sections present as amended & \code{exact} & CUAD over a whole contract \\
+\code{terminal-hard} & 8 & a workspace of hundreds of files or thousands of rows; files changed and a \code{FINAL} row & \code{shell} & Terminal-Bench, tasks that need a pipeline \\
+\addlinespace
+\code{recursion-depth} & 20 & a group's unit reports, a tree 3 to 6 levels deep, with divested subtrees and corrections; a consolidated figure, the largest sub-unit, a count or the depth & \code{number}, \code{exact} & how deep child sessions nest \\
+\code{\ldots-long} & 20 & the same trees, every report wrapped in 10\,000+ characters of commentary (200\,000 to a million characters a task) & \code{number}, \code{exact} & depth when the context no longer fits one call \\
+\code{\ldots-guided} & 20 & the same tasks, the text naming the recursion (a sub-unit's spend is the same question one level down) & \code{number}, \code{exact} & depth when the shape is spelled out \\
 \bottomrule
 \end{tabularx}
-\caption{The seven shipped packs. \code{exact} compares row multisets, \code{number}
+\caption{The fourteen shipped packs. \code{exact} compares row multisets, \code{number}
 the first cell within a tolerance, \code{shell} runs a command (here the grader's
 hidden tests) and \code{judge} asks a separate model for \code{PASS} against a
 rubric that names every required fact and forbids the superseded values.}
@@ -611,7 +694,9 @@ above before the later sweeps, and the coding pack's tasks now carry a
 
 \code{bench run} writes one row per task to \code{evals}: run, pack, mode,
 position in the stream, task, solved, the oracle's reason, calls, tokens,
-dollars, deepest child, turns and wall clock. \code{bench report} aggregates by
+dollars, deepest child, turns and wall clock. \code{--budget-dollars} caps
+every task in every mode; a capped task is recorded as unsolved with
+\code{budget\_exhausted} as its reason, so a cap is a result, not a gap. \code{bench report} aggregates by
 pack and mode; \code{bench csv} exports the rows; \code{bench curve} prints the
 rolling solve rate of one run; \code{bench plot} draws five standalone SVGs
 (learning curve, accuracy at cost parity, calls against difficulty, planner
@@ -846,7 +931,7 @@ September.
 
 
 \FloatBarrier
-\subsection{GPT-6 Luna on all seven packs}
+\subsection{GPT-6 Luna on the first seven packs}
 \label{sec:luna}
 
 All seven packs ran on 5 October 2026 with every solver alias on
@@ -1030,18 +1115,21 @@ never cache; everywhere else the root session reads its history from cache
 from the third turn on.
 
 \FloatBarrier
-\subsection{Claude Opus 5.5 on coding and memo-rubric}
+\subsection{Claude Opus 5.5 on coding, memo-rubric and logbook-hard}
 \label{sec:opus2}
 
-The two hard packs Opus had not run yet, in all three modes, with the routing
-of the September run (\code{root} on Opus 5.5 at high effort, \code{worker}
-and \code{judge} on Sonnet 5.5, \code{proxy} on Haiku 4.5), one fresh store per
-pack and mode, the conversation cached and prompt functions batched by
-default, on 6 October 2026 (Table~\ref{tab:opus2}). The counted runs cost
-\$7.38; the gate's replays (16 candidates, 8 adopted) another \$9.22, \$7.67
-of it on coding alone, so a learning run of coding costs five times what its
-rows show. \code{logbook-hard} has not run on Opus; it is the one empty cell
-of Table~\ref{tab:glance}.
+The three harder packs Opus had not run yet, in all three modes, with the
+routing of the September run (\code{root} on Opus 5.5 at high effort,
+\code{worker} and \code{judge} on Sonnet 5.5, \code{proxy} on Haiku 4.5),
+one fresh store per pack and mode, the conversation cached and prompt
+functions batched by default: coding and memo-rubric on 6 October 2026 and
+\code{logbook-hard}, capped at ten tasks like the Haiku and Luna runs, on
+10 October from the same router file (Table~\ref{tab:opus2}). The counted
+runs cost \$25.08, \$17.70 of it on logbook-hard and \$14.82 of that on its
+plain run; the gate's replays (26 candidates, 13 adopted) another \$10.63,
+\$7.67 of it on coding alone, so a learning run of coding costs five times
+what its rows show, while on logbook-hard the gate added \$1.41 (10
+candidates, 5 adopted).
 
 \begin{table}[htbp]
 \centering
@@ -1057,10 +1145,14 @@ coding (12)      & frozen   & 12/12 & 8.58 & 76\,533 & 1.31 \\
 memo-rubric (20) & frozen   & 10/20 & 5.30 & 40\,086 & 1.26 \\
                  & learning & 4/20  & 5.35 & 44\,064 & 1.24 \\
                  & plain    & 10/20 & 1.00 & 5\,763  & 0.55 \\
+\addlinespace
+logbook-hard (10) & frozen   & 10/10 & 8.50  & 79\,296  & 1.45 \\
+                  & learning & 10/10 & 6.70  & 66\,997  & 1.43 \\
+                  & plain    & 5/10  & 11.90 & 801\,803 & 14.82 \\
 \bottomrule
 \end{tabular}
-\caption{Claude Opus 5.5 root with Sonnet 5.5 workers and judge, 6 October
-2026, one run per cell, one store per cell.}
+\caption{Claude Opus 5.5 root with Sonnet 5.5 workers and judge, 6 and 10
+October 2026, one run per cell, one store per cell.}
 \label{tab:opus2}
 \end{table}
 
@@ -1078,10 +1170,126 @@ in how it is scored. The gate admits an entry that wins its replay sample of
 three; an entry that wins three memos and loses six is the failure mode the
 sample size allows, and this is the first run to show it.
 
+\paragraph{Logbook-hard is where the SQL abstraction pays for itself.}
+Opus solves all ten tasks in frozen and learning mode at 8.5 and 6.7 root
+calls a task and about \$0.14 each, with no worker calls at all: it reads
+the 30\,000-token log through \code{ctx} and aggregates in SQL rather than
+extracting with \code{llm\_json}, where Haiku made some 1\,700 worker calls
+a task and solved one. The plain agent on the same model solves five of ten
+for ten times the money: three tasks ran out of their thirty turns at over
+\$3 each, and every turn re-sends the log, so a task averages 800\,000
+tokens against 79\,000. Frozen beats plain on this pack with every model
+that ran it (Luna 7/10 to 3/10, Opus 10/10 to 5/10); only Haiku, which
+could not finish the SQL route, is the exception.
+
 \paragraph{The caching and batching changes hold at Opus prices.} Learning
 on coding read 5.0M tokens from cache against 30\,000 billed in full, and the
 batched prompt functions kept the worker side to a few hundred calls per run
-where the Haiku logbook-hard runs made tens of thousands.
+where the Haiku logbook-hard runs made tens of thousands, and Opus on
+logbook-hard needed none.
+
+\FloatBarrier
+\subsection{The hard packs on three models}
+\label{sec:hard}
+
+The four original packs saturated for Opus in September and separated
+little on Haiku and Luna, so four harder versions were built in mid October
+(\S\ref{sec:bench}) and run on all three models in all three modes: Haiku
+4.5 on 13 October (\$29.87 of counted runs), Luna on 13 and 14 October
+(\$9.92) and Opus 5.5 on 26 October (\$34.56), each pack and mode in its
+own store, with the routing of the earlier sweeps. The Opus run was the
+first with a per-task dollar cap, \$2.50 in every mode; two tasks of the
+plain agent on oolong-hard hit it and count as unsolved. Luna's root ran at
+reasoning effort \code{none}, because its chat endpoint rejects native tool
+definitions at any other setting and the plain agent needs them.
+Table~\ref{tab:hard} gives every cell; Figure~\ref{fig:hardpareto} plots
+pass rate against cost.
+
+\begin{table}[htbp]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{@{}ll rrr rrr rrr@{}}
+\toprule
+& & \multicolumn{3}{c}{Claude Opus 5.5} & \multicolumn{3}{c}{Claude Haiku 4.5} & \multicolumn{3}{c}{GPT-6 Luna} \\
+\cmidrule(lr){3-5} \cmidrule(lr){6-8} \cmidrule(lr){9-11}
+Pack & Mode & Solved & Calls & \$ & Solved & Calls & \$ & Solved & Calls & \$ \\
+\midrule
+oolong-hard (20)   & learning & 20/20 & 4.8  & 1.73  & 7/20  & 138.1 & 2.85 & 7/20 & 1\,156.0 & 2.64 \\
+                   & frozen   & 20/20 & 6.8  & 2.29  & 6/20  & 20.9  & 2.45 & 9/20 & 2\,651.6 & 5.47 \\
+                   & plain    & 16/20 & 5.5  & 13.91 & 6/20  & 20.8  & 7.36 & 0/20 & 1.4      & 0.07 \\
+\addlinespace
+finance-hard (20)  & learning & 20/20 & 5.2  & 1.72  & 15/20 & 9.1   & 1.55 & 8/20 & 88.3     & 0.22 \\
+                   & frozen   & 20/20 & 6.1  & 1.61  & 13/20 & 14.7  & 2.87 & 8/20 & 447.2    & 0.82 \\
+                   & plain    & 20/20 & 1.2  & 3.44  & 19/20 & 15.7  & 3.93 & 6/20 & 1.1      & 0.04 \\
+\addlinespace
+legal-hard (20)    & learning & 19/20 & 15.6 & 3.46  & 7/20  & 29.1  & 3.20 & 7/20 & 16.4     & 0.06 \\
+                   & frozen   & 20/20 & 16.6 & 3.26  & 10/20 & 26.9  & 3.13 & 3/20 & 16.1     & 0.05 \\
+                   & plain    & 20/20 & 1.1  & 1.88  & 11/20 & 4.6   & 1.26 & 4/20 & 1.5      & 0.02 \\
+\addlinespace
+terminal-hard (8)  & learning & 7/8   & 4.5  & 0.44  & 7/8   & 58.0  & 0.48 & 4/8  & 1\,877.1 & 0.48 \\
+                   & frozen   & 8/8   & 4.5  & 0.37  & 5/8   & 25.2  & 0.43 & 4/8  & 3.2      & 0.05 \\
+                   & plain    & 8/8   & 7.6  & 0.45  & 7/8   & 16.9  & 0.36 & 5/8  & 5.9      & 0.00 \\
+\bottomrule
+\end{tabular}
+\caption{The four hard packs, October 2026, one run per cell, one store per
+cell. Calls are per task, dollars are the pack total of the solver's own
+calls. Opus ran under a \$2.50 per-task cap; the gate's replays are not
+included.}
+\label{tab:hard}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{hard_pareto}
+\caption{Pass rate against mean dollars per task (log scale) on the four
+hard packs, every model and mode. Colour is the model, shape is the mode;
+the dashed line joins the points no other point beats on both axes. On
+every pack the frontier runs from a cheap Luna point to an Opus \kleene{}
+point, and the Opus plain agent sits to the right of the Opus frozen point
+wherever the context has to be aggregated.}
+\label{fig:hardpareto}
+\end{figure}
+
+\paragraph{The hard packs separate models, not modes at Opus.} Opus solves
+198 of 204 task runs (every task of finance-hard in every mode, every
+frozen task of all four packs); Haiku solves between 30\% and 95\% of a
+pack and Luna between 0\% and 62\%. Within a model the modes are within a
+few tasks of each other on every pack but one, so what the hard packs
+measure is mostly the model, and the difference the abstraction makes
+shows up in cost.
+
+\paragraph{Where the context must be aggregated, plain pays and loses.}
+oolong-hard is the pack built around joins across a 25\,000-token tracker,
+and it is the one pack where the plain agent falls behind on the strongest
+model: 16/20 for \$13.91 against 20/20 for \$2.29 frozen and \$1.73
+learning, a six-fold difference in cost on top of four lost tasks, two of
+them to the dollar cap. The plain agent re-reads the context into every
+turn (302\,000 tokens a task against 68\,000) where the SQL modes read it
+through \code{ctx} once. On Luna the plain agent solves none of the twenty
+for seven cents; Luna frozen solves nine at 2\,650 calls a task, the
+per-row extraction storm of \S\ref{sec:luna} again, this time with a join
+on top.
+
+\paragraph{Where the question is a lookup, plain is still cheapest.} On
+legal-hard, where the answer is a set of categories read as amended, the
+Opus plain agent is perfect at 1.1 calls a task and \$1.88, half the SQL
+modes' cost; on finance-hard it is perfect too but costs twice as much,
+because it reads 45\,000 tokens a task where the SQL modes filter the
+statement first. Haiku's plain agent on finance-hard solves 19/20 by brute
+force, 560\,000 tokens a task of re-reading, so that pack separates on cost
+rather than accuracy for Haiku.
+
+\paragraph{Learning moved little here.} Opus adopted entries on every pack
+and cut calls per task on oolong-hard (6.8 to 4.8) and finance-hard (6.1 to
+5.2) at a lower total cost, but lost a task each on legal-hard and
+terminal-hard. Haiku learning won on terminal-hard (7/8 against 5/8) and
+finance-hard (15 against 13) and lost on legal-hard (7 against 10). Luna
+learning is the mixed case: better on legal-hard (7 against 3), cheaper on
+oolong-hard and finance-hard at a fifth of the calls, and a call storm on
+terminal-hard (1\,877 calls a task for the same four solves). With one run
+per cell, none of these gaps is more than the run-to-run variance a sample
+of twenty allows.
 
 \FloatBarrier
 \subsection{Across models}
@@ -1089,7 +1297,8 @@ where the Haiku logbook-hard runs made tens of thousands.
 
 Table~\ref{tab:glance} collects the pass rates of every cell, and
 Figure~\ref{fig:pareto} plots pass rate against cost per task for the three
-packs that separate on accuracy. Reading across:
+original packs that separate on accuracy (Figure~\ref{fig:hardpareto} does
+the same for the hard packs). Reading across:
 
 \begin{table}[htbp]
 \centering
@@ -1104,15 +1313,24 @@ finance-synthetic & 20 & 100 / 100 / 100 & 95 / \textbf{100} / \textbf{100} & 75
 legal-synthetic   & 20 & 100 / 100 / 100 & \textbf{85} / 70 / 75 & 75 / 90 / \textbf{100} \\
 coding            & 12 & 100 / 100 / 100 & 17 / 17 / \textbf{33} & 83 / \textbf{92} / 75 \\
 memo-rubric       & 20 & 20 / \textbf{50} / \textbf{50} & \textbf{55} / 40 / 40 & \textbf{90} / 40 / 55 \\
-logbook-hard      & 10 & pending & 10 / 10 / \textbf{20} & 33 / \textbf{70} / 30 \\
+logbook-hard      & 10 & \textbf{100} / \textbf{100} / 50 & 10 / 10 / \textbf{20} & 33 / \textbf{70} / 30 \\
+\addlinespace
+oolong-hard       & 20 & \textbf{100} / \textbf{100} / 80 & \textbf{35} / 30 / 30 & 35 / \textbf{45} / 0 \\
+finance-hard      & 20 & 100 / 100 / 100 & 75 / 65 / \textbf{95} & \textbf{40} / \textbf{40} / 30 \\
+legal-hard        & 20 & 95 / \textbf{100} / \textbf{100} & 35 / 50 / \textbf{55} & \textbf{35} / 15 / 20 \\
+terminal-hard     & 8  & 88 / \textbf{100} / \textbf{100} & \textbf{88} / 62 / \textbf{88} & 50 / 50 / \textbf{62} \\
+\addlinespace
+recursion-depth   & 20 & -- / \textbf{100} / -- & -- / 35 / -- & -- / 20 / -- \\
 \bottomrule
 \end{tabular}
 \caption{Pass rate in percent, one column per model; each cell reads
 learning / frozen / plain with the best mode in bold. The Haiku coding frozen
 and learning cells and all Haiku memo-rubric cells are from the 1 October
 sweep (shared memo, text-protocol baseline); every other cell ran in its own
-store. The Luna logbook-hard learning cell is 1 of 3 tasks. Opus on
-logbook-hard is pending.}
+store. The Luna logbook-hard learning cell is 1 of 3 tasks. The
+recursion-depth row is the plain pack in frozen mode only
+(\S\ref{sec:recursion}; the Luna cell is the rerun on the fixed cost
+model).}
 \label{tab:glance}
 \end{table}
 
@@ -1120,11 +1338,12 @@ logbook-hard is pending.}
 \centering
 \includegraphics[width=\textwidth]{pareto}
 \caption{Pass rate against mean dollars per task of the solver's own calls
-(log scale), every model and mode, for the three packs that separate on
-accuracy. Colour is the model, shape is the mode; the dashed line joins the
-points no other point beats on both axes. Gate replays and judge calls are
-not in the cost. Luna's learning run of logbook-hard (1 of 3 tasks) is
-plotted as recorded.}
+(log scale), every model and mode, for the three original packs that
+separate on accuracy. Colour is the model, shape is the mode; the dashed
+line joins the points no other point beats on both axes. Gate replays and
+judge calls are not in the cost. Luna's learning run of logbook-hard (1 of
+3 tasks) is plotted as recorded; the Opus plain point on logbook-hard sits
+alone at the right, \$1.48 a task for half the solves.}
 \label{fig:pareto}
 \end{figure}
 
@@ -1140,21 +1359,149 @@ plotted as recorded.}
   Haiku, at a tenth to a hundredth of the cost. The SQL abstraction pays for
   a catalog, a planner and rendered results on every turn, and a lookup does
   not need them.
-\item \textbf{Where the context does not fit, frozen wins and pays for it.}
-  logbook-hard is the pack built for the claim of \S\ref{sec:intro}: Luna
-  frozen solves 7/10 where the plain agent solves 3/10, and Haiku frozen
-  solves 1/10 at 1\,700 calls a task. The abstraction gets the answer when
-  the model can write the extraction; the cost is the worker-call volume,
-  which the batching change has since cut and which the pending Opus run will
-  measure.
-\item \textbf{Stronger models erase the modes.} Opus solves every coding step
-  in every mode at the same price, as it solved the original packs. A pack
-  that separates modes at one model size is saturated at the next, so the
-  benchmark set has to grow with the models.
-\item \textbf{The gate is still the cost of learning.} Across the three
-  sweeps the replays cost between 40\% and 125\% of the counted runs, and on
-  Opus coding five times.
+\item \textbf{Where the context does not fit, frozen wins, and on the
+  strongest model it is also cheaper.} logbook-hard is the pack built for
+  the claim of \S\ref{sec:intro}: Luna frozen solves 7/10 where the plain
+  agent solves 3/10, Haiku frozen solves 1/10 at 1\,700 calls a task, and
+  Opus frozen solves 10/10 at \$0.14 a task where the Opus plain agent
+  solves 5/10 at \$1.48. The abstraction gets the answer when the model can
+  write the extraction, and Opus writes it as SQL over \code{ctx} with no
+  worker calls at all. oolong-hard repeats the pattern with a join in the
+  question: Opus 20/20 for \$2.29 against 16/20 for \$13.91.
+\item \textbf{Stronger models erase the modes.} Opus solves every coding
+  step in every mode at the same price, as it solved the original packs,
+  and 198 of 204 runs of the hard packs built to be harder. A pack that
+  separates modes at one model size is saturated at the next, so the
+  benchmark set has to grow with the models; the hard packs separate
+  \emph{models} by thirty to a hundred points and modes by a task or two.
+\item \textbf{The gate is still the cost of learning.} Across the sweeps
+  the replays cost between 40\% and 125\% of the counted runs, and on Opus
+  coding five times.
 \end{itemize}
+
+\FloatBarrier
+\subsection{Recursion depth}
+\label{sec:recursion}
+
+Every pack above is flat: \code{evals.depth}, the deepest child session a
+task opened, is 0 in nearly every cell of Table~\ref{tab:glance} and 1 or 2
+in a handful, so none of them says how the harness or the models behave
+when sessions nest, which is the premise of the design. Three packs were
+built for that question in late October. The generator \code{nest} grows
+\emph{deeper} as its dial rises where every other generator grows wider: a
+group's unit reports, one per \code{ctx} row and shuffled, each naming the
+unit, the unit it reports to, its direct spend, distractor figures and its
+sub-units, with some reports excluding a divested subtree and
+\code{Correction:} rows restating a spend. The consolidated spend of a unit
+is its own spend plus that of its sub-units, recursively, so the answer is
+a recursion exactly as deep as the tree: five tasks at each of 3, 4, 5 and
+6 levels (about 20, 40, 75 and 140 units; 3\,000 to 25\,000 characters),
+asking for a consolidated figure, the largest sub-unit, a count of units
+or the depth. Nothing forces a model to recurse, since a recursive CTE over
+the parsed reports answers too, so a run records the depth the model chose
+next to whether it was right and what it spent. Two variants keep the same
+trees, seeds, questions and answers: \code{recursion-depth-long} wraps
+every report in at least 10\,000 characters of management commentary with
+figures that are not the direct spend, so a six-level group is about a
+million characters (260\,000 tokens) and no single \code{llm()} call reads
+it; \code{recursion-depth-guided} adds one sentence to the task, that a
+sub-unit's consolidated spend is this same question over that sub-unit's
+reports. The guided pack asks whether a model follows a recursion it is
+told about, the plain pack whether it finds one, the long pack whether
+length alone makes it partition, and whether the partition follows the
+tree. An offline solver, \code{NestSolver}, delegates every sub-unit
+through \code{rlm} with the same \callsql{} at every level, reaches exactly
+the dialled depth on every task and passes every oracle; it is the
+integration test, not a result.
+
+\paragraph{Four harness bugs the pack found first.} The harness had never
+run a session six levels deep before, and the first runs found what the
+flat packs could not. A \code{FINAL} in the same reply as the \code{CREATE
+TABLE} it read from was planned before the table existed and refused;
+statements are now planned when their turn comes. Child sessions nested on
+the thread stack of their parent, so a deep tree deepened the stack with
+it; children now run as their own tasks. A \code{WITH RECURSIVE \ldots{}
+UNION ALL} with no bound grew to 14 GB inside the recursion loop before the
+operating system killed the process; the fixpoint now stops at a million
+rows with an error the model reads. And the cost model priced every call at
+a fixed \$2 and \$10 per million tokens whatever the model, so on Luna,
+forty times cheaper, every \code{rlm} over the report rows was estimated at
+twenty times its true cost and refused by the budget gate: on one task Luna
+wrote the lateral delegation three times and was told each time that
+\$4.68 exceeded the \$1 that remained, when the statement would have cost
+about \$0.25. The gate built to keep recursion affordable was what blocked
+it. Rates are now learned from the trace (\S\ref{sec:planner}), and the
+rerun below is on the fixed binary.
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabular}{@{}llrrrrrr@{}}
+\toprule
+Model & Pack & Solved & Depth (max) & Tasks $>0$ & Children & Calls / task & Dollars \\
+\midrule
+Haiku 4.5     & plain            & 7/20  & 0 (0)    & 0 & 0      & 20.1    & 3.66 \\
+Luna, fixed rate & plain         & 5/20  & 0 (0)    & 0 & 0      & 109.2   & 0.19 \\
+Luna, learned rate & plain       & 4/20  & 0.25 (2) & 4 & 99     & 326.1   & 0.44 \\
+Luna          & guided           & 3/20  & 0.05 (1) & 1 & 64     & 124.2   & 0.18 \\
+Luna          & long             & 2/20  & 0.90 (5) & 5 & 1\,634 & 1\,139.2 & 3.26 \\
+Opus 5.5      & plain            & 20/20 & 0 (0)    & 0 & 0      & 6.75    & 1.85 \\
+\bottomrule
+\end{tabular}
+\caption{The recursion-depth packs, frozen mode, 29 October to 2 November
+2026, one run per cell, a \$1 per-task cap (\$2 for Opus). Depth is the
+mean over tasks of the deepest child session, with the maximum in
+parentheses; Children is the number of child sessions the run opened.}
+\label{tab:recursion}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=\textwidth]{recursion}
+\caption{The recursion-depth runs. Left: tasks solved out of five at each
+tree depth, one bar per run. Right: the deepest child session each task
+opened against the depth the task was built for; the dashed diagonal is a
+solver that recurses along the tree, which only the offline
+\code{NestSolver} does. Luna on the long pack is the only run that leaves
+the floor, and it reaches depth 5 on the one task built for it.}
+\label{fig:recursion}
+\end{figure}
+
+\paragraph{No model recursed along the tree.} Haiku never delegated: every
+task was flat SQL over \code{ctx}, right on the structural questions (how
+many levels, how many units) and wrong on the consolidated figures, where
+corrections and excluded subtrees have to be combined (Figure~\ref{fig:recursion}).
+Luna, once the gate let it, opened 99 child sessions over four tasks, depth
+1 on three and depth 2 on one it then solved exactly; but the shape is a
+map, not a divide: every child gets one report row and the question about
+the top unit, so the children extract and the root still has to
+consolidate. Nine tasks hit the thirty-turn cap, mostly at five and six
+levels. The guided sentence did nothing: half the tasks ended on turn one
+with a guessed \code{FINAL SELECT 0}, and the one task that delegated went
+one level.
+
+\paragraph{Length moved the depth; nothing yet moved the shape.} On the
+long pack Luna went to depth 3 on three tasks, depth 4 on one and depth 5
+on \code{k5-05}, the depth that task was built for, through 1\,634 child
+sessions (653 at depth 1, 652 at depth 2, 317 at depth 3, 9 at depth 4, 3
+at depth 5), every one of which finished, so the harness side of the
+question has an answer at five levels. The model side does not: the
+recursion is text partitioning, children extracting facts from chunks of a
+long report and delegating chunks of their chunk, not consolidation along
+the tree, and none of it made the answer better (2/20, nine tasks out of
+turns, \$0.65 on a single six-level task, two and a half hours of wall
+clock for the pack).
+
+\paragraph{Opus answers the recursion in SQL.} 20/20 for \$1.85 at 6.75
+calls a task, depth 0 on every task and no \code{llm()} at all: Opus parses
+the reports with string functions and consolidates with a \code{WITH
+RECURSIVE} CTE, 25 of them over the run, one plan at every depth from 3 to
+6. That is the flat solution the pack always allowed, done right, and it
+says what the recursion packs measure: depth is interesting only for a
+model that cannot do this, and a model that can turns the tree into a
+fixpoint the engine computes. Whether Opus recurses when the context no
+longer fits one statement, on the long pack, is the run that has not been
+made (\S\ref{sec:limits}).
 
 \FloatBarrier
 \subsection{Planner estimates against actuals}
@@ -1186,22 +1533,29 @@ it, an over-estimate.}
 \FloatBarrier
 \subsection{What the numbers say}
 
-Taken together, the sweeps support four statements and refuse a fifth.
+Taken together, the sweeps support five statements and refuse a sixth.
 First, the planner, the budget and the trace work as designed on real models
 of three families: estimates are conservative, refusals carry plans, per-row
 calls land on the cheap alias, and every cost in this section was read from
-the store. Second, the playbook reduces calls per task when something is
+the store; the one time the cost model was wrong in the other direction, a
+fixed rate on a cheap model, the trace showed it and the rate is now
+learned. Second, the playbook reduces calls per task when something is
 adopted, and on the packs whose tasks share a shape (aggregation, drafting
-against a rubric) it also raises solves, for two of the three models. Third,
-the replay gate, at its current sample size, is the dominant cost of learning
-at pack scale, and a sample of three can admit an entry that hurts (Opus on
-memo-rubric). Fourth, the long-context case the design was built for is now
-measured: on the one pack whose context does not fit a prompt, \kleene{}
-frozen is the most accurate mode for both models that ran it, at a call
-volume the batching change has since reduced. What the runs still do not
-support is a general cost-parity claim: wherever the context fits in one
-prompt and the question is a lookup, the plain agent is as accurate and far
-cheaper, and the strongest model saturates five of the seven packs.
+against a rubric) it also raises solves, for two of the three models.
+Third, the replay gate, at its current sample size, is the dominant cost of
+learning at pack scale, and a sample of three can admit an entry that hurts
+(Opus on memo-rubric). Fourth, the long-context case the design was built
+for is now measured on all three models: on the two packs whose context
+has to be aggregated rather than looked up, \kleene{} frozen is the most
+accurate mode for every model that could write the extraction, and on the
+strongest model it is also four to ten times cheaper than the agent that
+re-reads the context every turn. Fifth, the harness recurses to five levels
+without losing a child, but no model yet recurses along the structure of
+the task: the strongest turns the tree into a recursive CTE, the cheapest
+partition text. What the runs still do not support is a general cost-parity
+claim: wherever the context fits in one prompt and the question is a lookup,
+the plain agent is as accurate and far cheaper, and the strongest model
+saturates most of the packs, the hard ones included.
 
 \FloatBarrier
 \section{Related work}
@@ -1280,11 +1634,14 @@ tasks.
   traced statements the planner never under-estimated by more than a call;
   its errors are over-estimates, the safe direction for a budget.
 \item \textbf{The abstraction pays where the context does not fit a prompt
-  or the task repeats.} On the 30\,000-token log, \kleene{} frozen is the most
-  accurate mode for both models that ran it (Luna 7/10 against the plain
-  agent's 3/10). On a stream of aggregation or drafting tasks the playbook
-  turns the stream into lookups: Luna memo-rubric 8/20 to 18/20, oolong-like
-  15/20 to 20/20 at 1.3 calls a task against 34.
+  or the task repeats.} On the 30\,000-token log, \kleene{} frozen is the
+  most accurate mode for every model that could write the extraction (Luna
+  7/10 against the plain agent's 3/10; Opus 10/10 against 5/10 at a tenth
+  of the cost), and on the hard aggregation pack Opus frozen is 20/20 for
+  \$2.29 where the plain agent is 16/20 for \$13.91. On a stream of
+  aggregation or drafting tasks the playbook turns the stream into lookups:
+  Luna memo-rubric 8/20 to 18/20, oolong-like 15/20 to 20/20 at 1.3 calls a
+  task against 34.
 \item \textbf{It does not pay for one-call lookups.} Wherever the context
   fits one prompt and the question is a single fact, the native
   tool-calling agent is as accurate and ten to a hundred times cheaper. The
@@ -1302,11 +1659,23 @@ tasks.
   re-ask, conversation caching and strict-schema rewriting were each forced
   by a run and each cut the next run's cost; the Opus coding run read 5M
   tokens from cache against 30\,000 billed.
-\item \textbf{Benchmarks must grow with the models.} Opus 5.5 saturates
-  five of the seven packs; what separated modes on Haiku is a tie on Opus.
-  The packs that still separate (logbook-hard, memo-rubric) are the ones to
-  extend, and the imported real datasets (OOLONG, Harvey LAB, contract
-  redlining) are the next step.
+\item \textbf{Benchmarks must grow with the models, and they did not grow
+  fast enough.} Opus 5.5 saturated five of the first seven packs, so four
+  harder ones were built; it solves 198 of 204 runs of those too. The hard
+  packs separate models by thirty to a hundred points and modes by a task
+  or two, so they say which model to use and, through cost, whether to
+  put SQL between it and the context. The imported real datasets (OOLONG,
+  Harvey LAB, contract redlining) remain the next step.
+\item \textbf{Depth is a harness property now, not yet a model
+  behaviour.} Child sessions nest five deep and 1\,634 of them finish, the
+  budget gate no longer prices a cheap model out of delegating, and a
+  recursive CTE that runs away is stopped. But no model recursed along the
+  tree the task was built on: Opus solves every recursion-depth task flat
+  with a recursive CTE, Haiku never delegates, and Luna delegates only
+  when the context is too long to read, partitioning text rather than
+  consolidating units. Making a model recurse along structure, where
+  structure is the cheaper route, is the open problem the packs now
+  measure.
 \end{enumerate}
 
 \section{Limitations and future work}
@@ -1317,14 +1686,21 @@ tasks.
   single run. On twenty tasks accuracy moves in steps of five points, and a
   difference of one task is not a result. Repeated runs are the first thing
   to add.
-\item \textbf{Saturated and synthetic packs.} Opus 5.5 saturates five of the
-  seven packs, and the synthetic packs are generated, so a solver that learns
+\item \textbf{Saturated and synthetic packs.} Opus 5.5 solves nearly
+  every task of ten of the eleven packs, the four built to be harder
+  included, and the synthetic packs are generated, so a solver that learns
   the generator's shape will look better than one meeting the real datasets.
   Importers exist for the real OOLONG (from Hugging Face), Harvey LAB and two
   contract-redlining datasets, but no model has run them yet.
-\item \textbf{One cell is pending.} \code{logbook-hard} has not run on Opus
-  5.5; with the batching default in place it is the run that will say what
-  the long-context case costs on the strongest model.
+\item \textbf{The recursion-depth packs have run in frozen mode only,
+  and not every pair.} Opus on the long pack, where the context no longer
+  fits one statement, is the run that would say whether the strongest
+  model recurses when it has to; it has not been made (an estimated \$15
+  to \$25). Luna's root ran at reasoning effort \code{none} for its plain
+  agent's sake, and half its guided tasks ended on turn one with a guess;
+  a frozen rerun at a low effort needs no native tools and is cheap. A
+  learning run, so that one task's working \code{rlm} plan reaches the
+  next, has not been tried on any of the three.
 \item \textbf{The first Haiku sweep is not like the others.} Its coding and
   memo-rubric cells share a memo between frozen and learning, use the text
   protocol baseline, and predate the finish check and the schema rewrite.
@@ -1334,11 +1710,20 @@ tasks.
   dominates a learning run at pack scale, and a sample of three admitted
   entries that hurt Opus on memo-rubric. A larger or adaptive sample, a proxy
   model for the replay, and a cached baseline arm are the candidates.
+\item \textbf{Capped tasks are unsolved tasks.} The Opus hard-pack run
+  and every recursion run had a per-task dollar cap, and a task that hit
+  it counts as a failure with its reason recorded. Two of the Opus plain
+  agent's oolong-hard tasks and several Luna long-pack tasks are such
+  rows; a higher cap might have solved them at a price the table does not
+  show.
 \item \textbf{Judge calls are untraced.} The Sonnet judge's cost is not in
   any table; it is one short call per memo task, roughly a dollar a sweep.
-\item \textbf{Declared thresholds, per-session cost model.} Cascade thresholds
-  are declared, not calibrated from a sample as in LOTUS; sampled selectivities
-  persist only within a session rather than as versioned tables.
+\item \textbf{Declared thresholds, per-session selectivities.} Cascade
+  thresholds are declared, not calibrated from a sample as in LOTUS;
+  sampled selectivities persist only within a session rather than as
+  versioned tables. Token rates are learned from the trace, but only once
+  three priced calls exist, so the first statements of a fresh store are
+  priced at the default.
 \item \textbf{Schema rewriting is partial.} Model-written \code{llm\_json}
   schemas are rewritten into each provider's accepted subset only for the
   shapes seen so far.
@@ -1353,8 +1738,10 @@ actually write.
 \section{Reproducibility}
 \label{sec:repro}
 
-\kleene{} v0.1.0 (6 October 2026) ships prebuilt binaries for macOS and
-Linux; the repository is its own Homebrew tap:
+\kleene{} v0.6.0 (2 November 2026) ships prebuilt binaries for macOS,
+Linux and Windows (a zip of \code{kleene.exe}; v0.1.0 of 6 October was the
+first release); the repository is its own Homebrew tap, and releases are
+cut by release-please from the conventional-commit history:
 
 \begin{lstlisting}[language={}]
 curl -fsSL https://raw.githubusercontent.com/MarcusElwin/kleene/main/install.sh | sh
@@ -1373,13 +1760,27 @@ cargo run -- bench report
 cargo run -- bench plot plots/
 \end{lstlisting}
 
-The per-task rows of every sweep are under \code{plots/}: \code{evals.csv}
-for \S\ref{sec:opus}, and the directories \path{haiku-2026-10-01},
-\path{luna-2026-10-05}, \path{haiku-2026-10-06} and \path{opus-2026-10-06}
-for the others, each with
-the \code{bench report} output, the router file and the SVGs beside it.
-\code{kleene bench results} regenerates Table~\ref{tab:glance} and
-Figure~\ref{fig:pareto} from those CSVs. The model replies of the first Opus
+The per-task rows of every sweep are under \code{plots/}, each directory
+with the \code{bench report} output, the router file and, where
+\code{bench plot} ran, the SVGs beside it:
+
+\begin{itemize}[leftmargin=1.5em,itemsep=1pt]
+\item \code{evals.csv} for \S\ref{sec:opus};
+\item \path{haiku-2026-10-01}, \path{luna-2026-10-05},
+  \path{haiku-2026-10-06} and \path{opus-2026-10-06} (with its
+  \path{logbook-hard} subdirectory) for \S\ref{sec:haiku} to
+  \S\ref{sec:opus2};
+\item \path{haiku-2026-10-13}, \path{luna-2026-10-13} and
+  \path{opus-2026-10-26} for the hard packs (\S\ref{sec:hard});
+\item \path{haiku-recursion-2026-10-29}, \path{luna-recursion-2026-10-31}
+  (with \path{rerun}, \path{guided} and \path{long}) and
+  \path{opus-recursion-2026-11-02} for \S\ref{sec:recursion}.
+\end{itemize}
+
+\code{kleene bench results} regenerates Table~\ref{tab:glance},
+Figure~\ref{fig:pareto} and Figure~\ref{fig:hardpareto} from those CSVs,
+and \code{paper/figures/make\_figures.py} draws every figure in this
+report from the same rows. The model replies of the first Opus
 run were recorded but are not checked in, because the catalog bug of
 \S\ref{sec:opus} means they cannot replay the run; later runs record with
 \code{--record} and replay with \code{--replay}. Prices are the router's list
