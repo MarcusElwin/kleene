@@ -77,6 +77,11 @@ pub fn literal(v: &Value) -> String {
                 "'-Infinity'::DOUBLE".into()
             }
         }
+        // A NUL byte cannot travel in a C string, so DuckDB refuses it;
+        // drop it rather than fail the statement (shell output, issue #78).
+        Value::Text(s) if s.contains('\0') => {
+            format!("'{}'", s.replace('\0', "").replace('\'', "''"))
+        }
         Value::Text(s) => format!("'{}'", s.replace('\'', "''")),
         // JSON travels as text: DuckDB's JSON type needs the json extension, which
         // the bundled build does not include. The declared type is kept in

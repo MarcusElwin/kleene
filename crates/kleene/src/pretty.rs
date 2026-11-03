@@ -508,7 +508,9 @@ pub fn report(report: &kleene_harness::RunReport) -> i32 {
                 ))
                 .dim()
             ));
-            let _ = term.write_str(&table(answer, 200));
+            let text = table(answer, 200);
+            crate::codepage::note_output(&text);
+            let _ = term.write_str(&text);
             0
         }
         other => {

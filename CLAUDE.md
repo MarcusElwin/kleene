@@ -24,7 +24,10 @@ every crate depends on them.
   flag changes cargo's fingerprint for every dependency and rebuilds DuckDB
   (ten minutes, four gigabytes) per distinct flag set.
   `missing_docs` is a warning, so every public item has a doc comment.
-- `#![forbid(unsafe_code)]` in every crate.
+- `#![forbid(unsafe_code)]` in every crate (`[workspace.lints]`), with one
+  exception: the `kleene` binary denies it instead so that
+  `crates/kleene/src/codepage.rs` alone can make the Windows console
+  code-page calls. Nothing else may use `unsafe`.
 - Errors are typed (`thiserror`) per crate; `anyhow` only in the binary.
 - Anything the model reads (error text, rendered tables, EXPLAIN output) is
   part of the interface: keep it stable and tested.

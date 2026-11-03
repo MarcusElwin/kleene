@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.6.0](https://github.com/MarcusElwin/kleene/compare/v0.5.0...v0.6.0) (2026-11-02)
+
+
+### Features
+
+* **algebra:** token rates the harness can learn, with an EXPLAIN note ([c1818bc](https://github.com/MarcusElwin/kleene/commit/c1818bc042cdcbbf4f0b8e5479b3ab8694bc822d))
+* **core:** ToolProfile, the capability profile of a run ([33ebd3c](https://github.com/MarcusElwin/kleene/commit/33ebd3cb81a607ee14c662436779ffce740747e4)), closes [#71](https://github.com/MarcusElwin/kleene/issues/71)
+* **harness:** capability profiles for root sessions ([56ce8b2](https://github.com/MarcusElwin/kleene/commit/56ce8b2cf0a02ab7bacd208e787edfcbfe104b68)), closes [#71](https://github.com/MarcusElwin/kleene/issues/71)
+* **harness:** nest-long and nest-guided variants of the recursion-depth pack ([4e8f07a](https://github.com/MarcusElwin/kleene/commit/4e8f07a12279e64fd6bb7929dd74cde0b955c0f0))
+
+
+### Bug Fixes
+
+* **exec:** stop a recursive CTE that grows past a million rows ([9e69999](https://github.com/MarcusElwin/kleene/commit/9e699993e4da88b9df0ef9a96c39654a229498ab))
+* **harness:** price estimates at the rates the traced calls actually paid ([03e954a](https://github.com/MarcusElwin/kleene/commit/03e954abf9d213092fc74b86b0d540d096fc0331))
+
 ## [0.5.0](https://github.com/MarcusElwin/kleene/compare/v0.4.0...v0.5.0) (2026-10-29)
 
 
