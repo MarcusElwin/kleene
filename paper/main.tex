@@ -525,11 +525,13 @@ talks to an engine daemon over a Unix socket (a named pipe on Windows) with
 a JSONL protocol with cursors, so a reconnecting client resumes from where
 it left off and \code{kleene attach} watches the same events headless.
 Since v0.4.0 the engine, the REPL, the UI and the providers run natively on
-Windows from a release zip; the \code{shell} tool and the benchmark packs
-run commands through \code{sh}, so they need one on the path, and text in
-and out is UTF-8 whatever the console code page (a context file in the
-console's code page is refused with the fix named, never loaded as
-mojibake), which a field report in Japanese was the first to test. The UI is one scrolling stream: the model's
+Windows from a release zip; the \code{shell} tool runs through \code{sh}
+when one is on the path and through \code{cmd /C} otherwise (the benchmark
+packs are written for \code{sh} and still need one), and text in and out
+is UTF-8 whatever the console code page: a context file in the console's
+code page is refused with the fix named, never loaded as mojibake, and the
+console is switched to UTF-8 while \kleene{} runs so piped output survives
+the trip. A field report in Japanese was the first to test all of it. The UI is one scrolling stream: the model's
 reply streams in, each fence runs as it lands, every statement shows its rows
 and its cost, child sessions nest under the turn that opened them.
 
@@ -1736,7 +1738,7 @@ actually write.
 \section{Reproducibility}
 \label{sec:repro}
 
-\kleene{} v0.5.0 (29 October 2026) ships prebuilt binaries for macOS,
+\kleene{} v0.6.0 (2 November 2026) ships prebuilt binaries for macOS,
 Linux and Windows (a zip of \code{kleene.exe}; v0.1.0 of 6 October was the
 first release); the repository is its own Homebrew tap, and releases are
 cut by release-please from the conventional-commit history:
