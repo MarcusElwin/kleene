@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/MarcusElwin/kleene/compare/v0.6.0...v0.6.1) (2026-11-03)
+
+
+### Bug Fixes
+
+* **tools:** run shell through cmd /C on a Windows without sh ([c36b820](https://github.com/MarcusElwin/kleene/commit/c36b8200df17a2b35c12759864ae701e01c43308)), closes [#78](https://github.com/MarcusElwin/kleene/issues/78)
+
 ## [0.6.0](https://github.com/MarcusElwin/kleene/compare/v0.5.0...v0.6.0) (2026-11-02)
 
 
